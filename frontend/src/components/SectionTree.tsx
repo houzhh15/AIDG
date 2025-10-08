@@ -45,7 +45,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect })
   // 格式化标题：去除 Markdown 标记
   const formatTitle = (title: string): string => {
     // 去除 # 标记
-    let formatted = title.replace(/^#+\s*/, '')
+    const formatted = title.replace(/^#+\s*/, '')
 
     // 可选：去除序号前缀（如 "1. "、"1、"）
     // formatted = formatted.replace(/^\d+[.、)]\s*/, '')

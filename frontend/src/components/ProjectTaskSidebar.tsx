@@ -132,7 +132,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   };
 
   const visibleTasks = useMemo(() => {
-    let filtered = tasks.filter(task => {
+    const filtered = tasks.filter(task => {
       if (assigneeFilter && task.assignee !== assigneeFilter) {
         return false;
       }

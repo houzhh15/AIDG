@@ -287,7 +287,7 @@ const TimeProgress: React.FC<Props> = ({ projectId }) => {
     try {
       // 根据节点类型构造不同的保存参数
       let weekNumberForApi: string;
-      let updateData: any = {};
+      const updateData: any = {};
 
       if (selectedNode.type === 'week' && selectedNode.week) {
         // 周节点：使用week字段作为API参数

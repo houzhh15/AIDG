@@ -8,7 +8,7 @@ import { listAvfoundationDevices, updateTaskDiarization, updateTaskEmbeddingScri
 import { authedApi } from '../api/auth';
 
 // 简单缓存设备列表, 减少重复 ffmpeg 调用
-let avCache: { ts: number; devices: AvDevice[] } | null = null;
+const avCache: { ts: number; devices: AvDevice[] } | null = null;
 const CACHE_TTL = 60_000; // 60s
 
 interface Props {
