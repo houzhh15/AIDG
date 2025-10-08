@@ -9,9 +9,9 @@ import (
 
 func TestLevelFromString(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		expect  slog.Level
+		name      string
+		input     string
+		expect    slog.Level
 		expectErr bool
 	}{
 		{"debug", "debug", slog.LevelDebug, false},

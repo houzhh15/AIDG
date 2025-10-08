@@ -12,7 +12,6 @@ import (
 // Level 支持 debug/info/warn/error，Environment 支持 prod/dev 等
 // WithSource 控制是否记录源码位置
 // Default 对于未提供 level/环境时采用 info 与文本格式
-//
 type Config struct {
 	Level       string
 	Environment string
