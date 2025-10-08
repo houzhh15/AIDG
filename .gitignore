@@ -1,0 +1,55 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+server
+mcp-server
+mcp-server-v2
+
+# Go
+*.test
+*.out
+go.work
+coverage.out
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data
+data/projects/*
+data/users/*
+data/meetings/*
+data/audit_logs/*
+!data/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+tmp/
+temp/
+*.log
+
+# Playwright/Test artifacts
+.playwright-mcp/
+test-docker-build.sh

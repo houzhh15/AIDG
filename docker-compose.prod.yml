@@ -1,0 +1,61 @@
+services:
+  # Unified AIDG Service (Production)
+  aidg:
+    image: aidg:${VERSION:-latest}
+    container_name: aidg-prod
+    ports:
+      - "8000:8000"  # Web Server
+      - "8081:8081"  # MCP Server
+    environment:
+      - ENV=production
+      - PORT=8000
+      - MCP_HTTP_PORT=8081
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=json
+      - JWT_SECRET=${JWT_SECRET}
+      - USER_JWT_SECRET=${USER_JWT_SECRET:-${JWT_SECRET}}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
+      - PROJECTS_DIR=/app/data/projects
+      - USERS_DIR=/app/data/users
+      - MEETINGS_DIR=/app/data/meetings
+      - AUDIT_LOGS_DIR=/app/data/audit_logs
+      - MCP_SERVER_URL=http://localhost:8000
+      - MCP_PASSWORD=${MCP_PASSWORD}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:8000}
+    volumes:
+      # Persistent data volumes
+      - projects_data:/app/data/projects
+      - users_data:/app/data/users
+      - meetings_data:/app/data/meetings
+      - audit_logs_data:/app/data/audit_logs
+    networks:
+      - aidg-network
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:8000/health && wget --no-verbose --tries=1 --spider http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: always
+
+networks:
+  aidg-network:
+    driver: bridge
+
+volumes:
+  projects_data:
+    driver: local
+  users_data:
+    driver: local
+  meetings_data:
+    driver: local
+  audit_logs_data:
+    driver: local

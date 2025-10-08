@@ -1,0 +1,44 @@
+services:
+  # Unified AIDG Service (Web + MCP + Frontend)
+  aidg:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aidg-unified
+    ports:
+      - "8000:8000"  # Web Server (Human Interface)
+      - "8081:8081"  # MCP Server (AI Interface)
+    environment:
+      - ENV=development
+      - PORT=8000
+      - MCP_HTTP_PORT=8081
+      - LOG_LEVEL=debug
+      - LOG_FORMAT=console
+      - JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars
+      - USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars
+      - ADMIN_DEFAULT_PASSWORD=admin123
+      - PROJECTS_DIR=/app/data/projects
+      - USERS_DIR=/app/data/users
+      - MEETINGS_DIR=/app/data/meetings
+      - AUDIT_LOGS_DIR=/app/data/audit_logs
+      - MCP_SERVER_URL=http://localhost:8000
+      - MCP_PASSWORD=dev-mcp-password
+      - CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:8000
+    volumes:
+      # Mount data directories for persistence
+      - ./data/projects:/app/data/projects
+      - ./data/users:/app/data/users
+      - ./data/meetings:/app/data/meetings
+      - ./data/audit_logs:/app/data/audit_logs
+    networks:
+      - aidg-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:8000/health && wget --no-verbose --tries=1 --spider http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  aidg-network:
+    driver: bridge

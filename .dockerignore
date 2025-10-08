@@ -1,0 +1,92 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+bin/
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+test/
+coverage.txt
+*.coverprofile
+
+# Dependencies
+node_modules/
+vendor/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+audit_logs/
+
+# Data directories (use volumes instead)
+data/
+projects/
+users/
+meetings/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Frontend development
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+**/package-lock.json  # Exclude to avoid platform-specific lock issues in Docker
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Deployment
+deployments/kubernetes/
+docker-compose*.yml
+!docker-compose.yml
+Dockerfile*
+!Dockerfile
+
+# Include necessary deployment configs
+!deployments/docker/supervisord.conf
+
+# Scripts
+scripts/
+*.sh
+*.ps1
+Makefile

@@ -1,0 +1,24 @@
+[
+  {
+    "username": "admin",
+    "password_hash": "e4cbdce9c1094c3fc7ba751f6d1a5e76423c1dfcdb54f5cca3a1d5b3578166d8",
+    "scopes": [
+      "project.doc.read",
+      "project.doc.write",
+      "task.read",
+      "task.write",
+      "task.plan.approve",
+      "meeting.read",
+      "meeting.write",
+      "user.manage",
+      "feature.read",
+      "feature.write",
+      "architecture.read",
+      "architecture.write",
+      "tech.read",
+      "tech.write"
+    ],
+    "created_at": "2025-10-07T20:30:21.030327+08:00",
+    "updated_at": "2025-10-07T20:30:21.030327+08:00"
+  }
+]

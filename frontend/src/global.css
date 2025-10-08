@@ -1,0 +1,68 @@
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* 禁止页面根滚动 */
+  box-sizing: border-box;
+}
+
+/* 适配刘海 / 安全区域，防止顶部被裁剪。对多数桌面浏览器 env() 为 0px 不影响布局 */
+:root {
+  --app-safe-top: env(safe-area-inset-top, 0px);
+  --header-height: 64px;
+  --scrollbar-bg: #f1f3f5;
+  --scrollbar-thumb: #b5bcc3;
+  --scrollbar-thumb-hover: #9099a2;
+}
+
+/* 根布局容器：使用动态视口高度避免地址栏折叠导致高度抖动，同时下移安全区 */
+.app-root-layout {
+  padding-top: var(--app-safe-top);
+  height: calc(100dvh - var(--app-safe-top));
+  /* 避免内部再出现额外垂直滚动，交给子区域 */
+  overflow: hidden !important;
+}
+
+/* 统一滚动区域类 */
+.scroll-region {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable; /* 让布局不因滚动条出现抖动 */
+}
+
+/* 自定义滚动条 (WebKit) */
+.scroll-region::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-region::-webkit-scrollbar-track {
+  background: var(--scrollbar-bg);
+}
+.scroll-region::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 6px;
+  border: 2px solid var(--scrollbar-bg);
+}
+.scroll-region::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Firefox 自定义 */
+.scroll-region {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-bg);
+}
+
+/* 默认不允许 Layout 产生额外滚动 */
+.ant-layout {
+  overflow: hidden;
+}
+
+/* 允许三个区域自身滚动：
+   1. 任务侧边栏 TaskSidebar 内部列表已自带 overflow:auto
+   2. Chunk 列表容器
+   3. 右侧内容区域 RightPanel 外层容器 */
+
+/* ChunkList 外层容器：在 App.tsx 内会设置 overflow:auto */
+
+/* RightPanel 外层容器：在 App.tsx 已设置 overflow:auto */
