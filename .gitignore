@@ -6,9 +6,14 @@
 *.dylib
 bin/
 dist/
-server
-mcp-server
-mcp-server-v2
+# Only ignore binaries in root directory, not source directories
+/server
+/mcp-server
+/mcp-server-v2
+# Ignore binaries in cmd subdirectories
+cmd/*/server
+cmd/*/mcp-server
+cmd/*/mcp-server-v2
 
 # Go
 *.test
