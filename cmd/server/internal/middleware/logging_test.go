@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"audio-to-text/pkg/logger"
+	"github.com/houzhh15-hub/AIDG/pkg/logger"
 )
 
 func TestRequestLogger(t *testing.T) {
