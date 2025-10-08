@@ -9,7 +9,8 @@
     "build:prod": "tsc -b && vite build --mode production",
     "build:analyze": "tsc -b && vite build --mode production && npx vite-bundle-visualizer",
     "preview": "vite preview",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "echo 'No tests defined yet' && exit 0"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
