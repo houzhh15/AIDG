@@ -66,16 +66,6 @@ export interface PermissionGroup {
 
 export const PermissionGroups: PermissionGroup[] = [
   {
-    title: '项目管理',
-    scopes: [
-      {
-        label: '项目全局管理',
-        value: ScopeProjectAdmin,
-        description: '创建项目、管理项目的全局配置（系统级权限）',
-      },
-    ],
-  },
-  {
     title: '项目文档',
     scopes: [
       {
@@ -125,18 +115,35 @@ export const PermissionGroups: PermissionGroup[] = [
       },
     ],
   },
+];
+
+/**
+ * 系统级权限分组 (用于系统管理员)
+ * 这些权限不应该分配给项目角色
+ */
+export const SystemPermissionGroups: PermissionGroup[] = [
+  {
+    title: '项目管理',
+    scopes: [
+      {
+        label: '项目全局管理',
+        value: ScopeProjectAdmin,
+        description: '创建项目、管理项目的全局配置（系统级权限）',
+      },
+    ],
+  },
   {
     title: '会议管理',
     scopes: [
       {
         label: '查看会议',
         value: ScopeMeetingRead,
-        description: '查看会议详情、转写记录、话题',
+        description: '查看会议详情、转写记录、话题（全局权限）',
       },
       {
         label: '编辑会议',
         value: ScopeMeetingWrite,
-        description: '编辑会议信息、话题、参会权限',
+        description: '编辑会议信息、话题、参会权限（全局权限）',
       },
     ],
   },

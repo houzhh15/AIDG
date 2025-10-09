@@ -114,6 +114,16 @@ const ProjectTaskSelector: React.FC = () => {
     if (!showAll) {
       tasks = tasks.filter(t => t.assignee && t.assignee === username);
     }
+    
+    // 如果当前任务属于这个项目，但不在过滤结果中，则添加它
+    if (current && current.project_id === p.id) {
+      const currentTaskInList = tasks.find(t => t.id === current.task_id);
+      if (!currentTaskInList && current.task_info) {
+        // 将当前任务添加到列表开头
+        tasks = [current.task_info, ...tasks];
+      }
+    }
+    
     return {
       label: p.name || p.id,
       options: tasks.map(t => ({
@@ -123,6 +133,7 @@ const ProjectTaskSelector: React.FC = () => {
     };
   }).filter(g => g.options.length > 0);
 
+  // 构造 value
   const value = current ? `${current.project_id}::${current.task_id}` : undefined;
 
   return (
@@ -150,7 +161,7 @@ const ProjectTaskSelector: React.FC = () => {
         optionFilterProp="label"
         suffixIcon={(loadingProjects || loadingTasks) ? <Spin size="small" /> : <FolderOpenOutlined />}
         options={grouped}
-          disabled={!username}
+        disabled={!username}
         />
       </Tooltip>
     </div>

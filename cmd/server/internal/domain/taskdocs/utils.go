@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
 )
 
 // docBaseDir returns the base directory for a document type (internal helper)
 func docBaseDir(projectID, taskID, docType string) (string, error) {
-	dir := filepath.Join("projects", projectID)
+	dir := filepath.Join(projects.ProjectsRoot, projectID)
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("project dir missing")
 	}

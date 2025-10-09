@@ -63,5 +63,5 @@ dependencies:
 
 
 ---
-版本：design.decompose.min.v1
+版本：planning.min.v1
 ````

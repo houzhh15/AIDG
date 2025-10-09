@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
 )
 
 // HandleGetUserCurrentTask GET /api/v1/user/current-task
@@ -81,71 +82,96 @@ func HandleGetUserCurrentTask(c *gin.Context) {
 
 // HandlePutUserCurrentTask PUT /api/v1/user/current-task
 // 设置当前用户的当前任务
-func HandlePutUserCurrentTask(c *gin.Context) {
-	username := currentUser(c)
+func HandlePutUserCurrentTask(userRoleService services.UserRoleService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username := currentUser(c)
 
-	var request struct {
-		ProjectID string `json:"project_id"`
-		TaskID    string `json:"task_id"`
-	}
-
-	if err := c.ShouldBindJSON(&request); err != nil {
-		badRequestResponse(c, "invalid request body")
-		return
-	}
-
-	if request.ProjectID == "" || request.TaskID == "" {
-		badRequestResponse(c, "project_id and task_id are required")
-		return
-	}
-
-	// Verify project exists
-	_, err := projectDir(request.ProjectID)
-	if err != nil {
-		notFoundResponse(c, "project")
-		return
-	}
-
-	// Verify task exists
-	tasksFile := filepath.Join("projects", request.ProjectID, "tasks.json")
-	if _, err := os.Stat(tasksFile); os.IsNotExist(err) {
-		notFoundResponse(c, "tasks")
-		return
-	}
-
-	data, err := os.ReadFile(tasksFile)
-	if err != nil {
-		internalErrorResponse(c, fmt.Errorf("failed to read tasks: %w", err))
-		return
-	}
-
-	var tasks []map[string]interface{}
-	if err := json.Unmarshal(data, &tasks); err != nil {
-		internalErrorResponse(c, fmt.Errorf("failed to parse tasks: %w", err))
-		return
-	}
-
-	// Verify task exists
-	taskExists := false
-	for _, task := range tasks {
-		if task["id"].(string) == request.TaskID {
-			taskExists = true
-			break
+		var request struct {
+			ProjectID string `json:"project_id"`
+			TaskID    string `json:"task_id"`
 		}
-	}
 
-	if !taskExists {
-		notFoundResponse(c, "task")
-		return
-	}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			badRequestResponse(c, "invalid request body")
+			return
+		}
 
-	// Set current task
-	if err := setUserCurrentTask(username, request.ProjectID, request.TaskID); err != nil {
-		internalErrorResponse(c, fmt.Errorf("failed to set current task: %w", err))
-		return
-	}
+		if request.ProjectID == "" || request.TaskID == "" {
+			badRequestResponse(c, "project_id and task_id are required")
+			return
+		}
 
-	successResponseWithMessage(c, "current task updated", nil)
+		// 检查用户对该项目是否有 task.write 权限
+		scopes, err := userRoleService.ComputeEffectiveScopes(username, request.ProjectID)
+		if err != nil {
+			internalErrorResponse(c, fmt.Errorf("failed to check permissions: %w", err))
+			return
+		}
+
+		hasTaskWrite := false
+		for _, scope := range scopes {
+			if scope == "task.write" {
+				hasTaskWrite = true
+				break
+			}
+		}
+
+		if !hasTaskWrite {
+			c.JSON(403, gin.H{
+				"success": false,
+				"error":   "insufficient permissions: task.write required for this project",
+			})
+			return
+		}
+
+		// Verify project exists
+		_, err = projectDir(request.ProjectID)
+		if err != nil {
+			notFoundResponse(c, "project")
+			return
+		}
+
+		// Verify task exists
+		tasksFile := filepath.Join(projectsRoot(), request.ProjectID, "tasks.json")
+		if _, err := os.Stat(tasksFile); os.IsNotExist(err) {
+			notFoundResponse(c, "tasks")
+			return
+		}
+
+		data, err := os.ReadFile(tasksFile)
+		if err != nil {
+			internalErrorResponse(c, fmt.Errorf("failed to read tasks: %w", err))
+			return
+		}
+
+		var tasks []map[string]interface{}
+		if err := json.Unmarshal(data, &tasks); err != nil {
+			internalErrorResponse(c, fmt.Errorf("failed to parse tasks: %w", err))
+			return
+		}
+
+		// Verify task exists
+		taskExists := false
+		for _, task := range tasks {
+			if task["id"].(string) == request.TaskID {
+				taskExists = true
+				break
+			}
+		}
+
+		if !taskExists {
+			notFoundResponse(c, "task")
+			return
+		}
+
+		// Set current task
+		if err := setUserCurrentTask(username, request.ProjectID, request.TaskID); err != nil {
+			internalErrorResponse(c, fmt.Errorf("failed to set current task: %w", err))
+			return
+		}
+
+		successResponseWithMessage(c, "current task updated", nil)
+	}
 }
 
 // Helper functions (from main.go)
@@ -157,7 +183,11 @@ type UserCurrentTask struct {
 }
 
 func getUserCurrentTask(username string) (*UserCurrentTask, error) {
-	userFile := filepath.Join("users", username, "current_task.json")
+	usersDir := os.Getenv("USERS_DIR")
+	if usersDir == "" {
+		usersDir = "./users"
+	}
+	userFile := filepath.Join(usersDir, username, "current_task.json")
 	data, err := os.ReadFile(userFile)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -175,7 +205,11 @@ func getUserCurrentTask(username string) (*UserCurrentTask, error) {
 }
 
 func setUserCurrentTask(username, projectID, taskID string) error {
-	userDir := filepath.Join("users", username)
+	usersDir := os.Getenv("USERS_DIR")
+	if usersDir == "" {
+		usersDir = "./users"
+	}
+	userDir := filepath.Join(usersDir, username)
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
 		return fmt.Errorf("create user dir: %w", err)
 	}
@@ -203,7 +237,7 @@ func projectDir(projectID string) (string, error) {
 	if strings.TrimSpace(projectID) == "" {
 		return "", fmt.Errorf("empty project ID")
 	}
-	dir := filepath.Join("projects", projectID)
+	dir := filepath.Join(projectsRoot(), projectID)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return "", fmt.Errorf("project does not exist")
 	}

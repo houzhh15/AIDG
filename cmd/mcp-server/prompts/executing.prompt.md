@@ -88,4 +88,4 @@ Next:
 
 失败代码：NO_TASK / PLAN_EMPTY / PROMPT_RECORD_FAIL / EXEC_FAIL / TEST_FAIL
 
-版本：coding.min.v1
+版本：excuting.min.v1

@@ -2,10 +2,13 @@ package main
 
 import (
 	// Standard library
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -337,9 +340,9 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"PATCH /api/v1/projects/:id/tasks/:task_id/test/sections/reorder":        {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/test/sections/sync":            {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/prompts":                        {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/prompts": {users.ScopeTaskWrite},
-		"GET /api/v1/user/current-task":  {users.ScopeTaskRead},
-		"PUT /api/v1/user/current-task":  {users.ScopeTaskWrite},
-		"GET /api/v1/tasks":               {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
+		"GET /api/v1/user/current-task": {users.ScopeTaskRead},
+		"PUT /api/v1/user/current-task": {users.ScopeTaskWrite},
+		"GET /api/v1/tasks":             {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id": {users.ScopeMeetingRead}, "DELETE /api/v1/tasks/:id": {users.ScopeMeetingWrite},
 		"POST /api/v1/tasks/:id/start": {users.ScopeMeetingWrite}, "POST /api/v1/tasks/:id/stop": {users.ScopeMeetingWrite},
 		"POST /api/v1/tasks/:id/reprocess": {users.ScopeMeetingWrite}, "GET /api/v1/tasks/:id/reprocess": {users.ScopeMeetingWrite},
@@ -479,6 +482,24 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		if projectID == "" {
 			projectID = c.Param("project_id") // 向后兼容
 		}
+
+		// 对于某些路径，从请求体中解析 project_id
+		// 例如：PUT /api/v1/user/current-task
+		if projectID == "" && c.Request.Method == "PUT" && c.Request.URL.Path == "/api/v1/user/current-task" {
+			// 读取请求体以获取 project_id
+			var bodyData map[string]interface{}
+			if c.Request.Body != nil {
+				bodyBytes, _ := io.ReadAll(c.Request.Body)
+				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // 恢复请求体
+				if len(bodyBytes) > 0 {
+					json.Unmarshal(bodyBytes, &bodyData)
+					if pid, ok := bodyData["project_id"].(string); ok {
+						projectID = pid
+					}
+				}
+			}
+		}
+
 		taskID := c.Param("task_id")
 		meetingID := c.Param("meeting_id")
 
@@ -533,9 +554,14 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 					effectiveScopes = append(effectiveScopes, "feature.read") // 向后兼容
 				}
 			} else if path == "/api/v1/user/current-task" {
-				// 当前任务API：如果用户在任何项目中有 task.read 权限，则允许访问
-				if hasAnyProjectPermission(userRoleService, claims.Username, "task.read") {
+				// 当前任务API：根据HTTP方法注入相应权限
+				// GET 需要 task.read，PUT 需要 task.write
+				method := c.Request.Method
+				if method == "GET" && hasAnyProjectPermission(userRoleService, claims.Username, "task.read") {
 					effectiveScopes = append(effectiveScopes, "task.read")
+				}
+				if method == "PUT" && hasAnyProjectPermission(userRoleService, claims.Username, "task.write") {
+					effectiveScopes = append(effectiveScopes, "task.write")
 				}
 			}
 		}
@@ -671,7 +697,7 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 
 	// ========== User Task Management ==========
 	r.GET("/api/v1/user/current-task", api.HandleGetUserCurrentTask)
-	r.PUT("/api/v1/user/current-task", api.HandlePutUserCurrentTask)
+	r.PUT("/api/v1/user/current-task", api.HandlePutUserCurrentTask(userRoleService))
 
 	// ========== Role Management ==========
 	// Role CRUD (query parameter style)
