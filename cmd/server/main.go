@@ -238,12 +238,15 @@ func main() {
 
 // hasAnyProjectPermission 检查用户是否在任何项目中拥有指定权限
 func hasAnyProjectPermission(userRoleService services.UserRoleService, username, scope string) bool {
-	// 这里我们需要获取用户的所有项目角色并检查权限
-	// 为了简化，我们可以遍历已知的项目列表
-	projects := []string{"AI-Dev-Gov", "NIEP", "others"} // TODO: 应该从项目注册表获取
+	// 获取用户的所有项目角色
+	profile, err := userRoleService.GetUserProfile(username)
+	if err != nil {
+		return false
+	}
 
-	for _, projectID := range projects {
-		scopes, err := userRoleService.ComputeEffectiveScopes(username, projectID)
+	// 检查每个项目的权限
+	for _, roleInfo := range profile.ProjectRoles {
+		scopes, err := userRoleService.ComputeEffectiveScopes(username, roleInfo.ProjectID)
 		if err != nil {
 			continue // 跳过错误的项目
 		}
@@ -334,8 +337,9 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"PATCH /api/v1/projects/:id/tasks/:task_id/test/sections/reorder":        {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/test/sections/sync":            {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/prompts":                        {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/prompts": {users.ScopeTaskWrite},
-		//"GET /api/v1/user/current-task": {users.ScopeTaskRead}, "PUT /api/v1/user/current-task": {users.ScopeTaskWrite},
-		"GET /api/v1/tasks": {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
+		"GET /api/v1/user/current-task":  {users.ScopeTaskRead},
+		"PUT /api/v1/user/current-task":  {users.ScopeTaskWrite},
+		"GET /api/v1/tasks":               {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id": {users.ScopeMeetingRead}, "DELETE /api/v1/tasks/:id": {users.ScopeMeetingWrite},
 		"POST /api/v1/tasks/:id/start": {users.ScopeMeetingWrite}, "POST /api/v1/tasks/:id/stop": {users.ScopeMeetingWrite},
 		"POST /api/v1/tasks/:id/reprocess": {users.ScopeMeetingWrite}, "GET /api/v1/tasks/:id/reprocess": {users.ScopeMeetingWrite},
