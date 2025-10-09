@@ -62,6 +62,9 @@ WORKDIR /app
 COPY --from=backend-builder /app/bin/server /app/server
 COPY --from=backend-builder /app/bin/mcp-server /app/mcp-server
 
+# Copy MCP server prompts directory
+COPY --from=backend-builder /app/cmd/mcp-server/prompts /app/prompts
+
 # Copy frontend dist
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
