@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Docker image tag"
-        required: true
+        description: "Docker image tag (optional, defaults to 'manual')"
+        required: false
+        default: "manual"
 
 env:
   REGISTRY: ghcr.io
@@ -45,7 +46,7 @@ jobs:
             type=semver,pattern={{major}}
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ github.event.inputs.tag || 'manual' }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push unified image
         uses: docker/build-push-action@v5
