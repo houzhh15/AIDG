@@ -91,27 +91,41 @@ func HandleAudioUpload(reg *meetings.Registry) gin.HandlerFunc {
 		wavFilename := fmt.Sprintf("chunk_%04d.wav", chunkIndex)
 		wavPath := filepath.Join(task.Cfg.OutputDir, wavFilename)
 		
-		// 使用 FFmpeg 转换音频格式（16kHz 单声道 PCM）
-		convertCmd := fmt.Sprintf("ffmpeg -y -i %s -ar 16000 -ac 1 -c:a pcm_s16le %s", 
-			savePath, wavPath)
+		// 打印日志
+		fmt.Printf("[AUDIO] Converting audio: chunk_index=%d, webm=%s, wav=%s\n", 
+			chunkIndex, savePath, wavPath)
 		
-		if err := exec.Command("sh", "-c", convertCmd).Run(); err != nil {
+		// 使用 FFmpeg 转换音频格式（16kHz 单声道 PCM）
+		cmd := exec.Command("ffmpeg", 
+			"-y",                    // 覆盖输出文件
+			"-i", savePath,          // 输入文件
+			"-ar", "16000",          // 采样率 16kHz
+			"-ac", "1",              // 单声道
+			"-c:a", "pcm_s16le",     // PCM 编码
+			wavPath,                 // 输出文件
+		)
+		
+		// 捕获错误输出
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			fmt.Printf("[AUDIO] FFmpeg conversion failed: %v\nOutput: %s\n", err, string(output))
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
 				"message": fmt.Sprintf("音频格式转换失败: %v", err),
+				"details": string(output),
 			})
 			return
 		}
+		
+		fmt.Printf("[AUDIO] Conversion successful: %s\n", wavPath)
 
 		// 触发 ASR 转录处理
-		go func() {
-			// 创建 ASR 任务并推入队列
-			// 这里需要调用 orchestrator 的转录方法
-			if task.Orch != nil {
-				// 假设有转录方法，需要实现
-				// task.Orch.TranscribeChunk(wavPath, chunkIndex)
-			}
-		}()
+		if task.Orch != nil {
+			fmt.Printf("[AUDIO] Triggering ASR transcription for chunk %d\n", chunkIndex)
+			go task.Orch.EnqueueAudioChunk(chunkIndex, wavPath)
+		} else {
+			fmt.Printf("[AUDIO] Warning: Orchestrator is nil, cannot trigger transcription\n")
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,

@@ -280,7 +280,8 @@ func (o *Orchestrator) transcribeViaHTTP(ctx context.Context, chunk AudioChunk) 
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
-	part, err := writer.CreateFormFile("audio", filepath.Base(chunk.Path))
+	// 使用 "file" 作为字段名，这是OpenAI Whisper API的标准字段名
+	part, err := writer.CreateFormFile("file", filepath.Base(chunk.Path))
 	if err != nil {
 		return "", fmt.Errorf("create form file: %w", err)
 	}
@@ -289,10 +290,15 @@ func (o *Orchestrator) transcribeViaHTTP(ctx context.Context, chunk AudioChunk) 
 	}
 
 	// 添加其他表单字段
-	if err := writer.WriteField("model", o.cfg.WhisperModel); err != nil {
+	// 使用base模型（对应容器中的 ggml-base.bin）
+	modelName := "base"
+	if o.cfg.WhisperModel != "" && o.cfg.WhisperModel != "ggml-large-v3" {
+		modelName = o.cfg.WhisperModel
+	}
+	if err := writer.WriteField("model", modelName); err != nil {
 		return "", fmt.Errorf("write model field: %w", err)
 	}
-	if err := writer.WriteField("format", "json"); err != nil {
+	if err := writer.WriteField("response_format", "json"); err != nil {
 		return "", fmt.Errorf("write format field: %w", err)
 	}
 	if o.cfg.WhisperSegments != "" && o.cfg.WhisperSegments != "0" && o.cfg.WhisperSegments != "0s" {
@@ -1152,11 +1158,16 @@ func (o *Orchestrator) Start() error {
 	if o.state != StateCreated && o.state != StateStopped {
 		return fmt.Errorf("invalid state: %s", o.state)
 	}
-	o.recorder = NewRecorder(o.cfg, o.asrQ, &o.wg)
-	if o.startChunkID > 0 {
-		o.recorder.chunkID = o.startChunkID
+	
+	// 仅在启用持续录制模式时启动 FFmpeg 录音
+	if o.cfg.UseContinuous {
+		o.recorder = NewRecorder(o.cfg, o.asrQ, &o.wg)
+		if o.startChunkID > 0 {
+			o.recorder.chunkID = o.startChunkID
+		}
+		o.recorder.Start()
 	}
-	o.recorder.Start()
+	
 	o.procCtx, o.procCancel = context.WithCancel(context.Background())
 	o.asrWorker(o.procCtx)
 	o.sdWorker(o.procCtx)
@@ -1210,6 +1221,39 @@ func (o *Orchestrator) Stop() {
 		o.state = StateStopped
 		o.mutex.Unlock()
 	}()
+}
+
+// EnqueueAudioChunk 将外部上传的音频文件推入转录队列
+// 用于浏览器录音或文件上传场景
+func (o *Orchestrator) EnqueueAudioChunk(chunkID int, wavPath string) {
+	o.mutex.Lock()
+	state := o.state
+	o.mutex.Unlock()
+	
+	// 允许在运行、停止中、排空中状态下接受音频chunk
+	// 这样可以处理停止按钮触发后仍在上传的最后几个chunk
+	if state != StateRunning && state != StateStopping && state != StateDraining {
+		fmt.Printf("[AUDIO] Cannot enqueue chunk %d: orchestrator state=%s\n", chunkID, state)
+		return
+	}
+	
+	// 获取文件信息
+	fileInfo, err := os.Stat(wavPath)
+	if err != nil {
+		fmt.Printf("[AUDIO] Cannot stat file %s: %v\n", wavPath, err)
+		return
+	}
+	
+	// 创建 AudioChunk 并推入队列
+	chunk := AudioChunk{
+		ID:        chunkID,
+		Path:      wavPath,
+		StartTime: fileInfo.ModTime(), // 使用文件修改时间作为开始时间
+		EndTime:   time.Now(),          // 当前时间作为结束时间
+	}
+	
+	fmt.Printf("[AUDIO] Enqueuing chunk %d for transcription: %s\n", chunkID, wavPath)
+	o.asrQ.Push(chunk)
 }
 
 // Scan progress
