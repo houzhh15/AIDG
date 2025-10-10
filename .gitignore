@@ -39,6 +39,9 @@ data/meetings/*
 data/audit_logs/*
 !data/.gitkeep
 
+# Models directory
+models/
+
 # IDE
 .vscode/
 .idea/
@@ -54,6 +57,10 @@ Thumbs.db
 tmp/
 temp/
 *.log
+
+# Scripts (local build/test scripts)
+scripts/build-multiarch.sh
+scripts/test-build-local.sh
 
 # Playwright/Test artifacts
 .playwright-mcp/

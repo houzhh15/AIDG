@@ -4,6 +4,7 @@ import type { MenuProps } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask } from '../api/tasks';
 import { getUsers, User } from '../api/users';
+import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -37,6 +38,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const [assigneeFilter, setAssigneeFilter] = useState<string | undefined>();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [timeRangeFilter, setTimeRangeFilter] = useState<TimeRangeFilter | undefined>();
+  const { triggerRefresh } = useTaskRefresh();
 
   useEffect(() => {
     if (projectId) {
@@ -99,6 +101,8 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       
       setModalVisible(false);
       loadTasks();
+      // 触发任务统计数据刷新
+      triggerRefresh();
     } catch (error) {
       message.error(editingTask ? '任务更新失败' : '任务创建失败');
       console.error(error);
@@ -113,6 +117,8 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       if (currentTask === taskId) {
         onTaskSelect(''); // 清除当前选中的任务
       }
+      // 触发任务统计数据刷新
+      triggerRefresh();
     } catch (error) {
       message.error('任务删除失败');
       console.error(error);
@@ -125,6 +131,8 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       const statusConfig = getStatusConfig(newStatus);
       message.success(`任务状态已更新为：${statusConfig.label}`);
       loadTasks();
+      // 触发任务统计数据刷新
+      triggerRefresh();
     } catch (error) {
       message.error('状态更新失败');
       console.error(error);

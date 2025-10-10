@@ -1,7 +1,11 @@
 import React from 'react';
-import { Drawer, Form, InputNumber, Switch, Input, Button, Space, Divider, Typography, message, Select, Tag } from 'antd';
+import { Drawer, Form, InputNumber, Switch, Input, Button, Space, Divider, Typography, message, Select, Tag, Alert, Tabs } from 'antd';
 import { updateTaskDiarization, updateTaskEmbeddingScript } from '../api/client';
 import { authedApi } from '../api/auth';
+import { AudioRecorder } from './AudioRecorder';
+import { AudioUploader } from './AudioUploader';
+
+const { TabPane } = Tabs;
 
 interface Props {
   open: boolean;
@@ -19,6 +23,8 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
   const [deviceLoading, setDeviceLoading] = React.useState(false);
   const [devices, setDevices] = React.useState<{index:string;name:string;kind:string}[]>([]);
   const [deviceSelectValue, setDeviceSelectValue] = React.useState<string | undefined>(undefined);
+  const [deviceWarning, setDeviceWarning] = React.useState<string>('');
+  const [deviceMessage, setDeviceMessage] = React.useState<string>('');
   const [renameId, setRenameId] = React.useState(taskId);
   const [form] = Form.useForm();
   const [fixedSpeakerMode, setFixedSpeakerMode] = React.useState(false);
@@ -68,6 +74,20 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
     setDeviceLoading(true);
     try {
       const r = await authedApi.get('/devices/avfoundation');
+      
+      // 检查是否有警告信息（Docker 容器环境）
+      if (r.data.warning) {
+        setDeviceWarning(r.data.warning);
+        setDeviceMessage(r.data.message || '');
+        setDevices([]);
+        setDeviceSelectValue(undefined);
+        return;
+      }
+      
+      // 清除之前的警告
+      setDeviceWarning('');
+      setDeviceMessage('');
+      
       // 仅保留音频设备，避免与视频设备 index 冲突
       const audioOnly = (r.data.devices||[]).filter((d:any)=>d.kind==='audio');
       setDevices(audioOnly);
@@ -144,6 +164,23 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
         </Space>
         <Divider style={{margin:'8px 0'}} />
       </Space>
+      
+      {/* Docker 环境警告 */}
+      {deviceWarning && (
+        <Alert
+          message={deviceWarning}
+          description={
+            <div style={{whiteSpace: 'pre-line'}}>
+              {deviceMessage}
+            </div>
+          }
+          type="warning"
+          showIcon
+          closable
+          style={{marginBottom: '16px'}}
+        />
+      )}
+      
       <Form layout="vertical" form={form}>
         <Divider plain>基础信息</Divider>
         <Form.Item label="产品线" name="product_line">
@@ -176,6 +213,30 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
             onClear={()=>{ setDeviceSelectValue(undefined); }}
           />
         </Form.Item>
+
+        {/* 音频录制区域 */}
+        <Divider plain>音频录制</Divider>
+        <Tabs defaultActiveKey="browser" size="small">
+          <TabPane tab="🎙️ 浏览器录音" key="browser">
+            <AudioRecorder
+              taskId={taskId}
+              onUploadSuccess={() => {
+                message.success('录音上传成功');
+                refresh();
+              }}
+            />
+          </TabPane>
+          <TabPane tab="📁 文件上传" key="upload">
+            <AudioUploader
+              taskId={taskId}
+              onUploadSuccess={(fileId) => {
+                message.success(`文件上传成功: ${fileId}`);
+                refresh();
+              }}
+            />
+          </TabPane>
+        </Tabs>
+
         <Form.Item label="分离后端" name="diarization_backend">
           <Select
             options={[{value:'pyannote',label:'pyannote'},{value:'speechbrain',label:'speechbrain'}]}

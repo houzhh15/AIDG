@@ -2,12 +2,16 @@ package orchestrator
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +23,9 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/metrics"
+	"github.com/houzhh15-hub/AIDG/pkg/logger"
 )
 
 // init logging configuration if needed
@@ -56,15 +63,18 @@ func removeBlankLines(path string) {
 
 // Config holds runtime adjustable parameters.
 type Config struct {
-	OutputDir           string
-	RecordChunkDuration time.Duration
-	RecordOverlap       time.Duration
-	UseContinuous       bool // true: 单进程持续捕获, 按墙钟切片
-	FFmpegDeviceName    string
-	WhisperModel        string
-	WhisperSegments     string // e.g. "20s"; empty or "0" -> do not pass --segments
-	DeviceDefault       string
-	DiarizationBackend  string // "pyannote" (default) or "speechbrain"
+	OutputDir             string
+	RecordChunkDuration   time.Duration
+	RecordOverlap         time.Duration
+	UseContinuous         bool // true: 单进程持续捕获, 按墙钟切片
+	FFmpegDeviceName      string
+	WhisperMode           string // "http" (default) or "cli"
+	WhisperAPIURL         string // Whisper HTTP API endpoint (default: "http://whisper:8082")
+	WhisperModel          string
+	WhisperSegments       string // e.g. "20s"; empty or "0" -> do not pass --segments
+	DeviceDefault         string
+	DiarizationBackend    string // "pyannote" (default) or "speechbrain"
+	DiarizationScriptPath string // PyAnnote diarization script path (default: "/app/audio/diarization/pyannote_diarize.py")
 	// SpeechBrain diarization tunables
 	SBNumSpeakers          int // >0 时强制指定说话人数量 (--num_speakers)
 	SBMinSpeakers          int // (--min_speakers), 默认 1
@@ -75,7 +85,7 @@ type Config struct {
 	SBReassignAfterMerge   bool
 	SBEnergyVAD            bool
 	SBEnergyVADThr         float64
-	EmbeddingScriptPath    string
+	EmbeddingScriptPath    string // Speaker embedding generation script path (default: "/app/audio/diarization/generate_speaker_embeddings.py")
 	EmbeddingDeviceDefault string
 	EmbeddingThreshold     string
 	EmbeddingAutoLowerMin  string
@@ -90,16 +100,25 @@ type Config struct {
 
 // DefaultConfig returns sensible defaults matching original main.go constants.
 func DefaultConfig() Config {
+	// 从环境变量读取 Whisper API URL，如果未设置则使用默认值
+	whisperURL := os.Getenv("WHISPER_API_URL")
+	if whisperURL == "" {
+		whisperURL = "http://whisper:80"
+	}
+
 	return Config{
 		OutputDir:              "meeting_output",
 		RecordChunkDuration:    5 * time.Minute,
 		RecordOverlap:          5 * time.Second,
-		UseContinuous:          true,
-		FFmpegDeviceName:       "BlackHole 2ch",
+		UseContinuous:          false, // 禁用自动录音，使用文件上传模式
+		FFmpegDeviceName:       "",    // Docker 环境中不使用音频设备
+		WhisperMode:            "http",
+		WhisperAPIURL:          whisperURL, // 从环境变量读取或使用默认值
 		WhisperModel:           "ggml-large-v3",
 		WhisperSegments:        "20s",
 		DeviceDefault:          "mps",
 		DiarizationBackend:     "pyannote",
+		DiarizationScriptPath:  "/app/audio/diarization/pyannote_diarize.py",
 		SBMinSpeakers:          1,
 		SBMaxSpeakers:          8,
 		SBOverclusterFactor:    1.4,
@@ -108,7 +127,7 @@ func DefaultConfig() Config {
 		SBReassignAfterMerge:   true,
 		SBEnergyVAD:            true,
 		SBEnergyVADThr:         0.5,
-		EmbeddingScriptPath:    "pyannote/generate_speaker_embeddings.py",
+		EmbeddingScriptPath:    "/app/audio/diarization/generate_speaker_embeddings.py",
 		EmbeddingDeviceDefault: "auto",
 		EmbeddingThreshold:     "0.55",
 		EmbeddingAutoLowerMin:  "0.45",
@@ -243,6 +262,109 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 		return "", err
 	}
 	return out, nil
+}
+
+// transcribeViaHTTP 通过 HTTP POST 调用 Whisper API 进行转录
+func (o *Orchestrator) transcribeViaHTTP(ctx context.Context, chunk AudioChunk) (string, error) {
+	whisperURL := o.cfg.WhisperAPIURL
+	if whisperURL == "" {
+		whisperURL = "http://whisper:8082"
+	}
+	endpoint := fmt.Sprintf("%s/transcribe", whisperURL)
+
+	audioFile, err := os.Open(chunk.Path)
+	if err != nil {
+		return "", fmt.Errorf("open audio file: %w", err)
+	}
+	defer audioFile.Close()
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, err := writer.CreateFormFile("audio", filepath.Base(chunk.Path))
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := io.Copy(part, audioFile); err != nil {
+		return "", fmt.Errorf("copy audio data: %w", err)
+	}
+
+	// 添加其他表单字段
+	if err := writer.WriteField("model", o.cfg.WhisperModel); err != nil {
+		return "", fmt.Errorf("write model field: %w", err)
+	}
+	if err := writer.WriteField("format", "json"); err != nil {
+		return "", fmt.Errorf("write format field: %w", err)
+	}
+	if o.cfg.WhisperSegments != "" && o.cfg.WhisperSegments != "0" && o.cfg.WhisperSegments != "0s" {
+		if err := writer.WriteField("segments", o.cfg.WhisperSegments); err != nil {
+			return "", fmt.Errorf("write segments field: %w", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("close writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 10 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("whisper API error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("whisper API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	segPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_segments.json", chunk.ID))
+	outFile, err := os.Create(segPath)
+	if err != nil {
+		return "", fmt.Errorf("create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, resp.Body); err != nil {
+		return "", fmt.Errorf("save response: %w", err)
+	}
+	return segPath, nil
+}
+
+// transcribeViaCLI 通过命令行调用 Whisper CLI 进行转录
+func (o *Orchestrator) transcribeViaCLI(ctx context.Context, chunk AudioChunk) (string, error) {
+	segPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_segments.json", chunk.ID))
+	args := []string{"go-whisper/whisper", "transcribe", o.cfg.WhisperModel, chunk.Path, "--format", "json"}
+	ws := strings.TrimSpace(strings.ToLower(o.cfg.WhisperSegments))
+	if ws != "" && ws != "0" && ws != "0s" {
+		args = append(args, "--segments", o.cfg.WhisperSegments)
+	}
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("pipe error: %w", err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start error: %w", err)
+	}
+	f, err := os.Create(segPath)
+	if err != nil {
+		return "", fmt.Errorf("create output: %w", err)
+	}
+	w := bufio.NewWriter(f)
+	_, _ = io.Copy(w, stdout)
+	w.Flush()
+	f.Close()
+	if err := cmd.Wait(); err != nil {
+		return "", fmt.Errorf("wait error: %w", err)
+	}
+	return segPath, nil
 }
 
 type VoicePrintState struct {
@@ -527,34 +649,48 @@ func (o *Orchestrator) asrWorker(ctx context.Context) {
 			if !ok {
 				break
 			}
-			segPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_segments.json", chunk.ID))
-			// Use configurable segmentation duration; if empty or 0 -> omit --segments
-			args := []string{"go-whisper/whisper", "transcribe", o.cfg.WhisperModel, chunk.Path, "--format", "json"}
-			ws := strings.TrimSpace(strings.ToLower(o.cfg.WhisperSegments))
-			if ws != "" && ws != "0" && ws != "0s" {
-				args = append(args, "--segments", o.cfg.WhisperSegments)
+
+			startTime := time.Now()
+			var segPath string
+			var err error
+
+			// 日志：开始处理
+			logger.LogAudioProcessing(slog.Default(), "asr", "start", chunk.ID, 0, "")
+
+			// 根据 WhisperMode 选择转录方式
+			if o.cfg.WhisperMode == "http" {
+				segPath, err = o.transcribeViaHTTP(ctx, chunk)
+			} else {
+				segPath, err = o.transcribeViaCLI(ctx, chunk)
 			}
-			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			stdout, err := cmd.StdoutPipe()
+
+			duration := time.Since(startTime)
+			durationMs := duration.Milliseconds()
+
 			if err != nil {
-				log.Printf("[ASR] pipe err: %v", err)
+				// 记录错误
+				log.Printf("[ASR] transcribe error (mode=%s): %v", o.cfg.WhisperMode, err)
+
+				// 日志：错误
+				errorCode := "WHISPER_HTTP_ERROR"
+				if o.cfg.WhisperMode != "http" {
+					errorCode = "WHISPER_CLI_ERROR"
+				}
+				logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, errorCode)
+
+				// 指标：失败
+				metrics.RecordChunkProcessed("asr", false)
+				metrics.RecordError("asr", "whisper_"+o.cfg.WhisperMode)
 				continue
 			}
-			cmd.Stderr = os.Stderr
-			if err := cmd.Start(); err != nil {
-				log.Printf("[ASR] start err: %v", err)
-				continue
-			}
-			f, _ := os.Create(segPath)
-			w := bufio.NewWriter(f)
-			_, _ = io.Copy(w, stdout)
-			w.Flush()
-			f.Close()
-			if err := cmd.Wait(); err != nil {
-				log.Printf("[ASR] wait err: %v", err)
-				continue
-			}
+
+			// 日志：成功
+			logger.LogAudioProcessing(slog.Default(), "asr", "success", chunk.ID, durationMs, "")
+
+			// 指标：成功
+			metrics.RecordChunkProcessed("asr", true)
+			metrics.RecordDuration("asr", duration.Seconds())
+
 			o.sdQ.Push(ASRResult{Chunk: chunk, SegJSON: segPath})
 		}
 		o.sdQ.Close()
@@ -571,50 +707,23 @@ func (o *Orchestrator) sdWorker(ctx context.Context) {
 				break
 			}
 			speakersPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_speakers.json", item.Chunk.ID))
-			var args []string
-			if o.cfg.DiarizationBackend == "speechbrain" {
-				// SpeechBrain backend (no HF token required)
-				args = []string{"python3", "speechbrain/speechbrain_diarize.py", "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
-				// speaker count related parameters
-				if o.cfg.SBNumSpeakers > 0 { // explicit override
-					args = append(args, "--num_speakers", fmt.Sprintf("%d", o.cfg.SBNumSpeakers))
-				} else {
-					if o.cfg.SBMinSpeakers > 0 {
-						args = append(args, "--min_speakers", fmt.Sprintf("%d", o.cfg.SBMinSpeakers))
-					}
-					if o.cfg.SBMaxSpeakers > 0 {
-						args = append(args, "--max_speakers", fmt.Sprintf("%d", o.cfg.SBMaxSpeakers))
-					}
-				}
-				// 追加可调参数
-				if o.cfg.SBEnergyVAD {
-					args = append(args, "--energy_vad", "--energy_vad_thr", fmt.Sprintf("%g", o.cfg.SBEnergyVADThr))
-				}
-				if o.cfg.SBOverclusterFactor > 1.0 {
-					args = append(args, "--overcluster_factor", fmt.Sprintf("%g", o.cfg.SBOverclusterFactor))
-				}
-				if o.cfg.SBMergeThreshold > 0 {
-					args = append(args, "--merge_threshold", fmt.Sprintf("%g", o.cfg.SBMergeThreshold))
-				}
-				if o.cfg.SBMinSegmentMerge > 0 {
-					args = append(args, "--min_segment_merge", fmt.Sprintf("%g", o.cfg.SBMinSegmentMerge))
-				}
-				if o.cfg.SBReassignAfterMerge {
-					args = append(args, "--reassign_after_merge")
-				}
-			} else { // default pyannote
-				args = []string{"python3", "pyannote/pyannote_diarize.py", "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
-				if o.cfg.EnableOffline {
-					args = append(args, "--offline")
-				}
+
+			// 使用配置中的 DiarizationScriptPath，默认 /app/audio/diarization/pyannote_diarize.py
+			scriptPath := o.cfg.DiarizationScriptPath
+			if scriptPath == "" {
+				scriptPath = "/app/audio/diarization/pyannote_diarize.py"
 			}
+
+			args := []string{"python3", scriptPath, "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
+			if o.cfg.EnableOffline {
+				args = append(args, "--offline")
+			}
+
 			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			env := os.Environ()
-			if o.cfg.DiarizationBackend == "pyannote" { // only needed for pyannote
-				env = append(env, "HUGGINGFACE_TOKEN="+o.cfg.HFTokenValue)
-				if o.cfg.EnableOffline {
-					env = append(env, "HF_HUB_OFFLINE=1")
-				}
+			env = append(env, "HUGGINGFACE_TOKEN="+o.cfg.HFTokenValue)
+			if o.cfg.EnableOffline {
+				env = append(env, "HF_HUB_OFFLINE=1")
 			}
 			cmd.Env = env
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -900,7 +1009,7 @@ func (o *Orchestrator) mergeWorker(ctx context.Context) {
 				log.Printf("[MERGE] chunk %04d global mapping -> %s", item.Chunk.ID, filepath.Base(mapped))
 			}
 			mergedTxt := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_merged.txt", item.Chunk.ID))
-			args := []string{"go-whisper/merge-segments", "--segments-file", item.SegJSON, "--speaker-file", mapped}
+			args := []string{"merge-segments", "--segments-file", item.SegJSON, "--speaker-file", mapped}
 			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			outFile, _ := os.Create(mergedTxt)

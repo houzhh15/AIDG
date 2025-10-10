@@ -32,6 +32,7 @@ import (
 	syncdomain "github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/sync"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/taskdocs"
 	executionplan "github.com/houzhh15-hub/AIDG/cmd/server/internal/executionplan"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/handlers"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/middleware"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
@@ -180,6 +181,10 @@ func main() {
 	permissionInjector := services.NewPermissionInjector(baseDir, meetingsRoot)
 	appLogger.Info("permission injector ready")
 
+	// Initialize environment handler
+	envHandler := handlers.NewEnvironmentHandler()
+	appLogger.Info("environment handler ready")
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
@@ -191,7 +196,7 @@ func main() {
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, projectsRoot)
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -433,7 +438,8 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if path == "/api/v1/login" || c.Request.Method == http.MethodOptions || !strings.HasPrefix(path, "/api/") {
+		// 跳过不需要认证的路由：登录、健康检查、OPTIONS请求、非API路由
+		if path == "/api/v1/login" || path == "/api/v1/health" || c.Request.Method == http.MethodOptions || !strings.HasPrefix(path, "/api/") {
 			c.Next()
 			return
 		}
@@ -652,7 +658,12 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 	})
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, projectsRoot string) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string) {
+	// ========== Environment Check ==========
+	r.GET("/api/v1/environment/status", func(c *gin.Context) {
+		envHandler.GetStatus(c.Writer, c.Request)
+	})
+
 	// ========== Authentication & Admin ==========
 	// Login
 	r.POST("/api/v1/login", func(c *gin.Context) {
@@ -778,6 +789,10 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.PUT("/api/v1/tasks/:id/tech-design", api.HandleUpdateTaskTechDesign(meetingsReg))
 	r.GET("/api/v1/tasks/:id/audio", api.HandleGetTaskAudio(meetingsReg))
 	r.PUT("/api/v1/tasks/:id/polish", api.HandleUpdateTaskPolish(meetingsReg))
+
+	// Audio upload routes
+	r.POST("/api/v1/meetings/:meeting_id/audio/upload", api.HandleAudioUpload(meetingsReg))
+	r.POST("/api/v1/meetings/:meeting_id/audio/upload-file", api.HandleAudioFileUpload(meetingsReg))
 
 	// Meeting document copy routes
 	r.POST("/api/v1/tasks/:id/copy-feature-list", api.HandleCopyFeatureList(meetingsReg))

@@ -8,6 +8,7 @@ import {
   FallOutlined
 } from '@ant-design/icons';
 import { fetchTaskStatistics, TaskDistribution } from '../api/statisticsApi';
+import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 
 const { Text, Title } = Typography;
 
@@ -19,6 +20,7 @@ interface Props {
 const TaskDashboard: React.FC<Props> = ({ projectId, onTaskClick }) => {
   const [statistics, setStatistics] = useState<TaskDistribution | null>(null);
   const [loading, setLoading] = useState(false);
+  const { refreshTrigger } = useTaskRefresh();
 
   // 加载统计数据
   const loadStatistics = async () => {
@@ -44,7 +46,7 @@ const TaskDashboard: React.FC<Props> = ({ projectId, onTaskClick }) => {
     if (projectId) {
       loadStatistics();
     }
-  }, [projectId]);
+  }, [projectId, refreshTrigger]);
 
   // 计算百分比
   const calculatePercentage = (count: number, total: number): number => {

@@ -72,3 +72,25 @@ func L() *slog.Logger {
 	}
 	return global
 }
+
+// LogAudioProcessing 记录音频处理事件的结构化日志
+// component: asr/sd/embedding/merge
+// action: start/success/error/retry
+// chunkID: 音频切片 ID
+// durationMs: 处理耗时（毫秒）
+// errorCode: 错误代码（可选）
+func LogAudioProcessing(logger *slog.Logger, component, action string, chunkID int, durationMs int64, errorCode string) {
+	attrs := []slog.Attr{
+		slog.String("component", component),
+		slog.String("action", action),
+		slog.Int("chunk_id", chunkID),
+		slog.Int64("duration_ms", durationMs),
+	}
+
+	if errorCode != "" {
+		attrs = append(attrs, slog.String("error_code", errorCode))
+		logger.LogAttrs(nil, slog.LevelError, "Audio processing error", attrs...)
+	} else {
+		logger.LogAttrs(nil, slog.LevelInfo, "Audio processing event", attrs...)
+	}
+}

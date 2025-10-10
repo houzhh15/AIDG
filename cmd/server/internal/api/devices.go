@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -13,6 +14,16 @@ import (
 // list ffmpeg (avfoundation) devices (audio/video)
 func HandleGetAVFoundationDevices() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 检查是否在 Docker 容器中运行
+		if isRunningInDocker() {
+			c.JSON(http.StatusOK, gin.H{
+				"devices": []gin.H{},
+				"warning": "Docker 容器无法直接访问音频设备",
+				"message": "请使用以下方案之一：\n1. 前端浏览器录音（Web Audio API）\n2. 上传音频文件",
+			})
+			return
+		}
+
 		cmd := exec.Command("ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", "")
 		// ffmpeg prints device list to stderr
 		out, _ := cmd.CombinedOutput() // ffmpeg returns non-zero because no input; ignore error
@@ -45,4 +56,24 @@ func HandleGetAVFoundationDevices() gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"devices": devices})
 	}
+}
+
+// isRunningInDocker 检测是否在 Docker 容器中运行
+func isRunningInDocker() bool {
+	// 方法 1: 检查 /.dockerenv 文件
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+
+	// 方法 2: 检查 /proc/1/cgroup
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		return strings.Contains(string(data), "docker") || strings.Contains(string(data), "kubepods")
+	}
+
+	// 方法 3: 检查环境变量
+	if os.Getenv("DOCKER_CONTAINER") == "true" {
+		return true
+	}
+
+	return false
 }

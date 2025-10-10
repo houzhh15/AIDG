@@ -2,7 +2,7 @@
 # Single image contains both human interface (8000) and AI interface (8081)
 
 # Stage 1: Build Go backends
-FROM golang:1.22-alpine AS backend-builder
+FROM golang:1.23-alpine AS backend-builder
 
 WORKDIR /app
 
@@ -28,6 +28,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -o /app/bin/mcp-server \
     ./cmd/mcp-server
 
+# Build merge-segments (now CGO-free after rewrite)
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-w -s" \
+    -o /app/bin/merge-segments \
+    ./cmd/merge-segments
+
 # Stage 2: Build frontend
 FROM node:18-alpine AS frontend-builder
 
@@ -47,23 +53,45 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 3: Runtime image (contains both servers)
-FROM alpine:3.18
+FROM python:3.11-slim
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata supervisor
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    tzdata \
+    supervisor \
+    ffmpeg \
+    alsa-utils \
+    libasound2 \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PyAnnote and dependencies
+RUN pip3 install --no-cache-dir \
+    pyannote.audio==3.1.1 \
+    torch==2.0.1 \
+    torchaudio==2.0.2 \
+    librosa==0.10.1 \
+    soundfile==0.12.1 \
+    numpy==1.24.3 \
+    huggingface_hub==0.19.4
 
 # Create non-root user
-RUN addgroup -g 1000 aidg && \
-    adduser -D -u 1000 -G aidg aidg
+RUN groupadd -g 1000 aidg && \
+    useradd -m -u 1000 -g aidg aidg
 
 WORKDIR /app
 
 # Copy both backend binaries
 COPY --from=backend-builder /app/bin/server /app/server
 COPY --from=backend-builder /app/bin/mcp-server /app/mcp-server
+COPY --from=backend-builder /app/bin/merge-segments /usr/local/bin/merge-segments
 
 # Copy MCP server prompts directory
 COPY --from=backend-builder /app/cmd/mcp-server/prompts /app/prompts
+
+# Copy PyAnnote scripts
+COPY cmd/server/internal/audio/diarization/*.py /app/audio/diarization/
 
 # Copy frontend dist
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
@@ -72,7 +100,9 @@ COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 RUN mkdir -p /app/data/projects \
              /app/data/users \
              /app/data/meetings \
-             /app/data/audit_logs && \
+             /app/data/audit_logs \
+             /data \
+             /models && \
     chown -R aidg:aidg /app
 
 # Copy supervisor config

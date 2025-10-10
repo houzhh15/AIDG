@@ -7,13 +7,25 @@
 #   docker-compose -f docker-compose.ghcr.yml logs -f
 #
 # To use a different version, set the IMAGE_TAG environment variable:
-#   IMAGE_TAG=0.1.0-alpha docker-compose -f docker-compose.ghcr.yml up -d
+#   IMAGE_TAG=v0.1.1 docker-compose -f docker-compose.ghcr.yml up -d
 #   IMAGE_TAG=latest docker-compose -f docker-compose.ghcr.yml up -d
+#
+# Update to latest version:
+#   docker-compose -f docker-compose.ghcr.yml pull
+#   docker-compose -f docker-compose.ghcr.yml up -d
+#
+# Version Strategy:
+#   - Development: Use 'latest' for automatic updates (IMAGE_TAG=latest)
+#   - Production: Pin to specific version (default: v0.1.1)
+#   - Default: v0.1.1 (stable, predictable)
 
 services:
   # Unified AIDG Service (Web + MCP + Frontend)
   aidg:
-    image: ghcr.io/houzhh15-hub/aidg:${IMAGE_TAG:-0.1.0-alpha}
+    # Options: v0.1.1, latest, or any published tag
+    # Default: v0.1.1 (recommended for stability)
+    # To always use latest: IMAGE_TAG=latest docker-compose -f docker-compose.ghcr.yml up -d
+    image: ghcr.io/houzhh15-hub/aidg:${IMAGE_TAG:-v0.1.1}
     container_name: aidg-unified
     ports:
       - "8000:8000"  # Web Server (Human Interface)

@@ -9,6 +9,8 @@ import ProjectTaskSidebar from './components/ProjectTaskSidebar';
 import TaskDocuments from './components/TaskDocuments';
 import { RightPanel } from './components/RightPanel';
 import ProjectTaskSelector from './components/ProjectTaskSelector';
+import { AudioModeSelectModal, AudioMode } from './components/AudioModeSelectModal';
+import { useAudioService } from './services/audioService';
 import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, updateTaskDevice } from './api/client';
 import { authedApi } from './api/auth';
 import { login, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
@@ -23,6 +25,7 @@ import { useProjectPermission } from './hooks/useProjectPermission';
 import { ScopeUserManage } from './constants/permissions';
 import { UserProfile } from './components/UserProfile';
 import NoPermissionPage from './components/NoPermissionPage';
+import { TaskRefreshProvider } from './contexts/TaskRefreshContext';
 
 const { RangePicker } = DatePicker;
 
@@ -106,6 +109,17 @@ const App: React.FC = () => {
   const [svnRunning, setSvnRunning] = useState(false);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
   
+  // 音频录制模式选择
+  const [audioModalOpen, setAudioModalOpen] = useState(false);
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
+  
+  // 音频服务（始终初始化，但使用空字符串作为默认值）
+  const audioService = useAudioService({
+    taskId: currentTask || '',
+    onSuccess: () => refreshTasks(),
+    onError: (err) => message.error(err.message)
+  });
+  
   // 项目权限检查
   const { 
     hasPermission: hasProjectPermission, 
@@ -186,8 +200,70 @@ const App: React.FC = () => {
     try { await deleteTask(id); if(currentTask===id) { setCurrentTask(undefined); setChunks([]); } refreshTasks(); }
     catch(e:any){ message.error(e.message); }
   }
-  async function handleStart(id:string){ try { await startTask(id); refreshTasks(); } catch(e:any){ message.error(e.message); } }
-  async function handleStop(id:string){ try { await stopTask(id); refreshTasks(); } catch(e:any){ message.error(e.message); } }
+  
+  /**
+   * 处理"开始"按钮点击
+   * 弹出模态框让用户选择录音方式
+   */
+  async function handleStart(id:string){ 
+    try { 
+      // 保存待处理的任务ID
+      setPendingTaskId(id);
+      // 打开录音模式选择对话框
+      setAudioModalOpen(true);
+    } catch(e:any){ 
+      message.error(e.message); 
+    } 
+  }
+  
+  /**
+   * 用户选择录音模式后的处理
+   */
+  async function handleAudioModeSelect(mode: AudioMode) {
+    setAudioModalOpen(false);
+    
+    if (!pendingTaskId) return;
+    
+    try {
+      // 设置当前任务（如果还未设置）
+      if (currentTask !== pendingTaskId) {
+        setCurrentTask(pendingTaskId);
+      }
+      
+      // 根据选择的模式执行相应操作
+      if (mode === 'browser_record') {
+        // 浏览器录音模式
+        await audioService.startBrowserRecording();
+      } else if (mode === 'file_upload') {
+        // 文件上传模式
+        audioService.triggerFileUpload();
+      }
+      
+      // 同时调用原有的startTask（兼容后端状态管理）
+      await startTask(pendingTaskId); 
+      refreshTasks();
+    } catch(e:any){ 
+      message.error(e.message); 
+    } finally {
+      setPendingTaskId(null);
+    }
+  }
+  
+  async function handleStop(id:string){ 
+    try { 
+      // 如果正在录音，停止录音
+      if (audioService.isRecording) {
+        await audioService.stopRecording();
+      }
+      
+      // 调用后端停止
+      await stopTask(id); 
+      refreshTasks(); 
+    } catch(e:any){ 
+      message.error(e.message); 
+    } 
+  }
+  
   async function handleChangeDevice(id:string, dev:string){ try { await updateTaskDevice(id, dev); message.success('设备已更新'); refreshTasks(); } catch(e:any){ message.error(e.message); } }
 
   function onPlay(chunkId: string){
@@ -239,6 +315,7 @@ const App: React.FC = () => {
   }
 
   return (
+  <TaskRefreshProvider>
   <Layout className="app-root-layout" style={{ height: '100dvh', overflow: 'hidden' }}>
   <Header 
     onWheel={(e)=>{ e.preventDefault(); e.stopPropagation(); }}
@@ -434,6 +511,17 @@ const App: React.FC = () => {
         )}
       </Layout>
     </Layout>
+    
+    {/* 音频录制模式选择对话框 */}
+    <AudioModeSelectModal
+      open={audioModalOpen}
+      onCancel={() => {
+        setAudioModalOpen(false);
+        setPendingTaskId(null);
+      }}
+      onConfirm={handleAudioModeSelect}
+    />
+  </TaskRefreshProvider>
   );
 };
 
