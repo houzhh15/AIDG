@@ -6,11 +6,16 @@
 !cmd/**
 !pkg/
 !pkg/**
+!config/
+!config/**
 !go.mod
 !go.sum
 !frontend/
 !frontend/**
 !deployments/docker/supervisord.conf
+!tmp/
+!tmp/pyannote/
+!tmp/pyannote/**
 
 # Re-exclude unwanted items in frontend
 frontend/node_modules/

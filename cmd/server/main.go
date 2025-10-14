@@ -34,6 +34,7 @@ import (
 	executionplan "github.com/houzhh15-hub/AIDG/cmd/server/internal/executionplan"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/handlers"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/middleware"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
 	"github.com/houzhh15-hub/AIDG/pkg/logger"
@@ -192,7 +193,14 @@ func main() {
 	// Add health check endpoints (no authentication required)
 	startTime := time.Now()
 	r.GET("/health", healthCheckHandler(cfg, startTime))
+	r.GET("/api/v1/health", healthCheckHandler(cfg, startTime)) // Alternative API path
 	r.GET("/readiness", readinessCheckHandler(cfg))
+
+	// Add Whisper service endpoints (no authentication required)
+	r.GET("/api/v1/services/whisper/models", api.HandleGetWhisperModels())
+
+	// Debug endpoint (no authentication required for testing)
+	r.POST("/api/v1/debug/tasks/:id/enqueue/:chunk_id", api.HandleDebugEnqueueChunk(meetingsReg))
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
@@ -370,8 +378,11 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/tasks/:id/meeting-context": {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/meeting-context": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id/topic": {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/topic": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id/polish-annotations": {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/polish-annotations": {users.ScopeMeetingWrite},
-		"GET /api/v1/tasks/:id/audio":                                                             {users.ScopeMeetingRead},
-		"PATCH /api/v1/tasks/:id/rename":                                                          {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/audio":    {users.ScopeMeetingRead},
+		"PATCH /api/v1/tasks/:id/rename": {users.ScopeMeetingWrite},
+		// Audio upload routes - 浏览器录音上传
+		"POST /api/v1/meetings/:meeting_id/audio/upload":                                          {users.ScopeMeetingWrite},
+		"POST /api/v1/meetings/:meeting_id/audio/upload-file":                                     {users.ScopeMeetingWrite},
 		"GET /api/v1/devices/avfoundation":                                                        {users.ScopeMeetingRead},
 		"GET /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan":                 {users.ScopeTaskRead},
 		"POST /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan":                {users.ScopeTaskWrite},
@@ -484,14 +495,28 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 
 		// 提取 project_id, task_id, meeting_id (支持多种路由模式)
 		// 注意：路由定义使用 :id 作为项目参数，:task_id 作为任务参数
-		projectID := c.Param("id")
-		if projectID == "" {
-			projectID = c.Param("project_id") // 向后兼容
+
+		// 判断是会议任务还是项目任务
+		isMeetingTask := false
+		if len(path) > 15 && path[:15] == "/api/v1/tasks/" {
+			isMeetingTask = true
+		}
+
+		projectID := ""
+		if !isMeetingTask {
+			// 只有非会议任务路由才提取项目ID
+			projectID = c.Param("id")
+			if projectID == "" {
+				projectID = c.Param("project_id") // 向后兼容
+			}
+		} else {
+			// 会议任务路由从其他参数提取项目ID（如果需要）
+			projectID = c.Param("project_id")
 		}
 
 		// 对于某些路径，从请求体中解析 project_id
 		// 例如：PUT /api/v1/user/current-task
-		if projectID == "" && c.Request.Method == "PUT" && c.Request.URL.Path == "/api/v1/user/current-task" {
+		if projectID == "" && c.Request.Method == "PUT" && path == "/api/v1/user/current-task" {
 			// 读取请求体以获取 project_id
 			var bodyData map[string]interface{}
 			if c.Request.Body != nil {
@@ -768,6 +793,36 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.PUT("/api/v1/tasks/:id/chunks/:cid/segments", api.HandleUpdateChunkSegments(meetingsReg))
 	r.POST("/api/v1/tasks/:id/chunks/:cid/asr_once", api.HandleASROnce(meetingsReg))
 	r.GET("/api/v1/tasks/:id/merged", api.HandleGetMerged(meetingsReg))
+
+	// ========== Whisper Service Health API ==========
+	// 动态获取运行中的orchestrator实例
+	r.GET("/api/v1/services/whisper/health", func(c *gin.Context) {
+		// 从meetingsReg获取任意一个正在运行的task的orchestrator
+		var activeOrch *orchestrator.Orchestrator
+		for _, task := range meetingsReg.List() {
+			if task.Orch != nil && task.State == orchestrator.StateRunning {
+				activeOrch = task.Orch
+				break
+			}
+		}
+
+		// 如果没有运行中的task,返回未初始化错误
+		if activeOrch == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"error":   "No active Whisper service found. Start a task first.",
+			})
+			return
+		}
+
+		// 调用health handler
+		handler := api.HandleWhisperHealthCheck(
+			activeOrch.GetDegradationController(),
+			activeOrch.GetHealthChecker(),
+		)
+		handler(c)
+	})
+
 	r.GET("/api/v1/tasks/:id/merged_all", api.HandleGetMergedAll(meetingsReg))
 	r.GET("/api/v1/tasks/:id/polish", api.HandleGetTaskPolish(meetingsReg))
 
@@ -939,10 +994,11 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 					Content         string `json:"content"`
 					ExpectedVersion *int   `json:"expected_version"`
 				}
-				if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
+				if err := c.ShouldBindJSON(&body); err != nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 					return
 				}
+				// 允许空内容（用户可能想清空文档）
 				// Migrate legacy first (ensures directory)
 				_ = os.MkdirAll(taskDir, 0755)
 				// 如果传 expected_version 则严格检查；否则兼容旧 PUT 忽略版本

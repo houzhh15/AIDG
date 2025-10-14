@@ -1,0 +1,287 @@
+# AIDG 生产环境配置 (Production Configuration)
+# 本配置适用于生产部署,使用独立依赖服务 + 本地降级策略
+
+# ============================================================================
+# 服务器配置 (Server Configuration)
+# ============================================================================
+server:
+  port: 8081
+  host: "0.0.0.0"
+  read_timeout: 600s   # 生产环境增加超时
+  write_timeout: 600s
+
+# ============================================================================
+# 数据目录配置 (Data Directory Configuration)
+# ============================================================================
+data:
+  # 输出目录:使用共享卷路径,主服务和依赖服务共同访问
+  output_dir: "/data"
+  # 模型目录:Whisper 模型缓存路径
+  models_dir: "/models"
+
+# ============================================================================
+# 依赖执行配置 (Dependency Execution Configuration)
+# ============================================================================
+# 本节配置外部命令行工具(FFmpeg/PyAnnote)的执行方式
+# 
+# 生产环境推荐使用 fallback 模式:
+#   1. 优先调用独立依赖服务(解耦部署,资源隔离)
+#   2. 网络故障时自动降级到本地工具(高可用性)
+#   3. 支持零停机更新依赖服务
+dependency:
+  # 生产环境使用降级模式
+  mode: fallback
+  
+  # 依赖服务 HTTP 端点 (Dependency Service URL)
+  # 独立容器或 K8s Service 的地址
+  service_url: "http://deps-service:8080"
+  
+  # 共享卷基础路径 (Shared Volume Path)
+  # 主服务和依赖服务必须挂载相同的卷
+  shared_volume_path: "/data"
+  
+  # 本地二进制路径 (Local Binary Paths - Fallback Only)
+  # 用于降级场景,确保关键功能可用
+  local_binary_paths:
+    ffmpeg: "/usr/local/bin/ffmpeg"
+    python: "/usr/bin/python3"
+  
+  # 默认命令执行超时 (Default Timeout)
+  # 生产环境增加超时时间,处理大文件
+  timeout: 600s  # 10 分钟
+  
+  # 命令白名单 (Allowed Commands)
+  # 严格限制可执行命令,防止命令注入
+  allowed_commands:
+    - ffmpeg
+    - pyannote
+
+# ============================================================================
+# 音频处理配置 (Audio Processing Configuration)
+# ============================================================================
+audio:
+  # FFmpeg 录音设备名称 (生产环境使用默认设备)
+  device_name: ":0"
+  
+  # 录音采样率
+  sample_rate: 16000
+  
+  # 音频块大小
+  chunk_size_seconds: 30
+
+# ============================================================================
+# Whisper 转录配置 (Whisper Transcription Configuration)
+# ============================================================================
+whisper:
+  # Whisper 模型路径
+  model_path: "/models/ggml-base.bin"
+  
+  # 转录语言
+  language: "auto"
+  
+  # 线程数 (生产环境根据 CPU 核心数调整)
+  threads: 8
+
+# ============================================================================
+# 说话人分离配置 (Speaker Diarization Configuration)
+# ============================================================================
+diarization:
+  # PyAnnote 脚本路径
+  script_path: "/app/tmp/pyannote/pyannote_diarize.py"
+  
+  # 默认说话人数量
+  num_speakers: 2
+  
+  # HuggingFace Access Token
+  # 生产环境从环境变量读取: ${HUGGINGFACE_TOKEN}
+  # 或使用密钥管理服务: AWS Secrets Manager, HashiCorp Vault
+  huggingface_token: "${HUGGINGFACE_TOKEN}"
+
+# ============================================================================
+# 日志配置 (Logging Configuration)
+# ============================================================================
+logging:
+  # 生产环境使用 info 级别
+  level: "info"
+  
+  # 使用 JSON 格式便于日志聚合 (ELK, Loki)
+  format: "json"
+  
+  # 输出到标准输出,由容器运行时收集
+  output: "stdout"
+
+# ============================================================================
+# 监控与健康检查 (Monitoring & Health Check)
+# ============================================================================
+monitoring:
+  # Prometheus metrics 端点
+  metrics_enabled: true
+  metrics_port: 9090
+  
+  # 健康检查端点
+  health_check_path: "/health"
+  
+  # 依赖服务健康检查间隔
+  dependency_health_check_interval: 60s
+
+# ============================================================================
+# 资源限制 (Resource Limits)
+# ============================================================================
+# 注意:实际资源限制在 Docker Compose 或 K8s 中配置
+# 本节提供参考值
+resources:
+  # 主服务建议配置
+  main_service:
+    cpu_limit: "2.0"
+    memory_limit: "2Gi"
+  
+  # 依赖服务建议配置 (如果部署)
+  deps_service:
+    cpu_limit: "4.0"
+    memory_limit: "4Gi"
+
+# ============================================================================
+# 安全配置 (Security Configuration)
+# ============================================================================
+security:
+  # 依赖服务认证 (可选)
+  # dependency_service_auth_token: "${DEPS_SERVICE_TOKEN}"
+  
+  # CORS 配置 (如果需要)
+  cors_enabled: false
+  # cors_allowed_origins: ["https://example.com"]
+
+# ============================================================================
+# 向后兼容性配置 (Backward Compatibility)
+# ============================================================================
+# 以下字段保留用于向后兼容,新配置应使用 dependency.local_binary_paths
+# 
+# ffmpeg_binary_path: "/usr/local/bin/ffmpeg"
+# python_binary_path: "/usr/bin/python3"
+
+# ============================================================================
+# 生产环境部署说明 (Production Deployment Notes)
+# ============================================================================
+# 
+# 1. Docker Compose 部署:
+#    docker-compose -f docker-compose.prod.yml up -d
+# 
+# 2. Kubernetes 部署:
+#    kubectl apply -f deployments/kubernetes/
+# 
+# 3. 依赖服务部署 (三种方式):
+#    
+#    方式 A: Docker Compose 一键部署
+#    -----------------------------------
+#    version: '3.8'
+#    services:
+#      aidg-main:
+#        image: ghcr.io/your-org/aidg:latest
+#        volumes:
+#          - shared-data:/data
+#        environment:
+#          - DEPENDENCY_MODE=fallback
+#          - DEPENDENCY_SERVICE_URL=http://deps-service:8080
+#      
+#      deps-service:
+#        image: ghcr.io/your-org/aidg-deps:latest
+#        volumes:
+#          - shared-data:/data
+#        ports:
+#          - "8080:8080"
+#    
+#    volumes:
+#      shared-data:
+#    
+#    方式 B: 用户自建依赖服务镜像
+#    -----------------------------------
+#    ./scripts/build-deps-service.sh --with-ffmpeg --with-pyannote
+#    docker run -d --name deps-service \
+#      -v $(pwd)/data:/data \
+#      -p 8080:8080 \
+#      aidg-deps:latest
+#    
+#    方式 C: 仅使用本地降级 (无依赖服务)
+#    -----------------------------------
+#    修改配置: dependency.mode: local
+#    确保主容器包含 FFmpeg 和 PyAnnote (使用完整镜像)
+# 
+# 4. 健康检查验证:
+#    # 主服务
+#    curl http://localhost:8081/health
+#    
+#    # 依赖服务
+#    curl http://localhost:8080/api/v1/health
+# 
+# 5. 降级测试:
+#    # 停止依赖服务
+#    docker-compose stop deps-service
+#    
+#    # 观察主服务日志,应看到降级警告
+#    docker-compose logs -f aidg-main
+#    # 预期日志: "远程执行失败,降级到本地"
+#    
+#    # 功能应继续可用 (使用本地 FFmpeg/Python)
+# 
+# 6. 监控指标:
+#    # Prometheus 指标
+#    curl http://localhost:9090/metrics | grep dependency
+#    
+#    # 关键指标:
+#    # - dependency_command_executions_total{mode="remote",status="success"}
+#    # - dependency_command_duration_seconds{command="ffmpeg",mode="remote"}
+#    # - dependency_degradation_events_total{from_mode="remote",to_mode="local"}
+# 
+# 7. 故障排查:
+#    
+#    问题 A: 503 依赖不可用
+#    症状: 日志显示 "dependency_unavailable"
+#    排查:
+#      1. 检查依赖服务是否运行: docker ps | grep deps-service
+#      2. 验证网络连通性: docker exec aidg-main curl http://deps-service:8080/api/v1/health
+#      3. 检查共享卷挂载: docker exec aidg-main ls -la /data
+#      4. 确认配置正确: docker exec aidg-main cat /app/config/config.prod.yaml
+#    
+#    问题 B: 文件找不到
+#    症状: 日志显示 "no such file or directory"
+#    排查:
+#      1. 验证共享卷路径: dependency.shared_volume_path == /data
+#      2. 检查文件权限: ls -la /data/meetings/{meeting_id}/
+#      3. 确认两个服务挂载相同卷: docker inspect aidg-main deps-service
+#    
+#    问题 C: 命令执行超时
+#    症状: 日志显示 "timeout" 或 "context deadline exceeded"
+#    排查:
+#      1. 增加超时配置: dependency.timeout: 900s
+#      2. 检查资源配额: docker stats
+#      3. 观察命令耗时: 查看 Prometheus 指标
+#    
+#    问题 D: 降级不生效
+#    症状: 远程服务故障后系统仍报错,未降级到本地
+#    排查:
+#      1. 确认模式为 fallback: dependency.mode == fallback
+#      2. 验证本地工具可用: docker exec aidg-main ffmpeg -version
+#      3. 检查降级逻辑日志: grep "fallback" logs/
+# 
+# 8. 安全加固:
+#    - 使用非 root 用户运行容器 (USER aidg)
+#    - 限制容器能力 (cap_drop: ALL, cap_add: [CHOWN, SETUID])
+#    - 配置 seccomp 和 AppArmor 策略
+#    - 定期扫描镜像漏洞 (Trivy, Clair)
+#    - 使用密钥管理服务存储敏感配置 (HuggingFace Token)
+# 
+# 9. 备份与恢复:
+#    # 备份数据卷
+#    docker run --rm -v shared-data:/data -v $(pwd)/backup:/backup \
+#      alpine tar czf /backup/data-$(date +%Y%m%d).tar.gz /data
+#    
+#    # 恢复数据卷
+#    docker run --rm -v shared-data:/data -v $(pwd)/backup:/backup \
+#      alpine tar xzf /backup/data-20250112.tar.gz -C /
+# 
+# 10. 性能优化:
+#     - 使用本地卷而非 NFS (降低 I/O 延迟)
+#     - 配置 FFmpeg 硬件加速 (GPU, QSV)
+#     - 调整 PyAnnote 并发数 (num_workers)
+#     - 启用 HTTP/2 和 keep-alive
+#     - 配置合理的资源限制 (避免 OOM)

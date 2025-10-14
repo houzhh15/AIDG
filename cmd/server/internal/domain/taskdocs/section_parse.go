@@ -187,17 +187,30 @@ func extractSectionContent(compiledContent string, section Section) string {
 	lines := strings.Split(compiledContent, "\n")
 	var contentBuffer strings.Builder
 	inSection := false
+	inCodeBlock := false // 🔧 修复：添加代码块状态追踪
 
 	for _, line := range lines {
-		if isHeading(line) {
+		trimmed := strings.TrimSpace(line)
+
+		// 🔧 修复：检测代码块边界
+		if strings.HasPrefix(trimmed, "```") {
+			if inSection {
+				contentBuffer.WriteString(line + "\n")
+				inCodeBlock = !inCodeBlock
+			}
+			continue
+		}
+
+		// 🔧 修复：只在代码块外检测标题
+		if !inCodeBlock && isHeading(line) {
 			// 找到目标章节的开始
 			if line == section.Title {
 				inSection = true
 				continue // 跳过标题行
 			}
 
-			// 遇到任何标题（同级、更高级别或直接子章节），停止提取
-			// 修复：父章节不应该包含子章节的内容
+			// 🔧 修复：遇到任何标题都停止提取（保证不包含子章节）
+			// 这样父章节的内容只包含到第一个子标题之前
 			if inSection {
 				break
 			}

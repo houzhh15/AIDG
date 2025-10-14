@@ -1,3 +1,9 @@
+---
+name: executing
+description: 用于生成代码实现提示词，驱动自动化编码的提示词模版。
+version: 1.1
+---
+
 # AI 代码实现提示 (AI Code Implementation Prompt)
 
 目的：读取执行步骤，生成精确的代码实现提示词，驱动自动化编码。token允许的情况下尽可能执行多个步骤。
@@ -88,4 +94,5 @@ Next:
 
 失败代码：NO_TASK / PLAN_EMPTY / PROMPT_RECORD_FAIL / EXEC_FAIL / TEST_FAIL
 
-版本：excuting.min.v1
+---
+请开始执行当前任务的代码实现提示生成。

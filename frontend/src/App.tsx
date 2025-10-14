@@ -113,9 +113,9 @@ const App: React.FC = () => {
   const [audioModalOpen, setAudioModalOpen] = useState(false);
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   
-  // 音频服务（始终初始化，但使用空字符串作为默认值）
+  // 音频服务（使用 pendingTaskId 或 currentTask，优先使用 pendingTaskId）
   const audioService = useAudioService({
-    taskId: currentTask || '',
+    taskId: pendingTaskId || currentTask || '',
     onSuccess: () => refreshTasks(),
     onError: (err) => message.error(err.message)
   });
@@ -220,30 +220,58 @@ const App: React.FC = () => {
    * 用户选择录音模式后的处理
    */
   async function handleAudioModeSelect(mode: AudioMode) {
+    console.log('[Debug] handleAudioModeSelect called', { mode, pendingTaskId, currentTask });
     setAudioModalOpen(false);
     
-    if (!pendingTaskId) return;
+    if (!pendingTaskId) {
+      console.log('[Debug] No pending task ID, returning');
+      return;
+    }
     
     try {
       // 设置当前任务（如果还未设置）
       if (currentTask !== pendingTaskId) {
+        console.log('[Debug] Setting current task to:', pendingTaskId);
         setCurrentTask(pendingTaskId);
       }
       
       // 根据选择的模式执行相应操作
       if (mode === 'browser_record') {
         // 浏览器录音模式
+        console.log('[Debug] Calling audioService.startBrowserRecording()');
         await audioService.startBrowserRecording();
+        console.log('[Debug] startBrowserRecording() completed');
       } else if (mode === 'file_upload') {
         // 文件上传模式
+        console.log('[Debug] Calling audioService.triggerFileUpload()');
         audioService.triggerFileUpload();
       }
       
       // 同时调用原有的startTask（兼容后端状态管理）
+      console.log('[Debug] Calling startTask API for:', pendingTaskId);
       await startTask(pendingTaskId); 
       refreshTasks();
     } catch(e:any){ 
-      message.error(e.message); 
+      console.error('[Debug] Error in handleAudioModeSelect:', e);
+      
+      // 处理依赖缺失错误（503状态码）
+      if (e.response?.status === 503 && e.response?.data) {
+        const errorData = e.response.data;
+        let errorMsg = errorData.error || '服务不可用';
+        
+        // 如果有详细的依赖指导信息，展示给用户
+        if (errorData.details && errorData.details.length > 0) {
+          errorMsg += '\n\n' + errorData.details.join('\n');
+        }
+        
+        message.error({
+          content: errorMsg,
+          duration: 10, // 显示10秒，给用户充分时间阅读
+          style: { whiteSpace: 'pre-line' } // 支持换行显示
+        });
+      } else {
+        message.error(e.message); 
+      }
     } finally {
       setPendingTaskId(null);
     }

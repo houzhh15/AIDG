@@ -268,9 +268,14 @@ func HandleCreateTask(reg *meetings.Registry) gin.HandlerFunc {
 
 		os.MkdirAll(cfg.OutputDir, 0o755)
 
+		// 【修复】创建 Orchestrator 实例（但不启动）
+		// 这样在文件上传模式下可以立即使用 EnqueueAudioChunk
+		orch := orchestrator.New(cfg)
+
 		t := &meetings.Task{
 			ID:        id,
 			Cfg:       cfg,
+			Orch:      orch, // 关联 Orchestrator
 			State:     orchestrator.StateCreated,
 			CreatedAt: time.Now(),
 		}

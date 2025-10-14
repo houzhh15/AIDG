@@ -35,13 +35,30 @@ func HandleStartTask(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
-		// Initialize orchestrator if not exists
-		if t.Orch == nil {
-			t.Orch = orchestrator.New(t.Cfg)
-			// Auto resume preparation if directory already has chunks but state is Created
-			if err := t.Orch.PrepareResume(); err != nil {
-				log.Println("PrepareResume warning:", err)
+		// Hydrate runtime defaults and validate external dependencies before starting.
+		t.Cfg.ApplyRuntimeDefaults()
+		if err := t.Cfg.ValidateCriticalDependencies(); err != nil {
+			if depErr, ok := err.(orchestrator.DependencyError); ok {
+				// Mark task as stopped so UI reflects that startup did not proceed.
+				t.State = orchestrator.StateStopped
+				meetings.SaveTasks(reg)
+				c.JSON(http.StatusServiceUnavailable, gin.H{
+					"error":   depErr.Error(),
+					"missing": depErr.Missing,
+					"details": depErr.Details,
+				})
+				return
 			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Always rebuild orchestrator using the latest hydrated configuration to
+		// ensure runtime defaults are honored even for legacy tasks.
+		t.Orch = orchestrator.New(t.Cfg)
+		// Auto resume preparation if directory already has chunks but state is Created
+		if err := t.Orch.PrepareResume(); err != nil {
+			log.Println("PrepareResume warning:", err)
 		}
 
 		// Start the task

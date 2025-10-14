@@ -82,8 +82,10 @@ func appendChunkInternal(projectID, taskID, docType, content, op, user, source s
 
 	// 更新 compiled
 	compiledPath, _ := docCompiledPath(projectID, taskID, docType)
+	needSectionSync := false
 	if op == "replace_full" {
 		_ = os.WriteFile(compiledPath, []byte(content), 0644)
+		needSectionSync = true // 全文替换后需要重新解析章节
 	} else {
 		// append 模式
 		if _, statErr := os.Stat(compiledPath); statErr == nil {
@@ -109,6 +111,22 @@ func appendChunkInternal(projectID, taskID, docType, content, op, user, source s
 
 	if err = writeMetaAtomic(projectID, taskID, docType, meta); err != nil {
 		return
+	}
+
+	// 如果是 replace_full 操作，重新解析章节结构
+	if needSectionSync {
+		docPath, pathErr := docBaseDir(projectID, taskID, docType)
+		if pathErr == nil {
+			sm := NewSyncManager(docPath, docType)
+			log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s section_sync_start compiled_size=%d", projectID, taskID, docType, len(compiledBytes))
+			if syncErr := sm.SyncFromCompiled(); syncErr != nil {
+				log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s section_sync_error=%v", projectID, taskID, docType, syncErr)
+			} else {
+				// 重新读取 compiled.md 确认内容
+				verifyBytes, _ := os.ReadFile(compiledPath)
+				log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s section_sync=success compiled_size_after=%d", projectID, taskID, docType, len(verifyBytes))
+			}
+		}
 	}
 
 	log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s seq=%d ver=%d op=%s duplicate=false content_size=%d total_chunks=%d compiled_size=%d dur_ms=%d",
@@ -239,7 +257,9 @@ func logicalDeleteChunk(projectID, taskID, docType string, seq int) (DocMeta, er
 
 // Append 封装底层 appendChunkInternal，提供并发互斥
 func (s *DocService) Append(projectID, taskID, docType, content, user string, expectedVersion *int, op, source string) (DocMeta, *DocChunk, bool, error) {
-	if strings.TrimSpace(content) == "" {
+	// 只在非 replace_full 模式下拒绝空内容
+	// replace_full 允许空内容（用户可能想清空文档）
+	if strings.TrimSpace(content) == "" && op != "replace_full" {
 		return DocMeta{}, nil, false, fmt.Errorf("empty_content")
 	}
 

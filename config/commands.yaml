@@ -1,0 +1,66 @@
+commands:
+  - name: "ffmpeg"
+    binary_path: "/usr/bin/ffmpeg"
+    allowed_args_patterns:
+      - "^-i$"              # Input file flag
+      - "^-ar$"             # Audio sampling rate flag
+      - "^-ac$"             # Audio channel count flag
+      - "^-c:a$"            # Audio codec flag
+      - "^-f$"              # Format flag
+      - "^-y$"              # Overwrite output flag
+      - "^-loglevel$"       # Log level flag
+      - "^[0-9]+$"          # Numeric parameters (sample rate, channels, etc)
+      - "^pcm_s16le$"       # Audio codec name
+      - "^wav$"             # Format name
+      - "^error$"           # Log level value
+      - "^/data/.*"         # File paths must be under /data
+    timeout: "300s"         # 5 minutes
+    max_concurrent: 5
+
+  - name: "python"
+    binary_path: "/usr/local/bin/python3"
+    allowed_args_patterns:
+      - "^/app/scripts/.*\\.py$"   # Only allow scripts in /app/scripts/
+      - "^--audio$"                # Audio parameter flag (legacy)
+      - "^--input$"                # Input audio file flag (pyannote)
+      - "^--output$"               # Output parameter flag
+      - "^--device$"               # Device selection flag (cpu/cuda/mps/auto)
+      - "^--num-speakers$"         # Number of speakers flag
+      - "^--num_speakers$"         # Number of speakers flag (underscore variant)
+      - "^--min-speakers$"         # Minimum speakers flag
+      - "^--max-speakers$"         # Maximum speakers flag
+      - "^--hf_token$"             # Hugging Face token flag
+      - "^--pipeline$"             # Pipeline model flag
+      - "^--offline$"              # Offline mode flag
+      - "^--cache_dir$"            # Cache directory flag
+      - "^--speakers-json$"        # Speakers JSON file flag (embeddings)
+      - "^--threshold$"            # Threshold parameter flag (embeddings)
+      - "^--auto-lower-threshold$" # Auto-lower threshold flag (embeddings)
+      - "^--auto-lower-min$"       # Auto-lower min value flag (embeddings)
+      - "^--auto-lower-step$"      # Auto-lower step value flag (embeddings)
+      - "^--existing-embeddings$"  # Existing embeddings file flag (for incremental updates)
+      - "^(cpu|cuda|mps|auto)$"    # Device values
+      - "^[0-9]+$"                 # Numeric parameters (integers)
+      - "^[0-9]+\\.[0-9]+$"        # Numeric parameters (floats like 0.55, 0.45, 0.02)
+      - "^hf_[A-Za-z0-9]+$"        # Hugging Face token values
+      - "^pyannote/.*$"            # Hugging Face model names
+      - "^/data/.*"                # File paths must be under /data
+      - "^/app/scripts/.*$"        # Script paths (for positional arg)
+    env_whitelist:
+      - "HUGGINGFACE_ACCESS_TOKEN"
+      - "HUGGINGFACE_TOKEN"        # Alternative token env var
+      - "HF_HUB_OFFLINE"           # Offline mode env var
+      - "LOG_LEVEL"
+    timeout: "600s"                # 10 minutes
+    max_concurrent: 2
+
+security:
+  shared_volume_path: "/data"
+  forbidden_paths:
+    - "/etc"
+    - "/sys"
+    - "/proc"
+    - "/dev"
+  max_command_length: 1024
+  enable_audit_log: true
+  audit_log_path: "/var/log/cmd-executor-audit.log"

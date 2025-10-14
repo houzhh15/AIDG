@@ -347,22 +347,51 @@ func ReplaceSectionRange(
 		return "", fmt.Errorf("parent section title not found: %s", parentSection.Title)
 	}
 
-	// 找到父章节范围的结束位置（下一个同级或更高级别的标题）
-	endIdx := len(lines)
+	// 🔧 新逻辑：检查新内容中是否包含同级或更高级别的标题
+	// 如果包含，说明是全文编辑，需要替换到文档末尾
+	newContentLines := strings.Split(strings.TrimSpace(newContent), "\n")
+	hasHigherLevelHeading := false
 	inCodeBlock := false
-	for i := startIdx + 1; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		// 检测代码块边界
+
+	for _, line := range newContentLines {
+		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") {
 			inCodeBlock = !inCodeBlock
 			continue
 		}
-		// 只在代码块外检测标题
-		if !inCodeBlock && isHeading(lines[i]) {
-			level := getHeadingLevel(lines[i])
-			if level <= parentSection.Level {
-				endIdx = i
+		if !inCodeBlock && isHeading(line) {
+			level := getHeadingLevel(line)
+			// 跳过第一行（标题本身）
+			if line != parentSection.Title && level <= parentSection.Level {
+				hasHigherLevelHeading = true
 				break
+			}
+		}
+	}
+
+	// 找到父章节范围的结束位置
+	var endIdx int
+	if hasHigherLevelHeading {
+		// 如果新内容包含同级或更高级别标题，替换到文档末尾
+		endIdx = len(lines)
+	} else {
+		// 否则，只替换到下一个同级或更高级别标题之前
+		endIdx = len(lines)
+		inCodeBlock = false
+		for i := startIdx + 1; i < len(lines); i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			// 检测代码块边界
+			if strings.HasPrefix(trimmed, "```") {
+				inCodeBlock = !inCodeBlock
+				continue
+			}
+			// 只在代码块外检测标题
+			if !inCodeBlock && isHeading(lines[i]) {
+				level := getHeadingLevel(lines[i])
+				if level <= parentSection.Level {
+					endIdx = i
+					break
+				}
 			}
 		}
 	}
@@ -375,12 +404,15 @@ func ReplaceSectionRange(
 		builder.WriteString(lines[i] + "\n")
 	}
 
-	// 2. 插入新内容
-	builder.WriteString(newContent)
-	if !strings.HasSuffix(newContent, "\n") {
+	// 2. 插入新内容（所见即所得）
+	trimmedContent := strings.TrimSpace(newContent)
+	if trimmedContent != "" {
+		builder.WriteString(trimmedContent)
+		if !strings.HasSuffix(trimmedContent, "\n") {
+			builder.WriteString("\n")
+		}
 		builder.WriteString("\n")
 	}
-	builder.WriteString("\n")
 
 	// 3. 保留结束位置之后的内容
 	for i := endIdx; i < len(lines); i++ {

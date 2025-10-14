@@ -1,12 +1,17 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -87,24 +92,143 @@ func HandleAudioUpload(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
+		// 检查是否启用音频转换（支持轻量级部署）
+		enableConversion := strings.ToLower(os.Getenv("ENABLE_AUDIO_CONVERSION"))
+		if enableConversion == "false" || enableConversion == "0" {
+			fmt.Printf("[AUDIO] Audio conversion disabled (ENABLE_AUDIO_CONVERSION=%s), skipping conversion\n", enableConversion)
+			// 音频转换已禁用，仅保存文件即可
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data": gin.H{
+					"chunk_id":          fmt.Sprintf("chunk_%04d", chunkIndex),
+					"file_path":         savePath,
+					"processing_status": "saved",
+					"note":              "音频转换已禁用（轻量级模式）",
+				},
+			})
+			return
+		}
+
 		// 转换 webm 为 wav 格式
 		wavFilename := fmt.Sprintf("chunk_%04d.wav", chunkIndex)
 		wavPath := filepath.Join(task.Cfg.OutputDir, wavFilename)
-		
+
 		// 打印日志
-		fmt.Printf("[AUDIO] Converting audio: chunk_index=%d, webm=%s, wav=%s\n", 
+		fmt.Printf("[AUDIO] Converting audio: chunk_index=%d, webm=%s, wav=%s\n",
 			chunkIndex, savePath, wavPath)
-		
+
+		// Check dependency mode - use remote deps-service if available
+		dependencyMode := strings.ToLower(os.Getenv("DEPENDENCY_MODE"))
+		depsServiceURL := os.Getenv("DEPS_SERVICE_URL")
+
+		if (dependencyMode == "fallback" || depsServiceURL != "") && depsServiceURL != "" {
+			// Use remote dependency service for conversion
+			fmt.Printf("[AUDIO] Using remote deps-service for conversion (url=%s)\n", depsServiceURL)
+
+			// Construct container paths (deps-service mounts host data/ to /data)
+			containerWebmPath := strings.Replace(savePath, task.Cfg.OutputDir, "/data/meetings/"+meetingID, 1)
+			containerWavPath := strings.Replace(wavPath, task.Cfg.OutputDir, "/data/meetings/"+meetingID, 1)
+
+			// Call deps-service to convert webm to wav
+			requestBody := map[string]interface{}{
+				"command": "ffmpeg",
+				"args": []string{
+					"-y",
+					"-i", containerWebmPath,
+					"-ar", "16000",
+					"-ac", "1",
+					"-c:a", "pcm_s16le",
+					containerWavPath,
+				},
+			}
+
+			jsonData, err := json.Marshal(requestBody)
+			if err != nil {
+				log.Printf("[AUDIO] Failed to marshal deps-service request: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare conversion request"})
+				return
+			}
+
+			// Make HTTP POST request to deps-service
+			client := &http.Client{Timeout: 30 * time.Second}
+			resp, err := client.Post(
+				depsServiceURL+"/api/v1/execute",
+				"application/json",
+				bytes.NewBuffer(jsonData),
+			)
+			if err != nil {
+				log.Printf("[AUDIO] Failed to call deps-service: %v", err)
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Audio conversion service unavailable"})
+				return
+			}
+			defer resp.Body.Close()
+
+			respBody, _ := io.ReadAll(resp.Body)
+			var result map[string]interface{}
+			if err := json.Unmarshal(respBody, &result); err != nil {
+				log.Printf("[AUDIO] Failed to parse deps-service response: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid conversion service response"})
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK || !getBoolValue(result, "success") {
+				log.Printf("[AUDIO] Conversion failed: %s", respBody)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "Audio conversion failed",
+					"details": result,
+				})
+				return
+			}
+
+			fmt.Printf("[AUDIO] Remote conversion successful: chunk_%04d.webm -> chunk_%04d.wav (took %vms)\n",
+				chunkIndex, chunkIndex, getFloatValue(result, "duration_ms"))
+
+			// 触发 ASR 转录处理（添加到队列）
+			fmt.Printf("[AUDIO] Checking Orchestrator: task.Orch=%v, task.State=%v\n", task.Orch != nil, task.State)
+			if task.Orch != nil {
+				fmt.Printf("[AUDIO] Triggering ASR transcription for chunk %d after remote conversion\n", chunkIndex)
+				go task.Orch.EnqueueAudioChunk(chunkIndex, wavPath)
+			} else {
+				fmt.Printf("[AUDIO] Warning: Orchestrator is nil, cannot trigger transcription\n")
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data": gin.H{
+					"chunk_id":          fmt.Sprintf("chunk_%04d", chunkIndex),
+					"webm_path":         savePath,
+					"wav_path":          wavPath,
+					"processing_status": "converted",
+					"duration_ms":       getFloatValue(result, "duration_ms"),
+				},
+			})
+			return
+		} // Fallback to local FFmpeg if no remote service available
+		task.Cfg.ApplyRuntimeDefaults()
+		ffmpegBin := strings.TrimSpace(task.Cfg.FFmpegBinaryPath)
+		if ffmpegBin == "" {
+			ffmpegBin = "ffmpeg"
+		}
+		if _, err := exec.LookPath(ffmpegBin); err != nil {
+			hint := "检测到轻量级镜像未包含 FFmpeg，请在宿主机安装后通过 docker-compose 卷挂载到容器，或设置 FFMPEG_PATH 指向可执行文件。也可以切换至完整版镜像以获得内置依赖。"
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"success": false,
+				"message": fmt.Sprintf("FFmpeg 未配置或不可用: %v", err),
+				"hint":    hint,
+			})
+			return
+		}
+
 		// 使用 FFmpeg 转换音频格式（16kHz 单声道 PCM）
-		cmd := exec.Command("ffmpeg", 
-			"-y",                    // 覆盖输出文件
-			"-i", savePath,          // 输入文件
-			"-ar", "16000",          // 采样率 16kHz
-			"-ac", "1",              // 单声道
-			"-c:a", "pcm_s16le",     // PCM 编码
-			wavPath,                 // 输出文件
+		cmd := exec.Command(ffmpegBin,
+			"-y",           // 覆盖输出文件
+			"-i", savePath, // 输入文件
+			"-ar", "16000", // 采样率 16kHz
+			"-ac", "1", // 单声道
+			"-c:a", "pcm_s16le", // PCM 编码
+			wavPath, // 输出文件
 		)
-		
+
 		// 捕获错误输出
 		output, err := cmd.CombinedOutput()
 		if err != nil {
@@ -116,7 +240,7 @@ func HandleAudioUpload(reg *meetings.Registry) gin.HandlerFunc {
 			})
 			return
 		}
-		
+
 		fmt.Printf("[AUDIO] Conversion successful: %s\n", wavPath)
 
 		// 触发 ASR 转录处理
@@ -239,4 +363,26 @@ func HandleAudioFileUpload(reg *meetings.Registry) gin.HandlerFunc {
 			},
 		})
 	}
+}
+
+// Helper functions for parsing JSON responses
+func getBoolValue(m map[string]interface{}, key string) bool {
+	if v, ok := m[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
+func getFloatValue(m map[string]interface{}, key string) float64 {
+	if v, ok := m[key]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val
+		case int:
+			return float64(val)
+		}
+	}
+	return 0
 }

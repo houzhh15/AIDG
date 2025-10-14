@@ -9,6 +9,9 @@ interface Props {
   onSelect: (sectionId: string) => void
 }
 
+// 特殊的全文模式ID
+export const FULL_DOCUMENT_ID = '__FULL_DOCUMENT__'
+
 const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect }) => {
   // 将扁平的 sections 转换为树形结构
   const buildTreeData = (sections: Section[]): DataNode[] => {
@@ -39,7 +42,14 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect })
       }
     })
 
-    return roots
+    // 在最前面添加"全文"节点
+    const fullDocNode: DataNode = {
+      key: FULL_DOCUMENT_ID,
+      title: '📄 全文',
+      children: [],
+    }
+
+    return [fullDocNode, ...roots]
   }
 
   // 格式化标题：去除 Markdown 标记

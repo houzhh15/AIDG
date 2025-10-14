@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Layout, Spin, message } from 'antd'
-import SectionTree from './SectionTree'
+import SectionTree, { FULL_DOCUMENT_ID } from './SectionTree'
 import SectionContentEditor from './SectionContentEditor'
-import { getTaskSections, getTaskSection, updateTaskSection, updateTaskSectionFull } from '../api/tasks'
+import { getTaskSections, getTaskSection, updateTaskSection, updateTaskSectionFull, getTaskDocument, saveTaskDocument } from '../api/tasks'
 import type { SectionMeta, SectionContent } from '../types/section'
 
 const { Sider, Content } = Layout
@@ -41,8 +41,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
       const response = await getTaskSections(projectId, taskId, docType)
       setSections(response)
 
-      // 自动选中第一个章节
-      if (response.sections.length > 0) {
+      // 如果当前没有选中任何章节，自动选中第一个章节
+      // 注意：不要在保存后自动切换选中的章节（保持用户当前的选择）
+      if (!currentSectionId && response.sections.length > 0) {
         setCurrentSectionId(response.sections[0].id)
       }
     } catch (error) {
@@ -56,25 +57,47 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
   const loadSectionContent = async (sectionId: string) => {
     setLoading(true)
     try {
-      // 检查是否为父章节（有子章节）
-      const section = sections?.sections.find(s => s.id === sectionId)
-      const hasChildren = section && section.children && section.children.length > 0
-
-      if (hasChildren) {
-        // 全文编辑模式：获取包含所有子章节的完整内容
-        const response = await getTaskSection(projectId, taskId, docType, sectionId, true)
-        // 拼接父章节和所有子章节内容
-        const compiledContent = compileFullText(response)
+      // 检查是否为"全文"模式
+      if (sectionId === FULL_DOCUMENT_ID) {
+        console.log('[SectionEditor] Loading full document...')
+        // 加载整个 compiled.md
+        const response = await getTaskDocument(projectId, taskId, docType as 'requirements' | 'design' | 'test')
+        console.log('[SectionEditor] Full document loaded, length:', response.content.length)
+        console.log('[SectionEditor] Content preview (first 200 chars):', response.content.substring(0, 200))
         setIsFullEditMode(true)
         setSectionContent({
-          ...response,
-          content: compiledContent
+          id: FULL_DOCUMENT_ID,
+          title: '📄 全文',
+          content: response.content,
+          level: 0,
+          order: 0,
+          parent_id: null,
+          file: '',
+          children: [],
+          hash: '',
+          children_content: []
         })
       } else {
-        // 单章节编辑模式
-        const response = await getTaskSection(projectId, taskId, docType, sectionId, false)
-        setIsFullEditMode(false)
-        setSectionContent(response)
+        // 检查是否为父章节（有子章节）
+        const section = sections?.sections.find(s => s.id === sectionId)
+        const hasChildren = section && section.children && section.children.length > 0
+
+        if (hasChildren) {
+          // 全文编辑模式：获取包含所有子章节的完整内容
+          const response = await getTaskSection(projectId, taskId, docType, sectionId, true)
+          // 拼接父章节和所有子章节内容
+          const compiledContent = compileFullText(response)
+          setIsFullEditMode(true)
+          setSectionContent({
+            ...response,
+            content: compiledContent
+          })
+        } else {
+          // 单章节编辑模式
+          const response = await getTaskSection(projectId, taskId, docType, sectionId, false)
+          setIsFullEditMode(false)
+          setSectionContent(response)
+        }
       }
     } catch (error) {
       message.error('加载章节内容失败')
@@ -97,21 +120,44 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
   }
 
   const handleSave = async () => {
-    if (!sectionContent || !sections) return
+    if (!sectionContent) return
+    
+    // 全文模式不需要 sections
+    if (sectionContent.id !== FULL_DOCUMENT_ID && !sections) return
 
     setSaving(true)
     try {
-      if (isFullEditMode) {
-        // 全文编辑模式：调用全文更新API
+      // 检查是否为"全文"模式
+      if (sectionContent.id === FULL_DOCUMENT_ID) {
+        console.log('[SectionEditor] Saving full document, content length:', sectionContent.content.length)
+        console.log('[SectionEditor] Content preview (first 200 chars):', sectionContent.content.substring(0, 200))
+        
+        // 全文档模式：直接调用 saveTaskDocument API
+        await saveTaskDocument(projectId, taskId, docType as 'requirements' | 'design' | 'test', sectionContent.content)
+        message.success('保存成功')
+        
+        console.log('[SectionEditor] Save completed, reloading sections...')
+        // 重新加载章节列表
+        await loadSections()
+        
+        console.log('[SectionEditor] Sections reloaded, now reloading full document content...')
+        // 重要：全文保存后，保持"全文"视图，重新加载全文内容
+        await loadSectionContent(FULL_DOCUMENT_ID)
+        console.log('[SectionEditor] Full document reloaded')
+      } else if (isFullEditMode) {
+        // 章节全文编辑模式：调用全文更新API
         await updateTaskSectionFull(
           projectId,
           taskId,
           docType,
           sectionContent.id,
           sectionContent.content,
-          sections.version
+          sections!.version  // 已在上面检查了 sections 不为 null
         )
         message.success('保存成功，已重新拆分章节')
+        
+        // 重新加载章节列表
+        await loadSections()
       } else {
         // 单章节编辑模式：调用普通更新API
         await updateTaskSection(
@@ -120,13 +166,13 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
           docType,
           sectionContent.id,
           sectionContent.content,
-          sections.version
+          sections!.version  // 已在上面检查了 sections 不为 null
         )
         message.success('保存成功')
+        
+        // 重新加载章节列表
+        await loadSections()
       }
-
-      // 重新加载章节列表（版本号已更新）
-      await loadSections()
       
       // 通知父组件刷新文档
       if (onSaveCallback) {

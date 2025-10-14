@@ -67,6 +67,12 @@ export async function uploadAudioChunk(
     if (status === 413) {
       throw createAudioError('文件过大', AudioErrorCode.FILE_TOO_LARGE, error);
     }
+    if (status === 503) {
+      // 服务不可用，通常是因为缺少依赖（如FFmpeg）
+      const hint = error.response?.data?.hint || '';
+      const fullMessage = hint ? `${message}\n\n${hint}` : message;
+      throw createAudioError(fullMessage, AudioErrorCode.SERVICE_UNAVAILABLE, error);
+    }
     if (status && status >= 500) {
       throw createAudioError(
         `服务器错误: ${message}`,
@@ -135,6 +141,12 @@ export async function uploadAudioFile(
     }
     if (status === 413) {
       throw createAudioError('文件过大', AudioErrorCode.FILE_TOO_LARGE, error);
+    }
+    if (status === 503) {
+      // 服务不可用，通常是因为缺少依赖（如FFmpeg）
+      const hint = error.response?.data?.hint || '';
+      const fullMessage = hint ? `${message}\n\n${hint}` : message;
+      throw createAudioError(fullMessage, AudioErrorCode.SERVICE_UNAVAILABLE, error);
     }
     if (status && status >= 500) {
       throw createAudioError(

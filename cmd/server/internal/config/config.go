@@ -13,7 +13,6 @@ type Config struct {
 	Data     DataConfig
 	Log      LogConfig
 	Security SecurityConfig
-	MCP      MCPConfig
 	Frontend FrontendConfig
 }
 
@@ -42,12 +41,6 @@ type SecurityConfig struct {
 	JWTSecret            string
 	AdminDefaultPassword string
 	CORSAllowedOrigins   []string
-}
-
-// MCPConfig MCP 服务配置
-type MCPConfig struct {
-	ServerURL string
-	Password  string
 }
 
 // FrontendConfig 前端配置
@@ -79,10 +72,6 @@ func LoadConfig() (*Config, error) {
 			JWTSecret:            getEnv("USER_JWT_SECRET", ""),
 			AdminDefaultPassword: getEnv("ADMIN_DEFAULT_PASSWORD", ""),
 			CORSAllowedOrigins:   parseStringList(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173")),
-		},
-		MCP: MCPConfig{
-			ServerURL: getEnv("MCP_SERVER_URL", "http://localhost:8081"),
-			Password:  getEnv("MCP_PASSWORD", ""),
 		},
 		Frontend: FrontendConfig{
 			DistDir: getEnv("FRONTEND_DIST_DIR", "./frontend/dist"),
@@ -119,29 +108,24 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 
-	// 3. MCP 密码验证（生产环境）
-	if cfg.Server.Env == "production" && cfg.MCP.Password == "" {
-		errors = append(errors, "MCP_PASSWORD is required in production environment")
-	}
-
-	// 4. 端口验证
+	// 3. 端口验证
 	if port, err := strconv.Atoi(cfg.Server.Port); err != nil || port < 1 || port > 65535 {
 		errors = append(errors, fmt.Sprintf("invalid PORT value: %s (must be 1-65535)", cfg.Server.Port))
 	}
 
-	// 5. 日志级别验证
+	// 4. 日志级别验证
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLogLevels[cfg.Log.Level] {
 		errors = append(errors, fmt.Sprintf("invalid LOG_LEVEL: %s (must be: debug, info, warn, error)", cfg.Log.Level))
 	}
 
-	// 6. 日志格式验证
+	// 5. 日志格式验证
 	validLogFormats := map[string]bool{"console": true, "json": true}
 	if !validLogFormats[cfg.Log.Format] {
 		errors = append(errors, fmt.Sprintf("invalid LOG_FORMAT: %s (must be: console, json)", cfg.Log.Format))
 	}
 
-	// 7. 环境验证
+	// 6. 环境验证
 	validEnvs := map[string]bool{"dev": true, "development": true, "staging": true, "production": true}
 	if !validEnvs[cfg.Server.Env] {
 		errors = append(errors, fmt.Sprintf("invalid ENV: %s (must be: dev, development, staging, production)", cfg.Server.Env))
@@ -186,9 +170,6 @@ func (c *Config) PrintConfig() string {
     - JWT Secret: %s
     - Admin Password: %s
     - CORS Origins: %v
-  MCP:
-    - Server URL: %s
-    - Password: %s
   Frontend:
     - Dist Dir: %s`,
 		c.Server.Env,
@@ -202,8 +183,6 @@ func (c *Config) PrintConfig() string {
 		maskSecret(c.Security.JWTSecret),
 		maskSecret(c.Security.AdminDefaultPassword),
 		c.Security.CORSAllowedOrigins,
-		c.MCP.ServerURL,
-		maskSecret(c.MCP.Password),
 		c.Frontend.DistDir,
 	)
 }

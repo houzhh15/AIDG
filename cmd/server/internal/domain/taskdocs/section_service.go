@@ -36,12 +36,16 @@ type SectionService interface {
 
 // sectionServiceImpl Service 实现
 type sectionServiceImpl struct {
-	basePath string // 项目根目录
+	basePath   string      // 项目根目录
+	docService *DocService // 文档服务（用于记录历史）
 }
 
 // NewSectionService 创建 Service 实例
 func NewSectionService(basePath string) SectionService {
-	return &sectionServiceImpl{basePath: basePath}
+	return &sectionServiceImpl{
+		basePath:   basePath,
+		docService: NewDocService(), // 创建文档服务实例
+	}
 }
 
 // getDocPath 获取文档路径
@@ -53,10 +57,23 @@ func (s *sectionServiceImpl) getDocPath(projectID, taskID, docType string) strin
 func (s *sectionServiceImpl) GetSections(projectID, taskID, docType string) (*SectionMeta, error) {
 	docPath := s.getDocPath(projectID, taskID, docType)
 	metaPath := filepath.Join(docPath, "sections.json")
+	compiledPath := filepath.Join(docPath, "compiled.md")
 
 	// 检查 sections.json 是否存在
 	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-		// 首次初始化：从 compiled.md 解析
+		// 检查 compiled.md 是否存在
+		if _, compErr := os.Stat(compiledPath); os.IsNotExist(compErr) {
+			// 两者都不存在：返回空的章节元数据（新文档）
+			return &SectionMeta{
+				Version:   0,
+				UpdatedAt: time.Now(),
+				RootLevel: 1,
+				Sections:  []Section{},
+				ETag:      generateETag([]Section{}),
+			}, nil
+		}
+
+		// compiled.md 存在但 sections.json 不存在：首次初始化
 		sm := NewSyncManager(docPath, docType)
 		if err := sm.SyncFromCompiled(); err != nil {
 			return nil, fmt.Errorf("init from compiled: %w", err)
@@ -167,6 +184,33 @@ func (s *sectionServiceImpl) UpdateSection(
 		return fmt.Errorf("sync to compiled: %w", err)
 	}
 
+	// 7. 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
+	compiledPath := filepath.Join(docPath, "compiled.md")
+	newCompiled, err := os.ReadFile(compiledPath)
+	if err != nil {
+		return fmt.Errorf("read compiled.md: %w", err)
+	}
+
+	// 通过 DocService 记录变更历史
+	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return fmt.Errorf("load doc meta: %w", err)
+	}
+
+	_, _, _, err = s.docService.Append(
+		projectID, taskID, docType,
+		string(newCompiled), // 完整文档内容
+		"section_edit",      // 用户标识
+		&docMeta.Version,    // 版本号
+		"replace_full",      // 全文替换
+		"update_section",    // 来源：单章节更新
+	)
+	if err != nil {
+		return fmt.Errorf("save through doc service: %w", err)
+	}
+
+	// DocService.Append 会再次调用 SyncFromCompiled，但内容相同不会有问题
+
 	return nil
 }
 
@@ -179,7 +223,7 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 	compiledPath := filepath.Join(docPath, "compiled.md")
 	metaPath := filepath.Join(docPath, "sections.json")
 
-	// 1. 加载并验证版本
+	// 1. 加载并验证版本（sections.json 的版本）
 	meta, err := loadSectionMeta(metaPath)
 	if err != nil {
 		return fmt.Errorf("load meta: %w", err)
@@ -195,12 +239,11 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 		return err
 	}
 
-	// 3. 备份当前 compiled.md（用于回滚）
+	// 3. 读取当前 compiled.md
 	compiledContent, err := os.ReadFile(compiledPath)
 	if err != nil {
 		return fmt.Errorf("read compiled.md: %w", err)
 	}
-	backup := compiledContent
 
 	// 4. 替换父章节范围
 	newCompiled, err := ReplaceSectionRange(string(compiledContent), section, fullContent, meta)
@@ -208,18 +251,26 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 		return fmt.Errorf("replace section range: %w", err)
 	}
 
-	// 5. 写入 compiled.md
-	if err := os.WriteFile(compiledPath, []byte(newCompiled), 0644); err != nil {
-		return fmt.Errorf("write compiled.md: %w", err)
+	// 5. 通过 DocService 保存（记录到 chunks.ndjson）
+	// 使用 replace_full 模式，这样会自动触发章节重新解析
+	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return fmt.Errorf("load doc meta: %w", err)
 	}
 
-	// 6. 重新从 compiled.md 解析章节
-	sm := NewSyncManager(docPath, docType)
-	if err := sm.SyncFromCompiled(); err != nil {
-		// 解析失败，回滚 compiled.md
-		os.WriteFile(compiledPath, backup, 0644)
-		return fmt.Errorf("sync from compiled failed, rolled back: %w", err)
+	_, _, _, err = s.docService.Append(
+		projectID, taskID, docType,
+		newCompiled,           // 新的完整文档内容
+		"section_edit",        // 用户标识
+		&docMeta.Version,      // 使用 doc meta 的版本号进行并发检查
+		"replace_full",        // 操作类型：全文替换
+		"update_section_full", // 来源：章节全文更新
+	)
+	if err != nil {
+		return fmt.Errorf("save through doc service: %w", err)
 	}
+
+	// DocService.Append 已经调用了 SyncFromCompiled，所以不需要再次调用
 
 	return nil
 }
@@ -265,6 +316,31 @@ func (s *sectionServiceImpl) InsertSection(
 	sm := NewSyncManager(docPath, docType)
 	if err := sm.SyncToCompiled(); err != nil {
 		return nil, fmt.Errorf("sync to compiled: %w", err)
+	}
+
+	// 6. 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
+	compiledPath := filepath.Join(docPath, "compiled.md")
+	newCompiled, err := os.ReadFile(compiledPath)
+	if err != nil {
+		return nil, fmt.Errorf("read compiled.md: %w", err)
+	}
+
+	// 通过 DocService 记录变更历史
+	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return nil, fmt.Errorf("load doc meta: %w", err)
+	}
+
+	_, _, _, err = s.docService.Append(
+		projectID, taskID, docType,
+		string(newCompiled), // 完整文档内容
+		"section_edit",      // 用户标识
+		&docMeta.Version,    // 版本号
+		"replace_full",      // 全文替换
+		"insert_section",    // 来源：插入章节
+	)
+	if err != nil {
+		return nil, fmt.Errorf("save through doc service: %w", err)
 	}
 
 	return newSection, nil
@@ -325,6 +401,31 @@ func (s *sectionServiceImpl) DeleteSection(
 	sm := NewSyncManager(docPath, docType)
 	if err := sm.SyncToCompiled(); err != nil {
 		return fmt.Errorf("sync to compiled: %w", err)
+	}
+
+	// 8. 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
+	compiledPath := filepath.Join(docPath, "compiled.md")
+	newCompiled, err := os.ReadFile(compiledPath)
+	if err != nil {
+		return fmt.Errorf("read compiled.md: %w", err)
+	}
+
+	// 通过 DocService 记录变更历史
+	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return fmt.Errorf("load doc meta: %w", err)
+	}
+
+	_, _, _, err = s.docService.Append(
+		projectID, taskID, docType,
+		string(newCompiled), // 完整文档内容
+		"section_edit",      // 用户标识
+		&docMeta.Version,    // 版本号
+		"replace_full",      // 全文替换
+		"delete_section",    // 来源：删除章节
+	)
+	if err != nil {
+		return fmt.Errorf("save through doc service: %w", err)
 	}
 
 	return nil

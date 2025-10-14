@@ -1,0 +1,137 @@
+# AIDG 开发环境配置 (Development Configuration)
+# 本配置适用于本地开发,使用本地安装的 FFmpeg 和 Python 工具
+
+# ============================================================================
+# 服务器配置 (Server Configuration)
+# ============================================================================
+server:
+  port: 8081
+  host: "0.0.0.0"
+  read_timeout: 300s
+  write_timeout: 300s
+
+# ============================================================================
+# 数据目录配置 (Data Directory Configuration)
+# ============================================================================
+data:
+  # 输出目录:会议录音、转录、分离结果存储路径
+  output_dir: "/app/data"
+  # 模型目录:Whisper 模型缓存路径
+  models_dir: "/app/models"
+
+# ============================================================================
+# 依赖执行配置 (Dependency Execution Configuration)
+# ============================================================================
+# 本节配置外部命令行工具(FFmpeg/PyAnnote)的执行方式
+# 
+# 执行模式 (dependency_mode):
+#   - local:    直接调用本地安装的工具 (适合开发环境)
+#   - remote:   通过 HTTP 调用独立依赖服务 (适合生产环境)
+#   - fallback: 优先远程,失败自动降级到本地 (推荐生产环境)
+dependency:
+  # 开发环境使用本地模式
+  mode: local
+  
+  # 本地二进制路径 (Local Binary Paths)
+  # 指定命令行工具的完整路径,或留空自动从 PATH 查找
+  local_binary_paths:
+    ffmpeg: "/usr/local/bin/ffmpeg"      # macOS Homebrew 默认路径
+    python: "/usr/bin/python3"           # 系统 Python3
+  
+  # 共享卷基础路径 (Shared Volume Path)
+  # 所有音频处理文件存储的根目录
+  shared_volume_path: "/app/data"
+  
+  # 默认命令执行超时 (Default Timeout)
+  # FFmpeg 音频转换通常 5-30 秒,PyAnnote 说话人分离 5-10 分钟
+  timeout: 300s  # 5 分钟
+  
+  # 命令白名单 (Allowed Commands)
+  # 安全控制:仅允许执行以下命令
+  allowed_commands:
+    - ffmpeg
+    - pyannote
+
+# ============================================================================
+# 音频处理配置 (Audio Processing Configuration)
+# ============================================================================
+audio:
+  # FFmpeg 录音设备名称 (macOS/Linux 特定)
+  device_name: ":0"  # macOS 默认音频设备
+  
+  # 录音采样率 (Recording Sample Rate)
+  sample_rate: 16000  # 16kHz 单声道,适合语音识别
+  
+  # 音频块大小 (Chunk Size)
+  chunk_size_seconds: 30  # 每 30 秒保存一个音频块
+
+# ============================================================================
+# Whisper 转录配置 (Whisper Transcription Configuration)
+# ============================================================================
+whisper:
+  # Whisper 模型路径
+  model_path: "/app/models/ggml-base.bin"
+  
+  # 转录语言
+  language: "auto"  # 自动检测语言
+  
+  # 线程数
+  threads: 4
+
+# ============================================================================
+# 说话人分离配置 (Speaker Diarization Configuration)
+# ============================================================================
+diarization:
+  # PyAnnote 脚本路径
+  script_path: "/app/tmp/pyannote/pyannote_diarize.py"
+  
+  # 默认说话人数量
+  num_speakers: 2
+  
+  # HuggingFace Access Token (可选,用于下载 PyAnnote 模型)
+  # 注意:生产环境应使用环境变量或密钥管理服务
+  # huggingface_token: "hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ============================================================================
+# 日志配置 (Logging Configuration)
+# ============================================================================
+logging:
+  # 日志级别: debug, info, warn, error
+  level: "debug"  # 开发环境使用 debug 级别
+  
+  # 日志格式: json, text
+  format: "text"  # 开发环境使用可读文本格式
+  
+  # 日志输出: stdout, file, both
+  output: "stdout"
+
+# ============================================================================
+# 向后兼容性配置 (Backward Compatibility)
+# ============================================================================
+# 以下字段保留用于向后兼容,新配置应使用 dependency.local_binary_paths
+# 
+# ffmpeg_binary_path: "/usr/local/bin/ffmpeg"
+# python_binary_path: "/usr/bin/python3"
+
+# ============================================================================
+# 开发环境说明 (Development Notes)
+# ============================================================================
+# 
+# 1. 依赖检查:
+#    - 确保本地已安装 FFmpeg: ffmpeg -version
+#    - 确保本地已安装 Python 3.8+: python3 --version
+#    - 安装 PyAnnote 依赖: pip3 install pyannote.audio
+# 
+# 2. 数据持久化:
+#    - 开发环境数据存储在 ./data 目录
+#    - 重启服务数据不会丢失
+# 
+# 3. 快速启动:
+#    docker-compose up -d
+#    或
+#    ./bin/server -config config/config.dev.yaml
+# 
+# 4. 故障排查:
+#    - 检查日志: docker-compose logs -f server
+#    - 验证配置: curl http://localhost:8081/health
+#    - 测试录音: curl -X POST http://localhost:8081/api/v1/meetings

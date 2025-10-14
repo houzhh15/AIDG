@@ -72,6 +72,7 @@ export function useAudioService({
   // MediaRecorder录音管理
   const { status, startRecording, pauseRecording, resumeRecording, stopRecording, duration } =
     useMediaRecorder(stream, {
+      taskId, // 传递 taskId 用于初始化 chunk index
       chunkDuration: 5 * 60 * 1000, // 5分钟
       onChunk: async (blob, index) => {
         await uploadChunk(blob, index);

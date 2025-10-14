@@ -28,6 +28,32 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
   const [renameId, setRenameId] = React.useState(taskId);
   const [form] = Form.useForm();
   const [fixedSpeakerMode, setFixedSpeakerMode] = React.useState(false);
+  const [whisperModels, setWhisperModels] = React.useState<string[]>(['ggml-base']); // 默认模型
+  const [whisperModelsLoading, setWhisperModelsLoading] = React.useState(false);
+
+  // 获取可用的 Whisper 模型列表
+  React.useEffect(() => {
+    const fetchWhisperModels = async () => {
+      try {
+        setWhisperModelsLoading(true);
+        const response = await fetch('/api/v1/services/whisper/models');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data.models) {
+            const modelIds = data.data.models.map((m: any) => m.id);
+            setWhisperModels(modelIds);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to fetch Whisper models:', error);
+        // 使用默认模型列表
+      } finally {
+        setWhisperModelsLoading(false);
+      }
+    };
+    fetchWhisperModels();
+  }, []);
+
   React.useEffect(()=>{ if(open){ form.setFieldsValue({
     record_chunk_seconds: numOrUndefined(initial?.record_chunk_seconds),
     sb_overcluster_factor: numOrUndefined(initial?.sb_overcluster_factor),
@@ -307,7 +333,13 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
         <Divider plain>其他</Divider>
         <Space.Compact style={{width:'100%'}}>
           <Form.Item label="Whisper 模型" name="whisper_model" style={{flex:1}}>
-            <Input placeholder="ggml-large-v3" />
+            <Select
+              placeholder="选择 Whisper 模型"
+              loading={whisperModelsLoading}
+              options={whisperModels.map(model => ({ label: model, value: model }))}
+              showSearch
+              allowClear
+            />
           </Form.Item>
           <Form.Item label="Segments" name="whisper_segments" tooltip="如 20s; 为空或0表示不加 --segments" style={{width:150}}>
             <Input placeholder="20s" allowClear />

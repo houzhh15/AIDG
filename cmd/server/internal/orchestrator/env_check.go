@@ -127,8 +127,8 @@ func CheckEnvironment() *EnvironmentStatus {
 // CheckPyAnnoteEnv 简化版：仅检查脚本文件是否存在
 func CheckPyAnnoteEnv() error {
 	scripts := []string{
-		"/app/audio/diarization/pyannote_diarize.py",
-		"/app/audio/diarization/generate_speaker_embeddings.py",
+		"/app/scripts/pyannote_diarize.py",
+		"/app/scripts/generate_speaker_embeddings.py",
 	}
 
 	var missing []string
@@ -193,9 +193,24 @@ func checkWhisperConnection(baseURL string) ServiceStatus {
 	}
 }
 
+func resolveFFmpegBinary() string {
+	if path := strings.TrimSpace(os.Getenv("FFMPEG_PATH")); path != "" {
+		return path
+	}
+	return "ffmpeg"
+}
+
 // checkFFmpeg 检查 FFmpeg 可用性
 func checkFFmpeg() ToolStatus {
-	cmd := exec.Command("ffmpeg", "-version")
+	bin := resolveFFmpegBinary()
+	if _, err := exec.LookPath(bin); err != nil {
+		return ToolStatus{
+			Available: false,
+			Error:     err.Error(),
+		}
+	}
+
+	cmd := exec.Command(bin, "-version")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return ToolStatus{

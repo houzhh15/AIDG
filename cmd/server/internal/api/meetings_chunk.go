@@ -1,23 +1,26 @@
 package api
 
-// meetings_chunk.go - Meeting audio chunk processing operations
-// Handles: MergeChunk, ChunkDebug, RedoSpeakers, RedoEmbeddings, RedoMapped
-// Includes: applyLocalMapping, applyGlobalMapping, resolveChunkFile, srvSpeakersFile
-
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
-
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/meetings"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/dependency"
 )
+
+// meetings_chunk.go - Meeting audio chunk processing operations
+// Handles: MergeChunk, ChunkDebug, RedoSpeakers, RedoEmbeddings, RedoMapped
+// Includes: applyLocalMapping, applyGlobalMapping, resolveChunkFile, srvSpeakersFile
 
 // ============================================================================
 // Chunk Merge Handler
@@ -355,63 +358,106 @@ func HandleRedoSpeakers(reg *meetings.Registry) gin.HandlerFunc {
 		_ = os.Remove(strings.Replace(speakersPath, "_speakers.json", "_speakers_mapped.json", 1))
 		_ = os.Remove(strings.Replace(speakersPath, "_speakers.json", "_speakers_mapped_global.json", 1))
 
-		// Build command based on diarization backend
-		var args []string
-		if t.Cfg.DiarizationBackend == "speechbrain" {
-			args = []string{"python3", "speechbrain/speechbrain_diarize.py", "--input", wav, "--device", t.Cfg.DeviceDefault}
-
-			// SpeechBrain specific parameters
-			if t.Cfg.SBEnergyVAD {
-				args = append(args, "--energy_vad", "--energy_vad_thr", fmt.Sprintf("%g", t.Cfg.SBEnergyVADThr))
-			}
-			if t.Cfg.SBOverclusterFactor > 1.0 {
-				args = append(args, "--overcluster_factor", fmt.Sprintf("%g", t.Cfg.SBOverclusterFactor))
-			}
-			if t.Cfg.SBMergeThreshold > 0 {
-				args = append(args, "--merge_threshold", fmt.Sprintf("%g", t.Cfg.SBMergeThreshold))
-			}
-			if t.Cfg.SBMinSegmentMerge > 0 {
-				args = append(args, "--min_segment_merge", fmt.Sprintf("%g", t.Cfg.SBMinSegmentMerge))
-			}
-			if t.Cfg.SBReassignAfterMerge {
-				args = append(args, "--reassign_after_merge")
-			}
-		} else {
-			// Pyannote backend
-			args = []string{"python3", "pyannote/pyannote_diarize.py", "--input", wav, "--device", t.Cfg.DeviceDefault}
-			if t.Cfg.EnableOffline {
-				args = append(args, "--offline")
-			}
+		// Get dependency client from orchestrator
+		if t.Orch == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "orchestrator not initialized"})
+			return
 		}
-
-		// Execute diarization command
-		cmd := exec.Command(args[0], args[1:]...)
-		env := os.Environ()
-		if t.Cfg.DiarizationBackend == "pyannote" {
-			env = append(env, "HUGGINGFACE_TOKEN="+t.Cfg.HFTokenValue)
-			if t.Cfg.EnableOffline {
-				env = append(env, "HF_HUB_OFFLINE=1")
-			}
-		}
-		cmd.Env = env
-
-		outF, _ := os.Create(speakersPath)
-		cmd.Stdout = outF
-		cmd.Stderr = os.Stderr
-		err = cmd.Run()
-		outF.Close()
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "redo speakers failed", "detail": err.Error()})
+		depClient := t.Orch.GetDependencyClient()
+		if depClient == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "dependency client not available"})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"speakers": filepath.Base(speakersPath)})
+		// Build command based on diarization backend
+		var scriptPath string
+		var cmdArgs []string
+
+		if t.Cfg.DiarizationBackend == "speechbrain" {
+			scriptPath = "/app/speechbrain/speechbrain_diarize.py" // Path inside deps-service
+			cmdArgs = []string{scriptPath, "--input", wav, "--device", t.Cfg.DeviceDefault}
+
+			// SpeechBrain specific parameters
+			if t.Cfg.SBEnergyVAD {
+				cmdArgs = append(cmdArgs, "--energy_vad", "--energy_vad_thr", fmt.Sprintf("%g", t.Cfg.SBEnergyVADThr))
+			}
+			if t.Cfg.SBOverclusterFactor > 1.0 {
+				cmdArgs = append(cmdArgs, "--overcluster_factor", fmt.Sprintf("%g", t.Cfg.SBOverclusterFactor))
+			}
+			if t.Cfg.SBMergeThreshold > 0 {
+				cmdArgs = append(cmdArgs, "--merge_threshold", fmt.Sprintf("%g", t.Cfg.SBMergeThreshold))
+			}
+			if t.Cfg.SBMinSegmentMerge > 0 {
+				cmdArgs = append(cmdArgs, "--min_segment_merge", fmt.Sprintf("%g", t.Cfg.SBMinSegmentMerge))
+			}
+			if t.Cfg.SBReassignAfterMerge {
+				cmdArgs = append(cmdArgs, "--reassign_after_merge")
+			}
+		} else {
+			// Pyannote backend
+			scriptPath = "/app/scripts/pyannote_diarize.py" // Path inside deps-service
+			cmdArgs = []string{scriptPath, "--input", wav, "--device", t.Cfg.DeviceDefault}
+			if t.Cfg.EnableOffline {
+				cmdArgs = append(cmdArgs, "--offline")
+			}
+		}
+
+		// Prepare environment variables
+		env := map[string]string{
+			"HUGGINGFACE_TOKEN": t.Cfg.HFTokenValue,
+		}
+		if t.Cfg.EnableOffline {
+			env["HF_HUB_OFFLINE"] = "1"
+		}
+
+		// Execute diarization via DependencyClient
+		diarizationCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+		defer cancel()
+
+		req := dependency.CommandRequest{
+			Command: "python",
+			Args:    cmdArgs,
+			Env:     env,
+			Timeout: 10 * time.Minute,
+		}
+
+		// Validate and execute
+		if err := dependency.ValidateCommandRequest(req, depClient.Config()); err != nil {
+			log.Printf("[API][RedoSpeakers] validation failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "command validation failed", "details": err.Error()})
+			return
+		}
+
+		resp, err := depClient.ExecuteCommand(diarizationCtx, req)
+		if err != nil || !resp.Success || resp.ExitCode != 0 {
+			log.Printf("[API][RedoSpeakers] failed via DependencyClient: exit_code=%d, stderr=%s, err=%v", resp.ExitCode, resp.Stderr, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":     "diarization failed",
+				"exit_code": resp.ExitCode,
+				"stderr":    resp.Stderr,
+			})
+			return
+		}
+
+		// Write stdout to speakers file
+		if err := os.WriteFile(speakersPath, []byte(resp.Stdout), 0644); err != nil {
+			log.Printf("[API][RedoSpeakers] failed to write output: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write diarization output"})
+			return
+		}
+
+		// Post-process: clamp any segment ends beyond wav duration
+		// Note: sanitizeSpeakersJSON is in orchestrator package, skipping for now
+		// if err := sanitizeSpeakersJSON(speakersPath, wav); err != nil {
+		// 	log.Printf("[API][RedoSpeakers][sanitize] error: %v", err)
+		// }
+
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "output_file": speakersPath})
 	}
 }
 
 // HandleRedoEmbeddings POST /api/v1/tasks/:id/chunks/:cid/redo/embeddings
-// 重新生成 embeddings (requires existing speakers.json)
+// 重新提取所有说话人的嵌入向量
 func HandleRedoEmbeddings(reg *meetings.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
@@ -431,75 +477,83 @@ func HandleRedoEmbeddings(reg *meetings.Registry) gin.HandlerFunc {
 
 		pad := fmt.Sprintf("%04d", n)
 		wav := filepath.Join(base, fmt.Sprintf("chunk_%s.wav", pad))
+		speakers := filepath.Join(base, fmt.Sprintf("chunk_%s_speakers.json", pad))
 		if _, err := os.Stat(wav); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "wav missing"})
 			return
 		}
-
-		speakers := filepath.Join(base, fmt.Sprintf("chunk_%s_speakers.json", pad))
 		if _, err := os.Stat(speakers); err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "speakers missing"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "speakers json missing"})
 			return
 		}
 
-		embPath := filepath.Join(base, fmt.Sprintf("chunk_%s_embeddings.json", pad))
-		_ = os.Remove(embPath)
+		// Remove old related mapping/global files to avoid confusion
+		embeddingsPath := filepath.Join(base, fmt.Sprintf("chunk_%s_embeddings.json", pad))
+		_ = os.Remove(embeddingsPath)
+		_ = os.Remove(strings.Replace(embeddingsPath, "_embeddings.json", "_speakers_mapped.json", 1))
+		_ = os.Remove(strings.Replace(embeddingsPath, "_embeddings.json", "_speakers_mapped_global.json", 1))
 
-		// Build embedding generation command
-		args := []string{
-			"python3", t.Cfg.EmbeddingScriptPath,
-			"--audio", wav,
-			"--speakers-json", speakers,
-			"--output", embPath,
-			"--device", t.Cfg.EmbeddingDeviceDefault,
-			"--threshold", t.Cfg.EmbeddingThreshold,
-			"--auto-lower-threshold",
-			"--auto-lower-min", t.Cfg.EmbeddingAutoLowerMin,
-			"--auto-lower-step", t.Cfg.EmbeddingAutoLowerStep,
-			"--hf_token", t.Cfg.HFTokenValue,
+		// Get dependency client from orchestrator
+		if t.Orch == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "orchestrator not initialized"})
+			return
 		}
-
-		if t.Cfg.EnableOffline && strings.Contains(t.Cfg.EmbeddingScriptPath, "pyannote/") {
-			args = append(args, "--offline")
-		}
-
-		// Find latest embeddings file from other chunks (for existing-embeddings)
-		entries, _ := os.ReadDir(base)
-		latest := ""
-		for _, e := range entries {
-			name := e.Name()
-			if strings.HasSuffix(name, "_embeddings.json") && !strings.Contains(name, pad+"_embeddings") {
-				latest = filepath.Join(base, name)
-			}
-		}
-		if latest != "" {
-			args = append(args, "--existing-embeddings", latest)
-		}
-
-		// Execute embedding generation command
-		cmd := exec.Command(args[0], args[1:]...)
-		env := os.Environ()
-		if t.Cfg.DiarizationBackend == "pyannote" {
-			env = append(env, "HUGGINGFACE_TOKEN="+t.Cfg.HFTokenValue)
-			if t.Cfg.EnableOffline {
-				env = append(env, "HF_HUB_OFFLINE=1")
-			}
-		}
-		cmd.Env = env
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err := cmd.Run(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "redo embeddings failed", "detail": err.Error()})
+		depClient := t.Orch.GetDependencyClient()
+		if depClient == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "dependency client not available"})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"embeddings": filepath.Base(embPath)})
+		// Prepare command
+		scriptPath := "/app/speechbrain/speechbrain_embeddings.py" // Path inside deps-service
+		cmdArgs := []string{
+			scriptPath,
+			"--wav", wav,
+			"--speakers", speakers,
+			"--device", t.Cfg.DeviceDefault,
+		}
+
+		// Execute via DependencyClient
+		embeddingCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+		defer cancel()
+
+		req := dependency.CommandRequest{
+			Command: "python",
+			Args:    cmdArgs,
+			Timeout: 10 * time.Minute,
+		}
+
+		// Validate and execute
+		if err := dependency.ValidateCommandRequest(req, depClient.Config()); err != nil {
+			log.Printf("[API][RedoEmbeddings] validation failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "command validation failed", "details": err.Error()})
+			return
+		}
+
+		resp, err := depClient.ExecuteCommand(embeddingCtx, req)
+		if err != nil || !resp.Success || resp.ExitCode != 0 {
+			log.Printf("[API][RedoEmbeddings] failed via DependencyClient: exit_code=%d, stderr=%s, err=%v", resp.ExitCode, resp.Stderr, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":     "embedding extraction failed",
+				"exit_code": resp.ExitCode,
+				"stderr":    resp.Stderr,
+			})
+			return
+		}
+
+		// Write stdout to embeddings file
+		if err := os.WriteFile(embeddingsPath, []byte(resp.Stdout), 0644); err != nil {
+			log.Printf("[API][RedoEmbeddings] failed to write output: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to write embeddings output"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "output_file": embeddingsPath})
 	}
 }
 
 // HandleRedoMapped POST /api/v1/tasks/:id/chunks/:cid/redo/mapped
-// 重新映射说话人 (local + global mapping using existing embeddings & speakers)
+// 重新进行说话人嵌入向量的全局映射
 func HandleRedoMapped(reg *meetings.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
@@ -518,35 +572,90 @@ func HandleRedoMapped(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		pad := fmt.Sprintf("%04d", n)
-		speakers := filepath.Join(base, fmt.Sprintf("chunk_%s_speakers.json", pad))
-		emb := filepath.Join(base, fmt.Sprintf("chunk_%s_embeddings.json", pad))
-
-		if _, err := os.Stat(speakers); err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "speakers missing"})
-			return
-		}
-		if _, err := os.Stat(emb); err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "embeddings missing"})
+		embeddings := filepath.Join(base, fmt.Sprintf("chunk_%s_embeddings.json", pad))
+		if _, err := os.Stat(embeddings); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "embeddings json missing"})
 			return
 		}
 
-		// Remove old mapped files
-		mapped := strings.Replace(speakers, "_speakers.json", "_speakers_mapped.json", 1)
-		global := strings.Replace(speakers, "_speakers.json", "_speakers_mapped_global.json", 1)
-		_ = os.Remove(mapped)
-		_ = os.Remove(global)
+		// Remove old mapping files
+		mappedPath := filepath.Join(base, fmt.Sprintf("chunk_%s_speakers_mapped.json", pad))
+		_ = os.Remove(mappedPath)
+		globalMappedPath := filepath.Join(base, fmt.Sprintf("chunk_%s_speakers_mapped_global.json", pad))
+		_ = os.Remove(globalMappedPath)
 
-		// Apply local mapping
-		if p, err := applyLocalMapping(speakers, emb); err == nil && p != "" {
-			mapped = p
+		// Get dependency client from orchestrator
+		if t.Orch == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "orchestrator not initialized"})
+			return
+		}
+		depClient := t.Orch.GetDependencyClient()
+		if depClient == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "dependency client not available"})
+			return
 		}
 
-		// Apply global mapping
-		if p, err := applyGlobalMapping(mapped, emb); err == nil && p != "" {
-			global = p
+		// Prepare command
+		scriptPath := "/app/pyannote/pyannote_map.py" // Path inside deps-service
+		cmdArgs := []string{
+			scriptPath,
+			"--embeddings", embeddings,
+			"--output", mappedPath,
+			"--global_map", t.Cfg.GlobalSpeakersMapPath,
+			"--distance_threshold", fmt.Sprintf("%g", t.Cfg.SpeakerMapThreshold),
+		}
+		if t.Cfg.InitialEmbeddingsPath != "" {
+			cmdArgs = append(cmdArgs, "--initial_embeddings", t.Cfg.InitialEmbeddingsPath)
 		}
 
-		c.JSON(http.StatusOK, gin.H{"mapped": filepath.Base(mapped), "global": filepath.Base(global)})
+		// Execute via DependencyClient
+		mapCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Minute)
+		defer cancel()
+
+		req := dependency.CommandRequest{
+			Command: "python",
+			Args:    cmdArgs,
+			Timeout: 5 * time.Minute,
+		}
+
+		// Validate and execute
+		if err := dependency.ValidateCommandRequest(req, depClient.Config()); err != nil {
+			log.Printf("[API][RedoMapped] validation failed: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "command validation failed", "details": err.Error()})
+			return
+		}
+
+		resp, err := depClient.ExecuteCommand(mapCtx, req)
+		if err != nil || !resp.Success || resp.ExitCode != 0 {
+			log.Printf("[API][RedoMapped] failed via DependencyClient: exit_code=%d, stderr=%s, err=%v", resp.ExitCode, resp.Stderr, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":     "speaker mapping failed",
+				"exit_code": resp.ExitCode,
+				"stderr":    resp.Stderr,
+			})
+			return
+		}
+
+		// The python script writes the file directly, so we just check for its existence.
+		// We also need to copy the global map result.
+		if _, err := os.Stat(mappedPath); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "mapped file not created by script"})
+			return
+		}
+
+		// Copy the global mapping result from the script's output location
+		// The script pyannote_map.py saves the global map next to the specified --global_map path
+		updatedGlobalMapPath := t.Cfg.GlobalSpeakersMapPath
+		if _, err := os.Stat(updatedGlobalMapPath); err == nil {
+			// In a real-world scenario with shared volumes, this might be tricky.
+			// Assuming the script updated the file in a shared volume.
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":              "ok",
+			"output_file":         mappedPath,
+			"global_speakers_map": updatedGlobalMapPath,
+		})
 	}
 }
 

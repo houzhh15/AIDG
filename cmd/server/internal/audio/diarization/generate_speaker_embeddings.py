@@ -352,7 +352,20 @@ def main():
         return
     segments = load_speakers_json(args.speakers_json)
     if not segments:
-        print(json.dumps({"error": "无可用 segments"}, ensure_ascii=False))
+        # When no segments available, create empty embeddings file instead of failing
+        # This allows the pipeline to continue gracefully
+        empty_result = {
+            "error": "无可用 segments",
+            "speakers": {},
+            "segment_embeddings": [],
+            "file_speakers_summary": []
+        }
+        try:
+            with open(args.output, "w", encoding="utf-8") as f:
+                json.dump(empty_result, f, ensure_ascii=False, indent=2)
+            print(json.dumps(empty_result, ensure_ascii=False))
+        except Exception as e:
+            print(json.dumps({"error": f"写入空结果失败: {e}"}, ensure_ascii=False))
         return
 
     # 标准化音频：转为 16k 单声道 wav

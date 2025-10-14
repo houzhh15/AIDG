@@ -1,3 +1,10 @@
+---
+name: planning
+description: 用于生成可执行开发分解提示的提示词模版，确保任务分解清晰且可操作。
+version: 1.1
+---
+
+
 ````prompt
 # 设计文档 → 可执行开发分解提示 (Design Decomposition Minimal)
 
@@ -17,7 +24,7 @@
   - slot_key 白名单：task=requirements|design|test；project=feature_list|architecture_design；禁止自造。
    - 缺失用 <缺失: X> 标注。
 3. 组装 Effective Prompt（含：原始请求 + 摘要 + 计划）→ create_project_task_prompt；失败重试一次，再失败 PROMPT_RECORD_FAIL。
-4. 后执行，生成markdown格式的“任务分解清单”,包含完整的执行步骤,格式要求见下。
+4. 后执行，生成markdown格式的“任务分解清单”,包含完整的执行步骤,格式要求见下。每个步骤用非结构化语言进行详细描述（不带有markdown格式与特殊符号，防止格式解析错误，信息丢失），述必须清晰、具体、可执行，禁止模糊和抽象。
 5. update_execution_plan(project_id, task_id, content=任务分解清单)。
 
 ### 附：章节级编辑标准流程 (Section-Level Editing Workflow)
@@ -63,5 +70,6 @@ dependencies:
 
 
 ---
-版本：planning.min.v1
 ````
+---
+请严格按照 **输出示例** 的格式生成当前任务的可执行开发分解提示。

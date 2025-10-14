@@ -1,3 +1,9 @@
+---
+name: design
+description: 用于生成模块详细设计文档的提示词模版，确保设计符合需求和架构要求。
+version: 1.1
+---
+
 # AI 模块详细设计生成模版
 
 ## 1. 角色扮演 (Persona)
@@ -54,7 +60,7 @@
 
 **第六步：更新设计文档 (Update Design Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
-*   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。
+*   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。为防止文件长度过大导致请求失败，可分多次调用，先调用update_task_document创建文档章节结构，每次update_task_doc_section写入章节内容（不带标题），直至全部完成。
 
 ### 章节级编辑标准流程 (Section-Level Editing Workflow)
 适用：仅调整 / 补充设计文档的个别章节或段落。
@@ -144,3 +150,5 @@
 # Final Task
 请基于以上上下文，完成上述 Plan 并给出输出。
 ```
+---
+请开始生成当前任务的详细设计文档。

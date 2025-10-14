@@ -25,6 +25,10 @@ import (
 	"time"
 
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/metrics"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/degradation"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/dependency"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/health"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/whisper"
 	"github.com/houzhh15-hub/AIDG/pkg/logger"
 )
 
@@ -61,6 +65,32 @@ func removeBlankLines(path string) {
 	}
 }
 
+// copyFile copies a file from src to dst, preserving contents. Caller is
+// responsible for handling any cleanup of the source file.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+
+	return out.Sync()
+}
+
 // Config holds runtime adjustable parameters.
 type Config struct {
 	OutputDir             string
@@ -68,13 +98,15 @@ type Config struct {
 	RecordOverlap         time.Duration
 	UseContinuous         bool // true: 单进程持续捕获, 按墙钟切片
 	FFmpegDeviceName      string
+	FFmpegBinaryPath      string `json:"ffmpeg_path,omitempty"`
+	PythonBinaryPath      string `json:"python_path,omitempty"`
 	WhisperMode           string // "http" (default) or "cli"
 	WhisperAPIURL         string // Whisper HTTP API endpoint (default: "http://whisper:8082")
 	WhisperModel          string
 	WhisperSegments       string // e.g. "20s"; empty or "0" -> do not pass --segments
 	DeviceDefault         string
 	DiarizationBackend    string // "pyannote" (default) or "speechbrain"
-	DiarizationScriptPath string // PyAnnote diarization script path (default: "/app/audio/diarization/pyannote_diarize.py")
+	DiarizationScriptPath string // PyAnnote diarization script path (default: "/app/scripts/pyannote_diarize.py")
 	// SpeechBrain diarization tunables
 	SBNumSpeakers          int // >0 时强制指定说话人数量 (--num_speakers)
 	SBMinSpeakers          int // (--min_speakers), 默认 1
@@ -85,7 +117,7 @@ type Config struct {
 	SBReassignAfterMerge   bool
 	SBEnergyVAD            bool
 	SBEnergyVADThr         float64
-	EmbeddingScriptPath    string // Speaker embedding generation script path (default: "/app/audio/diarization/generate_speaker_embeddings.py")
+	EmbeddingScriptPath    string // Speaker embedding generation script path (default: "/app/scripts/generate_speaker_embeddings.py")
 	EmbeddingDeviceDefault string
 	EmbeddingThreshold     string
 	EmbeddingAutoLowerMin  string
@@ -93,9 +125,186 @@ type Config struct {
 	InitialEmbeddingsPath  string
 	HFTokenValue           string
 	EnableOffline          bool
+	// Whisper degradation and health check configuration
+	EnableDegradation        bool          // Enable automatic degradation (default: true)
+	HealthCheckInterval      time.Duration // Health check interval (default: 5 minutes)
+	HealthCheckFailThreshold int           // Consecutive failures before degradation (default: 3)
 	// Task metadata fields
 	ProductLine string    `json:"product_line"` // 产品线
 	MeetingTime time.Time `json:"meeting_time"` // 会议时间
+
+	// ============ Dependency Execution Configuration ============
+	// DependencyMode specifies how to execute external commands (FFmpeg, PyAnnote).
+	// Valid values: "local" (direct exec), "remote" (HTTP service), "fallback" (auto-degrade).
+	// Default: "local" (backward compatible).
+	DependencyMode string `json:"dependency_mode,omitempty" yaml:"dependency_mode,omitempty"`
+
+	// DependencyServiceURL is the HTTP endpoint of the optional dependency service.
+	// Example: "http://deps-service:8080"
+	// Required when DependencyMode is "remote" or "fallback".
+	DependencyServiceURL string `json:"dependency_service_url,omitempty" yaml:"dependency_service_url,omitempty"`
+
+	// DependencySharedVolume is the base path of the shared volume between
+	// main service and dependency service (e.g., "/data").
+	// All input/output files must reside within this path.
+	// Default: "/app/data" (matches current OutputDir default).
+	DependencySharedVolume string `json:"dependency_shared_volume,omitempty" yaml:"dependency_shared_volume,omitempty"`
+
+	// DependencyTimeout is the default timeout for all command executions.
+	// Can be overridden per command. Default: 5 minutes.
+	DependencyTimeout time.Duration `json:"dependency_timeout,omitempty" yaml:"dependency_timeout,omitempty"`
+
+	// Speaker mapping configuration
+	SpeakerMapThreshold   float64 `json:"speaker_map_threshold"`
+	GlobalSpeakersMapPath string  `json:"global_speakers_map_path"`
+}
+
+// DependencyError conveys missing runtime dependencies and friendly recovery guidance.
+type DependencyError struct {
+	Missing    []string // 不可用依赖列表（如 ["FFmpeg", "PyAnnote"]）
+	LiteMode   bool     // 系统是否运行在轻量模式
+	Details    []string // 可操作的配置指导
+	TriedModes []string // 尝试的执行模式（如 ["remote", "local"]）
+}
+
+func (e DependencyError) Error() string {
+	core := fmt.Sprintf("缺少必需依赖: %s", strings.Join(e.Missing, ", "))
+
+	// 添加尝试模式信息
+	if len(e.TriedModes) > 0 {
+		core += fmt.Sprintf("（已尝试: %s）", strings.Join(e.TriedModes, " → "))
+	}
+
+	if len(e.Details) == 0 {
+		return core
+	}
+	return core + "。\n" + strings.Join(e.Details, "\n")
+}
+
+// ToHTTPResponse 将错误转换为结构化 HTTP 响应（用于 API 错误返回）
+func (e DependencyError) ToHTTPResponse() map[string]interface{} {
+	return map[string]interface{}{
+		"error":       "dependency_unavailable",
+		"missing":     e.Missing,
+		"lite_mode":   e.LiteMode,
+		"details":     e.Details,
+		"tried_modes": e.TriedModes,
+	}
+}
+
+// ApplyRuntimeDefaults ensures backwards compatibility for persisted configs by
+// hydrating binary paths from the current environment when missing.
+func (cfg *Config) ApplyRuntimeDefaults() {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(cfg.FFmpegBinaryPath) == "" {
+		if env := strings.TrimSpace(os.Getenv("FFMPEG_PATH")); env != "" {
+			cfg.FFmpegBinaryPath = env
+		} else {
+			cfg.FFmpegBinaryPath = "ffmpeg"
+		}
+	}
+	if strings.TrimSpace(cfg.PythonBinaryPath) == "" {
+		if env := strings.TrimSpace(os.Getenv("PYTHON_PATH")); env != "" {
+			cfg.PythonBinaryPath = env
+		} else {
+			cfg.PythonBinaryPath = "python3"
+		}
+	}
+	// Backfill diarization script paths for legacy configs when empty.
+	if strings.TrimSpace(cfg.DiarizationScriptPath) == "" {
+		cfg.DiarizationScriptPath = "/app/scripts/pyannote_diarize.py"
+	}
+	if strings.TrimSpace(cfg.EmbeddingScriptPath) == "" {
+		cfg.EmbeddingScriptPath = "/app/scripts/generate_speaker_embeddings.py"
+	}
+}
+
+// ValidateCriticalDependencies verifies external binaries required for the
+// configured processing pipeline. It returns an error describing all missing
+// dependencies so the caller can surface actionable feedback to the user.
+func (cfg Config) ValidateCriticalDependencies() error {
+	// Check if audio processing is disabled (lightweight mode)
+	enableAudioConversion := strings.ToLower(os.Getenv("ENABLE_AUDIO_CONVERSION"))
+	enableDiarization := strings.ToLower(os.Getenv("ENABLE_SPEAKER_DIARIZATION"))
+
+	// If audio processing is explicitly disabled, skip validation
+	if (enableAudioConversion == "false" || enableAudioConversion == "0") &&
+		(enableDiarization == "false" || enableDiarization == "0") {
+		log.Println("[ValidateCriticalDependencies] Audio processing disabled, skipping dependency checks")
+		return nil
+	}
+
+	// Check if using remote dependency service (fallback mode)
+	dependencyMode := strings.ToLower(os.Getenv("DEPENDENCY_MODE"))
+	depsServiceURL := os.Getenv("DEPS_SERVICE_URL")
+
+	// If using remote deps-service, skip local dependency checks
+	if dependencyMode == "fallback" || depsServiceURL != "" {
+		log.Printf("[ValidateCriticalDependencies] Using remote dependency service (mode=%s, url=%s), skipping local dependency checks", dependencyMode, depsServiceURL)
+		return nil
+	}
+
+	var (
+		missing  []string
+		details  []string
+		liteMode bool
+	)
+
+	// Continuous recording relies on FFmpeg.
+	if cfg.UseContinuous {
+		ffmpegBin := strings.TrimSpace(cfg.FFmpegBinaryPath)
+		if ffmpegBin == "" {
+			ffmpegBin = "ffmpeg"
+		}
+		if _, err := exec.LookPath(ffmpegBin); err != nil {
+			missing = append(missing, fmt.Sprintf("FFmpeg (%s)", ffmpegBin))
+			liteMode = true
+			details = append(details, "当前容器内未找到 FFmpeg，可在宿主机安装后通过卷挂载，或切换至完整版镜像")
+		}
+	}
+
+	// PyAnnote diarization requires Python executable and diarization scripts.
+	if strings.EqualFold(cfg.DiarizationBackend, "pyannote") {
+		pythonBin := strings.TrimSpace(cfg.PythonBinaryPath)
+		if pythonBin == "" {
+			pythonBin = "python3"
+		}
+		if _, err := exec.LookPath(pythonBin); err != nil {
+			missing = append(missing, fmt.Sprintf("Python (%s)", pythonBin))
+			liteMode = true
+			details = append(details, "未检测到 Python 运行时，请通过卷挂载提供或在宿主机安装后映射进容器")
+		}
+		if strings.TrimSpace(cfg.DiarizationScriptPath) == "" {
+			missing = append(missing, "PyAnnote diarization script (未配置)")
+			liteMode = true
+			details = append(details, "请将 pyannote_diarize.py 挂载到 /app/scripts/pyannote_diarize.py 或更新配置")
+		} else if _, err := os.Stat(cfg.DiarizationScriptPath); err != nil {
+			missing = append(missing, fmt.Sprintf("PyAnnote diarization script %s", cfg.DiarizationScriptPath))
+			liteMode = true
+			details = append(details, "挂载的 pyannote 脚本不存在，请确认宿主机路径与 docker-compose 映射")
+		}
+		if strings.TrimSpace(cfg.EmbeddingScriptPath) == "" {
+			missing = append(missing, "PyAnnote embedding script (未配置)")
+			liteMode = true
+			details = append(details, "请将 generate_speaker_embeddings.py 挂载到 /app/scripts/generate_speaker_embeddings.py 或更新配置")
+		} else if _, err := os.Stat(cfg.EmbeddingScriptPath); err != nil {
+			missing = append(missing, fmt.Sprintf("PyAnnote embedding script %s", cfg.EmbeddingScriptPath))
+			liteMode = true
+			details = append(details, "挂载的 embedding 脚本不存在，请检查路径映射")
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	if liteMode {
+		details = append([]string{"检测到轻量级镜像（lite）未包含音频处理依赖"}, details...)
+	}
+
+	return DependencyError{Missing: missing, LiteMode: liteMode, Details: details}
 }
 
 // DefaultConfig returns sensible defaults matching original main.go constants.
@@ -106,35 +315,97 @@ func DefaultConfig() Config {
 		whisperURL = "http://whisper:80"
 	}
 
+	// Parse ENABLE_DEGRADATION (default: true)
+	enableDegradation := true
+	if envDeg := os.Getenv("ENABLE_DEGRADATION"); envDeg != "" {
+		enableDegradation = strings.ToLower(envDeg) == "true"
+	}
+
+	// Parse HEALTH_CHECK_INTERVAL (default: 5 minutes)
+	healthCheckInterval := 5 * time.Minute
+	if envInterval := os.Getenv("HEALTH_CHECK_INTERVAL"); envInterval != "" {
+		if parsed, err := time.ParseDuration(envInterval); err == nil {
+			healthCheckInterval = parsed
+		} else {
+			log.Printf("[Config] Invalid HEALTH_CHECK_INTERVAL '%s', using default 5m", envInterval)
+		}
+	}
+
+	// Parse HEALTH_CHECK_FAIL_THRESHOLD (default: 3)
+	healthCheckFailThreshold := 3
+	if envThreshold := os.Getenv("HEALTH_CHECK_FAIL_THRESHOLD"); envThreshold != "" {
+		if parsed, err := strconv.Atoi(envThreshold); err == nil && parsed > 0 {
+			healthCheckFailThreshold = parsed
+		} else {
+			log.Printf("[Config] Invalid HEALTH_CHECK_FAIL_THRESHOLD '%s', using default 3", envThreshold)
+		}
+	}
+
+	ffmpegPath := strings.TrimSpace(os.Getenv("FFMPEG_PATH"))
+	if ffmpegPath == "" {
+		ffmpegPath = "ffmpeg"
+	}
+
+	pythonPath := strings.TrimSpace(os.Getenv("PYTHON_PATH"))
+	if pythonPath == "" {
+		pythonPath = "python3"
+	}
+
+	// 从环境变量读取依赖模式和服务URL
+	dependencyMode := strings.TrimSpace(os.Getenv("DEPENDENCY_MODE"))
+	if dependencyMode == "" {
+		dependencyMode = "local" // 默认本地模式
+	}
+
+	dependencyServiceURL := strings.TrimSpace(os.Getenv("DEPS_SERVICE_URL"))
+
+	// 从环境变量读取依赖共享卷路径
+	dependencySharedVolume := strings.TrimSpace(os.Getenv("DEPENDENCY_SHARED_VOLUME"))
+
+	// 从环境变量读取离线模式配置
+	enableOffline := true // 默认启用离线模式
+	if offlineEnv := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OFFLINE"))); offlineEnv != "" {
+		enableOffline = offlineEnv == "true" || offlineEnv == "1"
+	}
+
 	return Config{
-		OutputDir:              "meeting_output",
-		RecordChunkDuration:    5 * time.Minute,
-		RecordOverlap:          5 * time.Second,
-		UseContinuous:          false, // 禁用自动录音，使用文件上传模式
-		FFmpegDeviceName:       "",    // Docker 环境中不使用音频设备
-		WhisperMode:            "http",
-		WhisperAPIURL:          whisperURL, // 从环境变量读取或使用默认值
-		WhisperModel:           "ggml-large-v3",
-		WhisperSegments:        "20s",
-		DeviceDefault:          "mps",
-		DiarizationBackend:     "pyannote",
-		DiarizationScriptPath:  "/app/audio/diarization/pyannote_diarize.py",
-		SBMinSpeakers:          1,
-		SBMaxSpeakers:          8,
-		SBOverclusterFactor:    1.4,
-		SBMergeThreshold:       0.86,
-		SBMinSegmentMerge:      0.8,
-		SBReassignAfterMerge:   true,
-		SBEnergyVAD:            true,
-		SBEnergyVADThr:         0.5,
-		EmbeddingScriptPath:    "/app/audio/diarization/generate_speaker_embeddings.py",
-		EmbeddingDeviceDefault: "auto",
-		EmbeddingThreshold:     "0.55",
-		EmbeddingAutoLowerMin:  "0.45",
-		EmbeddingAutoLowerStep: "0.02",
-		InitialEmbeddingsPath:  "",
-		HFTokenValue:           "hf_REPLACE_WITH_YOUR_TOKEN_HERE",
-		EnableOffline:          true,
+		OutputDir:                "meeting_output",
+		RecordChunkDuration:      5 * time.Minute,
+		RecordOverlap:            5 * time.Second,
+		UseContinuous:            false, // 禁用自动录音，使用文件上传模式
+		FFmpegDeviceName:         "",    // Docker 环境中不使用音频设备
+		FFmpegBinaryPath:         ffmpegPath,
+		PythonBinaryPath:         pythonPath,
+		DependencyMode:           dependencyMode,
+		DependencyServiceURL:     dependencyServiceURL,
+		DependencySharedVolume:   dependencySharedVolume,
+		WhisperMode:              "http",
+		WhisperAPIURL:            whisperURL,  // 从环境变量读取或使用默认值
+		WhisperModel:             "ggml-base", // 修改为与容器中实际存在的模型匹配
+		WhisperSegments:          "20s",
+		DeviceDefault:            "cpu", // 使用 CPU (Linux 容器中 mps 不可用)
+		DiarizationBackend:       "pyannote",
+		DiarizationScriptPath:    "/app/scripts/pyannote_diarize.py",
+		SBMinSpeakers:            1,
+		SBMaxSpeakers:            8,
+		SBOverclusterFactor:      1.4,
+		SBMergeThreshold:         0.86,
+		SBMinSegmentMerge:        0.8,
+		SBReassignAfterMerge:     true,
+		SBEnergyVAD:              true,
+		SBEnergyVADThr:           0.5,
+		EmbeddingScriptPath:      "/app/scripts/generate_speaker_embeddings.py",
+		EmbeddingDeviceDefault:   "auto",
+		EmbeddingThreshold:       "0.55",
+		EmbeddingAutoLowerMin:    "0.45",
+		EmbeddingAutoLowerStep:   "0.02",
+		InitialEmbeddingsPath:    "",
+		HFTokenValue:             "hf_REPLACE_WITH_YOUR_TOKEN_HERE",
+		EnableOffline:            enableOffline,
+		EnableDegradation:        enableDegradation,
+		HealthCheckInterval:      healthCheckInterval,
+		HealthCheckFailThreshold: healthCheckFailThreshold,
+		SpeakerMapThreshold:      0.5,
 	}
 }
 
@@ -209,9 +480,23 @@ type Orchestrator struct {
 
 	voicePrint   *VoicePrintState
 	startChunkID int
+	nextChunkID  int  // 下一个要使用的 chunk ID (用于停止后恢复)
 	reprocess    bool // reprocess mode flag (skip recorder/asr, feed existing wav+segments)
 	procCtx      context.Context
 	procCancel   context.CancelFunc
+
+	// Whisper服务健康检查和降级控制
+	healthChecker         *health.HealthChecker
+	degradationController *degradation.DegradationController
+
+	// DependencyClient for external command execution (FFmpeg, PyAnnote)
+	dependencyClient *dependency.DependencyClient
+
+	// PathManager for consistent file path construction
+	pathManager *dependency.PathManager
+
+	// healthTicker for periodic dependency availability checks (fallback mode only)
+	healthTicker *time.Ticker
 }
 
 // RunSingleASR runs whisper once on an existing chunk wav with a provided model and segment length (in seconds string like "20s")
@@ -220,47 +505,45 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 	if model == "" {
 		model = o.cfg.WhisperModel
 	}
-	// segLen logic: empty -> default 20s; "0" or "0s" -> disable segment flag
-	disableSeg := false
-	if segLen == "" {
-		segLen = "20s"
-	}
-	sl := strings.ToLower(segLen)
-	if sl == "0" || sl == "0s" {
-		disableSeg = true
-	}
+
+	// Extract chunk ID from filename
 	base := filepath.Base(chunkWav)
 	m := regexp.MustCompile(`^chunk_([0-9]{4})\.wav$`).FindStringSubmatch(base)
 	if m == nil {
 		return "", fmt.Errorf("invalid chunk wav name: %s", base)
 	}
-	id := m[1]
-	out := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%s_segments.json", id))
-	args := []string{"go-whisper/whisper", "transcribe", model, chunkWav, "--format", "json"}
-	if !disableSeg {
-		args = append(args, "--segments", segLen)
+	idStr := m[1]
+	chunkID, _ := strconv.Atoi(idStr) // Safe: regex ensures 4-digit number
+
+	// Use PathManager to construct output path
+	meetingID := filepath.Base(o.cfg.OutputDir)
+	out := o.pathManager.GetChunkSegmentsPath(meetingID, chunkID)
+
+	// Use DegradationController to get active transcriber
+	transcriber := o.degradationController.GetTranscriber()
+
+	// Prepare transcription options
+	opts := &whisper.TranscribeOptions{
+		Model:    model,
+		Language: "", // Auto-detect
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdout, err := cmd.StdoutPipe()
+
+	// Call transcriber
+	result, err := transcriber.Transcribe(ctx, chunkWav, opts)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("transcription failed: %w", err)
 	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-	f, err := os.Create(out)
+
+	// Convert TranscriptionResult to JSON and save
+	jsonData, err := json.Marshal(result)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to marshal transcription result: %w", err)
 	}
-	w := bufio.NewWriter(f)
-	_, _ = io.Copy(w, stdout)
-	w.Flush()
-	f.Close()
-	if err := cmd.Wait(); err != nil {
-		return "", err
+
+	if err := os.WriteFile(out, jsonData, 0644); err != nil {
+		return "", fmt.Errorf("failed to write segments file: %w", err)
 	}
+
 	return out, nil
 }
 
@@ -290,9 +573,9 @@ func (o *Orchestrator) transcribeViaHTTP(ctx context.Context, chunk AudioChunk) 
 	}
 
 	// 添加其他表单字段
-	// 使用base模型（对应容器中的 ggml-base.bin）
-	modelName := "base"
-	if o.cfg.WhisperModel != "" && o.cfg.WhisperModel != "ggml-large-v3" {
+	// 使用配置的模型名称，如果为空则使用 ggml-base
+	modelName := "ggml-base"
+	if o.cfg.WhisperModel != "" {
 		modelName = o.cfg.WhisperModel
 	}
 	if err := writer.WriteField("model", modelName); err != nil {
@@ -328,7 +611,9 @@ func (o *Orchestrator) transcribeViaHTTP(ctx context.Context, chunk AudioChunk) 
 		return "", fmt.Errorf("whisper API returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	segPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_segments.json", chunk.ID))
+	// Use PathManager to construct output path
+	meetingID := filepath.Base(o.cfg.OutputDir)
+	segPath := o.pathManager.GetChunkSegmentsPath(meetingID, chunk.ID)
 	outFile, err := os.Create(segPath)
 	if err != nil {
 		return "", fmt.Errorf("create output file: %w", err)
@@ -343,7 +628,9 @@ func (o *Orchestrator) transcribeViaHTTP(ctx context.Context, chunk AudioChunk) 
 
 // transcribeViaCLI 通过命令行调用 Whisper CLI 进行转录
 func (o *Orchestrator) transcribeViaCLI(ctx context.Context, chunk AudioChunk) (string, error) {
-	segPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_segments.json", chunk.ID))
+	// Use PathManager to construct output path
+	meetingID := filepath.Base(o.cfg.OutputDir)
+	segPath := o.pathManager.GetChunkSegmentsPath(meetingID, chunk.ID)
 	args := []string{"go-whisper/whisper", "transcribe", o.cfg.WhisperModel, chunk.Path, "--format", "json"}
 	ws := strings.TrimSpace(strings.ToLower(o.cfg.WhisperSegments))
 	if ws != "" && ws != "0" && ws != "0s" {
@@ -388,11 +675,12 @@ type Recorder struct {
 	wg            *sync.WaitGroup
 	stopFlag      atomic.Bool
 	forceFinalize atomic.Bool // true: keep partial chunk when stopping
+	pathManager   *dependency.PathManager
 }
 
-func NewRecorder(cfg Config, asrQueue *SafeQueue[AudioChunk], wg *sync.WaitGroup) *Recorder {
+func NewRecorder(cfg Config, asrQueue *SafeQueue[AudioChunk], wg *sync.WaitGroup, pathManager *dependency.PathManager) *Recorder {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Recorder{cfg: cfg, ctx: ctx, cancel: cancel, asrQueue: asrQueue, wg: wg}
+	return &Recorder{cfg: cfg, ctx: ctx, cancel: cancel, asrQueue: asrQueue, wg: wg, pathManager: pathManager}
 }
 
 func (r *Recorder) Start()       { r.wg.Add(1); go r.loop() }
@@ -416,12 +704,19 @@ func (r *Recorder) loop() {
 	defer r.wg.Done()
 	for {
 		curID := r.chunkID
-		audioFile := filepath.Join(r.cfg.OutputDir, fmt.Sprintf("chunk_%04d.wav", curID))
+		// Use PathManager to construct audio file path
+		meetingID := filepath.Base(r.cfg.OutputDir)
+		audioFile := r.pathManager.GetChunkAudioPath(meetingID, curID, "wav")
+		tmpFile := audioFile + ".partial"
 		start := time.Now()
 		endPlanned := start.Add(r.cfg.RecordChunkDuration)
 		// 方案A: 使用 -t 强制确保录制时长不被意外提前截断
 		durSec := int(r.cfg.RecordChunkDuration.Seconds())
-		cmd := exec.CommandContext(r.ctx, "ffmpeg", "-y", "-f", "avfoundation", "-i", fmt.Sprintf(":%s", r.cfg.FFmpegDeviceName), "-t", strconv.Itoa(durSec), "-ac", "1", "-ar", "16000", audioFile)
+		ffmpegBin := strings.TrimSpace(r.cfg.FFmpegBinaryPath)
+		if ffmpegBin == "" {
+			ffmpegBin = "ffmpeg"
+		}
+		cmd := exec.CommandContext(r.ctx, ffmpegBin, "-y", "-f", "avfoundation", "-i", fmt.Sprintf(":%s", r.cfg.FFmpegDeviceName), "-t", strconv.Itoa(durSec), "-ac", "1", "-ar", "16000", tmpFile)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := cmd.Start(); err != nil {
 			log.Printf("[REC] start err: %v", err)
@@ -485,8 +780,29 @@ func (r *Recorder) loop() {
 		if !r.stopFlag.Load() {
 			r.chunkID++
 		}
+		finalPath := audioFile
+		if _, err := os.Stat(tmpFile); err == nil {
+			if enqueue {
+				if err := os.Rename(tmpFile, audioFile); err != nil {
+					log.Printf("[REC] rename partial chunk failed: %v", err)
+					if errCopy := copyFile(tmpFile, audioFile); errCopy != nil {
+						log.Printf("[REC] copy partial chunk failed: %v", errCopy)
+						finalPath = tmpFile
+					} else {
+						finalPath = audioFile
+						_ = os.Remove(tmpFile)
+					}
+				}
+			} else {
+				_ = os.Remove(tmpFile)
+			}
+		} else if !enqueue {
+			_ = os.Remove(audioFile)
+		}
 		if enqueue {
-			r.asrQueue.Push(AudioChunk{ID: curID, Path: audioFile, StartTime: start, EndTime: endActual})
+			log.Printf("[ASR Queue] Pushing chunk to queue: ID=%d, Path=%s", curID, finalPath)
+			r.asrQueue.Push(AudioChunk{ID: curID, Path: finalPath, StartTime: start, EndTime: endActual})
+			log.Printf("[ASR Queue] Chunk pushed successfully")
 		}
 		recDur := endActual.Sub(start)
 		planned := r.cfg.RecordChunkDuration
@@ -505,7 +821,11 @@ func (r *Recorder) continuousLoop() {
 	defer r.wg.Done()
 	log.Printf("[REC] continuous mode start (chunk=%04d dur=%s slice-by-samples)", r.chunkID, r.cfg.RecordChunkDuration)
 	// 准备 ffmpeg 命令: 输出原始 PCM 到 stdout
-	cmd := exec.CommandContext(r.ctx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-i", fmt.Sprintf(":%s", r.cfg.FFmpegDeviceName), "-ac", "1", "-ar", "16000", "-f", "s16le", "-use_wallclock_as_timestamps", "1", "-")
+	ffmpegBin := strings.TrimSpace(r.cfg.FFmpegBinaryPath)
+	if ffmpegBin == "" {
+		ffmpegBin = "ffmpeg"
+	}
+	cmd := exec.CommandContext(r.ctx, ffmpegBin, "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-i", fmt.Sprintf(":%s", r.cfg.FFmpegDeviceName), "-ac", "1", "-ar", "16000", "-f", "s16le", "-use_wallclock_as_timestamps", "1", "-")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -537,7 +857,8 @@ func (r *Recorder) continuousLoop() {
 	)
 
 	openChunk := func(id int) error {
-		name := filepath.Join(r.cfg.OutputDir, fmt.Sprintf("chunk_%04d.wav", id))
+		meetingID := filepath.Base(r.cfg.OutputDir)
+		name := r.pathManager.GetChunkAudioPath(meetingID, id, "wav")
 		f, err := os.Create(name)
 		if err != nil {
 			return err
@@ -562,8 +883,11 @@ func (r *Recorder) continuousLoop() {
 		ratio := float64(actualSamples) / float64(expectedPerChunkSamples)
 		log.Printf("[REC] continuous finalize chunk=%04d samples=%d expected=%d ratio=%.4f", id, actualSamples, expectedPerChunkSamples, ratio)
 		// 推入队列
-		name := filepath.Join(r.cfg.OutputDir, fmt.Sprintf("chunk_%04d.wav", id))
+		meetingID := filepath.Base(r.cfg.OutputDir)
+		name := r.pathManager.GetChunkAudioPath(meetingID, id, "wav")
+		log.Printf("[ASR Queue] Pushing finalized chunk to queue: ID=%04d, Path=%s", id, name)
 		r.asrQueue.Push(AudioChunk{ID: id, Path: name, StartTime: start, EndTime: endTime})
+		log.Printf("[ASR Queue] Finalized chunk pushed successfully")
 		curFile = nil
 	}
 
@@ -647,115 +971,286 @@ func writeWavHeader(f *os.File, sampleRate, channels, bitsPerSample, dataSize in
 
 // worker helpers
 func (o *Orchestrator) asrWorker(ctx context.Context) {
+	log.Printf("[ASR Worker] Starting ASR worker goroutine")
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()
+		log.Printf("[ASR Worker] ASR worker goroutine started, waiting for chunks...")
 		for {
+			log.Printf("[ASR Worker] Attempting to pop from queue...")
 			chunk, ok := o.asrQ.Pop()
 			if !ok {
+				log.Printf("[ASR Worker] Queue closed, exiting worker")
 				break
 			}
+			log.Printf("[ASR Worker] Got chunk from queue: ID=%d, Path=%s", chunk.ID, chunk.Path)
 
 			startTime := time.Now()
-			var segPath string
-			var err error
 
-			// 日志：开始处理
+			// 日志:开始处理
 			logger.LogAudioProcessing(slog.Default(), "asr", "start", chunk.ID, 0, "")
 
-			// 根据 WhisperMode 选择转录方式
-			if o.cfg.WhisperMode == "http" {
-				segPath, err = o.transcribeViaHTTP(ctx, chunk)
-			} else {
-				segPath, err = o.transcribeViaCLI(ctx, chunk)
+			// 【核心变更】通过降级控制器获取当前Transcriber
+			transcriber := o.degradationController.GetTranscriber()
+			transcriberName := transcriber.Name()
+
+			// 构造TranscribeOptions
+			opts := &whisper.TranscribeOptions{
+				Model:    o.cfg.WhisperModel,
+				Language: "", // 自动检测
+				Prompt:   "",
+				Timeout:  10 * time.Minute,
 			}
 
+			// 调用Transcriber.Transcribe()
+			result, err := transcriber.Transcribe(ctx, chunk.Path, opts)
 			duration := time.Since(startTime)
 			durationMs := duration.Milliseconds()
 
 			if err != nil {
 				// 记录错误
-				log.Printf("[ASR] transcribe error (mode=%s): %v", o.cfg.WhisperMode, err)
+				log.Printf("[ASR] transcribe error (transcriber=%s): %v", transcriberName, err)
 
-				// 日志：错误
-				errorCode := "WHISPER_HTTP_ERROR"
-				if o.cfg.WhisperMode != "http" {
-					errorCode = "WHISPER_CLI_ERROR"
-				}
+				// 日志:错误
+				errorCode := fmt.Sprintf("WHISPER_ERROR_%s", strings.ToUpper(transcriberName))
 				logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, errorCode)
 
-				// 指标：失败
+				// 指标:失败
 				metrics.RecordChunkProcessed("asr", false)
-				metrics.RecordError("asr", "whisper_"+o.cfg.WhisperMode)
+				metrics.RecordError("asr", "whisper_"+transcriberName)
 				continue
 			}
 
-			// 日志：成功
+			// 将结果写入segments.json文件 (保持原有格式兼容)
+			meetingID := filepath.Base(o.cfg.OutputDir)
+			segPath := o.pathManager.GetChunkSegmentsPath(meetingID, chunk.ID)
+			if err := writeSegmentsJSON(segPath, result); err != nil {
+				log.Printf("[ASR] write segments error: %v", err)
+				logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, "WRITE_SEGMENTS_ERROR")
+				metrics.RecordChunkProcessed("asr", false)
+				continue
+			}
+
+			// 日志:成功 (带transcriber名称和降级状态)
+			log.Printf("[ASR] transcribe success (transcriber=%s, degraded=%v)", transcriberName, o.degradationController.IsDegraded())
 			logger.LogAudioProcessing(slog.Default(), "asr", "success", chunk.ID, durationMs, "")
 
-			// 指标：成功
+			// 指标:成功
 			metrics.RecordChunkProcessed("asr", true)
 			metrics.RecordDuration("asr", duration.Seconds())
 
+			// 推送到 SD 队列进行说话人分离
+			log.Printf("[ASR Worker] Pushing chunk %d to SD queue for speaker diarization", chunk.ID)
 			o.sdQ.Push(ASRResult{Chunk: chunk, SegJSON: segPath})
 		}
 		o.sdQ.Close()
 	}()
 }
 
+// writeSegmentsJSON 将TranscriptionResult写入JSON文件 (保持原有格式兼容)
+func writeSegmentsJSON(path string, result *whisper.TranscriptionResult) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
 func (o *Orchestrator) sdWorker(ctx context.Context) {
+	log.Printf("[SD Worker] Starting Speaker Diarization worker goroutine")
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()
+		log.Printf("[SD Worker] SD worker goroutine started, waiting for items...")
 		for {
+			log.Printf("[SD Worker] Attempting to pop from queue...")
 			item, ok := o.sdQ.Pop()
 			if !ok {
+				log.Printf("[SD Worker] Queue closed, exiting worker")
 				break
 			}
-			speakersPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_speakers.json", item.Chunk.ID))
+			log.Printf("[SD Worker] Got item from queue: Chunk ID=%d", item.Chunk.ID)
+			meetingID := filepath.Base(o.cfg.OutputDir)
+			speakersPath := o.pathManager.GetChunkSpeakersPath(meetingID, item.Chunk.ID)
 
-			// 使用配置中的 DiarizationScriptPath，默认 /app/audio/diarization/pyannote_diarize.py
-			scriptPath := o.cfg.DiarizationScriptPath
-			if scriptPath == "" {
-				scriptPath = "/app/audio/diarization/pyannote_diarize.py"
+			// Use DependencyClient for diarization (supports local/remote/fallback modes)
+			if o.dependencyClient != nil {
+				// ========== File Sharing: Ensure audio file is in shared volume ==========
+				audioPath := item.Chunk.Path
+				sharedVolume := o.cfg.DependencySharedVolume
+
+				// Check if audio file is within shared volume
+				if sharedVolume != "" && !strings.HasPrefix(audioPath, sharedVolume) {
+					// File is outside shared volume, need to copy it
+					pm := o.dependencyClient.PathManager()
+					meetingID := filepath.Base(filepath.Dir(audioPath)) // Extract meeting ID from path
+					if meetingID == "." || meetingID == "/" {
+						meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100) // Fallback: group by 100 chunks
+					}
+
+					// Construct target path in shared volume
+					chunkFilename := filepath.Base(audioPath)
+					targetPath := pm.GetAudioPath(meetingID, chunkFilename)
+
+					// Ensure meeting directory exists
+					if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
+						slog.Error("[SD] failed to create shared volume directory",
+							"chunk_id", item.Chunk.ID,
+							"meeting_id", meetingID,
+							"error", err.Error(),
+						)
+						continue
+					}
+
+					// Copy file to shared volume
+					if err := copyFile(audioPath, targetPath); err != nil {
+						slog.Error("[SD] failed to copy audio file to shared volume",
+							"chunk_id", item.Chunk.ID,
+							"src", audioPath,
+							"dst", targetPath,
+							"error", err.Error(),
+						)
+						continue
+					}
+
+					slog.Info("[SD] copied audio file to shared volume",
+						"chunk_id", item.Chunk.ID,
+						"src", audioPath,
+						"dst", targetPath,
+					)
+
+					// Update audio path to point to shared volume
+					audioPath = targetPath
+				}
+				// ========== End File Sharing ==========
+				// ========== End File Sharing ==========
+
+				// Transform path for deps-service container if needed
+				// unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+				audioPathForDeps := audioPath
+				if strings.HasPrefix(audioPath, "/app/data/") {
+					audioPathForDeps = strings.Replace(audioPath, "/app/data/", "/data/", 1)
+					slog.Info("[SD] transformed path for deps-service",
+						"chunk_id", item.Chunk.ID,
+						"original", audioPath,
+						"transformed", audioPathForDeps,
+					)
+				}
+
+				// Prepare diarization arguments
+				scriptPath := o.cfg.DiarizationScriptPath
+				if scriptPath == "" {
+					scriptPath = "/app/scripts/pyannote_diarize.py"
+				}
+
+				args := []string{scriptPath, "--input", audioPathForDeps, "--device", o.cfg.DeviceDefault}
+				if o.cfg.EnableOffline {
+					args = append(args, "--offline")
+				}
+
+				// Prepare environment variables
+				// Note: HUGGINGFACE_ACCESS_TOKEN is set in deps-service container
+				// Python scripts will read it automatically via os.getenv()
+				var env map[string]string
+				if o.cfg.EnableOffline {
+					env = map[string]string{
+						"HF_HUB_OFFLINE": "1",
+					}
+				}
+
+				// Execute diarization via DependencyClient (lower-level API)
+				diarizationCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+				defer cancel()
+
+				// Construct CommandRequest directly for flexibility
+				req := dependency.CommandRequest{
+					Command: "python",
+					Args:    args,
+					Env:     env,
+					Timeout: 10 * time.Minute,
+				}
+
+				// Validate and execute
+				if err := dependency.ValidateCommandRequest(req, o.dependencyClient.Config()); err != nil {
+					slog.Error("[SD] diarization validation failed",
+						"chunk_id", item.Chunk.ID,
+						"error", err.Error(),
+					)
+					continue
+				}
+
+				resp, err := o.dependencyClient.ExecuteCommand(diarizationCtx, req)
+				if err != nil || !resp.Success || resp.ExitCode != 0 {
+					slog.Error("[SD] diarization failed via DependencyClient",
+						"chunk_id", item.Chunk.ID,
+						"exit_code", resp.ExitCode,
+						"stderr", resp.Stderr,
+						"error", err,
+					)
+					continue
+				}
+
+				// Write stdout to speakers file (pyannote outputs JSON to stdout)
+				if err := os.WriteFile(speakersPath, []byte(resp.Stdout), 0644); err != nil {
+					slog.Error("[SD] failed to write diarization output",
+						"chunk_id", item.Chunk.ID,
+						"error", err.Error(),
+					)
+					continue
+				}
+			} else {
+				// Fallback: direct Python script execution (legacy behavior)
+				scriptPath := o.cfg.DiarizationScriptPath
+				if scriptPath == "" {
+					scriptPath = "/app/scripts/pyannote_diarize.py"
+				}
+
+				args := []string{"python3", scriptPath, "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
+				if o.cfg.EnableOffline {
+					args = append(args, "--offline")
+				}
+
+				cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+				env := os.Environ()
+				// Note: HUGGINGFACE_ACCESS_TOKEN should be set in environment
+				// No need to append from config - let Python read from env
+				if o.cfg.EnableOffline {
+					env = append(env, "HF_HUB_OFFLINE=1")
+				}
+				cmd.Env = env
+				cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+				stdout, err := cmd.StdoutPipe()
+				if err != nil {
+					log.Printf("[SD] pipe err: %v", err)
+					continue
+				}
+				cmd.Stderr = os.Stderr
+				if err := cmd.Start(); err != nil {
+					log.Printf("[SD] start err: %v", err)
+					continue
+				}
+				f, _ := os.Create(speakersPath)
+				w := bufio.NewWriter(f)
+				_, _ = io.Copy(w, stdout)
+				w.Flush()
+				f.Close()
+				if err := cmd.Wait(); err != nil {
+					log.Printf("[SD] wait err: %v", err)
+					continue
+				}
 			}
 
-			args := []string{"python3", scriptPath, "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
-			if o.cfg.EnableOffline {
-				args = append(args, "--offline")
-			}
-
-			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-			env := os.Environ()
-			env = append(env, "HUGGINGFACE_TOKEN="+o.cfg.HFTokenValue)
-			if o.cfg.EnableOffline {
-				env = append(env, "HF_HUB_OFFLINE=1")
-			}
-			cmd.Env = env
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			stdout, err := cmd.StdoutPipe()
-			if err != nil {
-				log.Printf("[SD] pipe err: %v", err)
-				continue
-			}
-			cmd.Stderr = os.Stderr
-			if err := cmd.Start(); err != nil {
-				log.Printf("[SD] start err: %v", err)
-				continue
-			}
-			f, _ := os.Create(speakersPath)
-			w := bufio.NewWriter(f)
-			_, _ = io.Copy(w, stdout)
-			w.Flush()
-			f.Close()
-			if err := cmd.Wait(); err != nil {
-				log.Printf("[SD] wait err: %v", err)
-				continue
-			}
 			// Post-process: clamp any segment ends beyond wav duration
 			if err := sanitizeSpeakersJSON(speakersPath, item.Chunk.Path); err != nil {
 				log.Printf("[SD][sanitize] error: %v", err)
 			}
+
+			// 推送到 EMB 队列进行嵌入处理
+			log.Printf("[SD Worker] Pushing chunk %d to EMB queue for embedding extraction", item.Chunk.ID)
 			o.embQ.Push(SDResult{Chunk: item.Chunk, SegJSON: item.SegJSON, SpeakersJSON: speakersPath})
 		}
 		o.embQ.Close()
@@ -763,47 +1258,169 @@ func (o *Orchestrator) sdWorker(ctx context.Context) {
 }
 
 func (o *Orchestrator) embeddingWorker(ctx context.Context) {
+	log.Printf("[EMB Worker] Starting Embedding worker goroutine")
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()
+		log.Printf("[EMB Worker] EMB worker goroutine started, waiting for items...")
 		for {
+			log.Printf("[EMB Worker] Attempting to pop from queue...")
 			item, ok := o.embQ.Pop()
 			if !ok {
+				log.Printf("[EMB Worker] Queue closed, exiting worker")
 				break
 			}
-			embPath := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_embeddings.json", item.Chunk.ID))
+			log.Printf("[EMB Worker] Got item from queue: Chunk ID=%d", item.Chunk.ID)
+			meetingID := filepath.Base(o.cfg.OutputDir)
+			embPath := o.pathManager.GetChunkEmbeddingsPath(meetingID, item.Chunk.ID)
+
+			// Get existing embeddings path for speaker continuity
 			o.voicePrint.Mutex.Lock()
 			existing := o.voicePrint.CurrentEmbPath
 			o.voicePrint.Mutex.Unlock()
-			args := []string{"python3", o.cfg.EmbeddingScriptPath, "--audio", item.Chunk.Path, "--speakers-json", item.SpeakersJSON, "--output", embPath, "--device", o.cfg.EmbeddingDeviceDefault, "--threshold", o.cfg.EmbeddingThreshold, "--auto-lower-threshold", "--auto-lower-min", o.cfg.EmbeddingAutoLowerMin, "--auto-lower-step", o.cfg.EmbeddingAutoLowerStep, "--hf_token", o.cfg.HFTokenValue}
-			// 仅 pyannote 版本支持 --offline
-			if o.cfg.EnableOffline && strings.Contains(o.cfg.EmbeddingScriptPath, "pyannote/") {
-				args = append(args, "--offline")
+
+			// ========== File Sharing: Ensure audio and speakers files are in shared volume ==========
+			audioPath := item.Chunk.Path
+			speakersPath := item.SpeakersJSON
+			sharedVolume := o.cfg.DependencySharedVolume
+
+			// Check if audio file needs to be copied to shared volume
+			if sharedVolume != "" && !strings.HasPrefix(audioPath, sharedVolume) {
+				pm := o.dependencyClient.PathManager()
+				meetingID := filepath.Base(filepath.Dir(audioPath))
+				if meetingID == "." || meetingID == "/" {
+					meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100)
+				}
+
+				chunkFilename := filepath.Base(audioPath)
+				targetPath := pm.GetAudioPath(meetingID, chunkFilename)
+
+				if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
+					slog.Error("[EMB] failed to create shared volume directory",
+						"chunk_id", item.Chunk.ID,
+						"meeting_id", meetingID,
+						"error", err.Error(),
+					)
+					continue
+				}
+
+				if err := copyFile(audioPath, targetPath); err != nil {
+					slog.Error("[EMB] failed to copy audio file to shared volume",
+						"chunk_id", item.Chunk.ID,
+						"src", audioPath,
+						"dst", targetPath,
+						"error", err.Error(),
+					)
+					continue
+				}
+
+				slog.Info("[EMB] copied audio file to shared volume",
+					"chunk_id", item.Chunk.ID,
+					"src", audioPath,
+					"dst", targetPath,
+				)
+
+				audioPath = targetPath
 			}
-			if existing != "" {
-				args = append(args, "--existing-embeddings", existing)
+
+			// Check if speakers file needs to be copied to shared volume
+			if sharedVolume != "" && !strings.HasPrefix(speakersPath, sharedVolume) {
+				pm := o.dependencyClient.PathManager()
+				meetingID := filepath.Base(filepath.Dir(speakersPath))
+				if meetingID == "." || meetingID == "/" {
+					meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100)
+				}
+
+				speakersFilename := filepath.Base(speakersPath)
+				targetPath := pm.GetDiarizationPath(meetingID, speakersFilename)
+
+				if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
+					slog.Error("[EMB] failed to create shared volume directory for speakers",
+						"chunk_id", item.Chunk.ID,
+						"meeting_id", meetingID,
+						"error", err.Error(),
+					)
+					continue
+				}
+
+				if err := copyFile(speakersPath, targetPath); err != nil {
+					slog.Error("[EMB] failed to copy speakers file to shared volume",
+						"chunk_id", item.Chunk.ID,
+						"src", speakersPath,
+						"dst", targetPath,
+						"error", err.Error(),
+					)
+					continue
+				}
+
+				slog.Info("[EMB] copied speakers file to shared volume",
+					"chunk_id", item.Chunk.ID,
+					"src", speakersPath,
+					"dst", targetPath,
+				)
+
+				speakersPath = targetPath
 			}
-			log.Printf("[EMB] run: %v (output=%s)", args, embPath)
-			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-			env := os.Environ()
-			env = append(env, "HUGGINGFACE_TOKEN="+o.cfg.HFTokenValue)
-			cmd.Env = env
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
+			// ========== End File Sharing ==========
+
+			// Transform paths for deps-service container if needed
+			// unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+			audioPathForDeps := audioPath
+			speakersPathForDeps := speakersPath
+			embPathForDeps := embPath
+			existingForDeps := existing
+
+			if strings.HasPrefix(audioPath, "/app/data/") {
+				audioPathForDeps = strings.Replace(audioPath, "/app/data/", "/data/", 1)
+			}
+			if strings.HasPrefix(speakersPath, "/app/data/") {
+				speakersPathForDeps = strings.Replace(speakersPath, "/app/data/", "/data/", 1)
+			}
+			if strings.HasPrefix(embPath, "/app/data/") {
+				embPathForDeps = strings.Replace(embPath, "/app/data/", "/data/", 1)
+			}
+			if existing != "" && strings.HasPrefix(existing, "/app/data/") {
+				existingForDeps = strings.Replace(existing, "/app/data/", "/data/", 1)
+			}
+
+			slog.Info("[EMB] transformed paths for deps-service",
+				"chunk_id", item.Chunk.ID,
+				"audio_original", audioPath,
+				"audio_transformed", audioPathForDeps,
+				"speakers_original", speakersPath,
+				"speakers_transformed", speakersPathForDeps,
+				"output_original", embPath,
+				"output_transformed", embPathForDeps,
+				"existing_original", existing,
+				"existing_transformed", existingForDeps,
+			)
+
+			// Construct EmbeddingOptions from config
+			opts := &dependency.EmbeddingOptions{
+				Device:             o.cfg.EmbeddingDeviceDefault,
+				EnableOffline:      o.cfg.EnableOffline,
+				HFToken:            o.cfg.HFTokenValue,
+				Threshold:          o.cfg.EmbeddingThreshold,
+				AutoLowerThreshold: true, // Always enable auto-lowering
+				AutoLowerMin:       o.cfg.EmbeddingAutoLowerMin,
+				AutoLowerStep:      o.cfg.EmbeddingAutoLowerStep,
+				ExistingEmbeddings: existingForDeps, // Use transformed path
+			}
+
+			log.Printf("[EMB] Calling DependencyClient.GenerateEmbeddings: audio=%s, speakers=%s, output=%s, device=%s, threshold=%s",
+				audioPathForDeps, speakersPathForDeps, embPathForDeps, opts.Device, opts.Threshold)
+
+			// Use DependencyClient to generate embeddings (use transformed paths)
+			if err := o.dependencyClient.GenerateEmbeddings(ctx, audioPathForDeps, speakersPathForDeps, embPathForDeps, opts); err != nil {
 				log.Printf("[EMB] error: %v", err)
 				continue
 			}
-			// 验证文件是否生成
-			if fi, err := os.Stat(embPath); err != nil {
-				log.Printf("[EMB] output missing: %s err=%v", embPath, err)
-			} else if fi.Size() == 0 {
-				log.Printf("[EMB] output empty: %s", embPath)
-			}
+
+			// Update current embeddings path for next chunk (use original path for local file access)
 			o.voicePrint.Mutex.Lock()
 			o.voicePrint.CurrentEmbPath = embPath
-			o.voicePrint.Mutex.Unlock()
+			o.voicePrint.Mutex.Unlock() // 推送到 MERGE 队列进行最终合并
+			log.Printf("[EMB Worker] Pushing chunk %d to MERGE queue for final merging", item.Chunk.ID)
 			o.mergeQ.Push(EmbeddingResult{Chunk: item.Chunk, SegJSON: item.SegJSON, SpeakersJSON: item.SpeakersJSON, EmbeddingsJSON: embPath})
 		}
 		o.mergeQ.Close()
@@ -996,12 +1613,16 @@ func applyGlobalMapping(speakersPath, embeddingsPath string) (string, error) {
 }
 
 func (o *Orchestrator) mergeWorker(ctx context.Context) {
+	log.Printf("[MERGE Worker] Starting Merge worker goroutine")
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()
+		log.Printf("[MERGE Worker] MERGE worker goroutine started, waiting for items...")
 		for {
+			log.Printf("[MERGE Worker] Attempting to pop from queue...")
 			item, ok := o.mergeQ.Pop()
 			if !ok {
+				log.Printf("[MERGE Worker] Queue closed, exiting worker")
 				break
 			}
 			log.Printf("[MERGE] chunk %04d merging (seg=%s spk=%s emb=%s)", item.Chunk.ID, filepath.Base(item.SegJSON), filepath.Base(item.SpeakersJSON), filepath.Base(item.EmbeddingsJSON))
@@ -1014,7 +1635,9 @@ func (o *Orchestrator) mergeWorker(ctx context.Context) {
 				mapped = p
 				log.Printf("[MERGE] chunk %04d global mapping -> %s", item.Chunk.ID, filepath.Base(mapped))
 			}
-			mergedTxt := filepath.Join(o.cfg.OutputDir, fmt.Sprintf("chunk_%04d_merged.txt", item.Chunk.ID))
+			// Note: No dedicated PathManager method for merged.txt, using custom path
+			meetingID := filepath.Base(o.cfg.OutputDir)
+			mergedTxt := filepath.Join(o.pathManager.GetMeetingDir(meetingID), fmt.Sprintf("chunk_%04d_merged.txt", item.Chunk.ID))
 			args := []string{"merge-segments", "--segments-file", item.SegJSON, "--speaker-file", mapped}
 			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -1032,7 +1655,92 @@ func (o *Orchestrator) mergeWorker(ctx context.Context) {
 // New creates orchestrator (not started)
 func New(cfg Config) *Orchestrator {
 	os.MkdirAll(cfg.OutputDir, 0o755)
-	return &Orchestrator{cfg: cfg, state: StateCreated, asrQ: NewSafeQueue[AudioChunk](8), sdQ: NewSafeQueue[ASRResult](8), embQ: NewSafeQueue[SDResult](8), mergeQ: NewSafeQueue[EmbeddingResult](8), voicePrint: &VoicePrintState{CurrentEmbPath: cfg.InitialEmbeddingsPath}, startChunkID: 0, reprocess: false}
+	cfg.ApplyRuntimeDefaults()
+
+	// Initialize dependency client for external code
+	depClient, err := initDependencyClient(cfg)
+	if err != nil {
+		log.Printf("[WARN] Failed to initialize dependency client: %v", err)
+	}
+
+	return &Orchestrator{
+		cfg:              cfg,
+		state:            StateCreated,
+		asrQ:             NewSafeQueue[AudioChunk](8),
+		sdQ:              NewSafeQueue[ASRResult](8),
+		embQ:             NewSafeQueue[SDResult](8),
+		mergeQ:           NewSafeQueue[EmbeddingResult](8),
+		voicePrint:       &VoicePrintState{CurrentEmbPath: cfg.InitialEmbeddingsPath},
+		startChunkID:     0,
+		reprocess:        false,
+		dependencyClient: depClient,
+		pathManager:      depClient.PathManager(),
+	}
+}
+
+// initDependencyClient initializes the dependency client based on configuration.
+// It maps legacy config fields (FFmpegBinaryPath, PythonBinaryPath) to the new
+// ExecutorConfig for backward compatibility.
+func initDependencyClient(cfg Config) (*dependency.DependencyClient, error) {
+	// Set defaults for backward compatibility
+	mode := cfg.DependencyMode
+	if mode == "" {
+		mode = "local" // Default to local mode (backward compatible)
+	}
+
+	sharedVolume := cfg.DependencySharedVolume
+	if sharedVolume == "" {
+		// 【修复】PathManager 需要 baseDir (如 "/app/data"),而不是 meeting 目录
+		// OutputDir 格式: /app/data/meetings/{meeting_id}
+		// 需要提取: /app/data
+		sharedVolume = filepath.Dir(filepath.Dir(cfg.OutputDir)) // 提取 baseDir
+	}
+
+	timeout := cfg.DependencyTimeout
+	if timeout == 0 {
+		timeout = 5 * time.Minute // Default 5 minutes
+	}
+
+	// Map legacy binary paths to new LocalBinaryPaths
+	localBinaryPaths := make(map[string]string)
+	if cfg.FFmpegBinaryPath != "" {
+		localBinaryPaths["ffmpeg"] = cfg.FFmpegBinaryPath
+	}
+	if cfg.PythonBinaryPath != "" {
+		localBinaryPaths["python"] = cfg.PythonBinaryPath
+	}
+
+	// Create executor config
+	execConfig := dependency.ExecutorConfig{
+		Mode:             dependency.ExecutionMode(mode),
+		ServiceURL:       cfg.DependencyServiceURL,
+		SharedVolumePath: sharedVolume,
+		LocalBinaryPaths: localBinaryPaths,
+		DefaultTimeout:   timeout,
+		AllowedCommands:  []string{"ffmpeg", "pyannote", "python"},
+	}
+
+	// Create dependency client
+	client, err := dependency.NewClient(execConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dependency client: %w", err)
+	}
+
+	// Perform startup health check (non-blocking)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := client.HealthCheck(ctx); err != nil {
+		slog.Warn("dependency availability check failed (service may degrade)",
+			"error", err.Error(),
+			"mode", mode)
+		// Don't fail - just log warning and continue
+	} else {
+		slog.Info("dependency availability check passed",
+			"mode", mode)
+	}
+
+	return client, nil
 }
 
 // ReprocessFromSegments enumerates existing chunk_XXXX.wav + chunk_XXXX_segments.json and pushes them to sd -> emb -> merge pipeline.
@@ -1158,21 +1866,132 @@ func (o *Orchestrator) Start() error {
 	if o.state != StateCreated && o.state != StateStopped {
 		return fmt.Errorf("invalid state: %s", o.state)
 	}
-	
+
+	// Ensure runtime defaults are set and dependencies are available before
+	// launching any external processes.
+	o.cfg.ApplyRuntimeDefaults()
+	if err := o.cfg.ValidateCriticalDependencies(); err != nil {
+		return err
+	}
+
+	// 1. 创建Primary Transcriber
+	var primaryTranscriber whisper.WhisperTranscriber
+	whisperMode := strings.ToLower(o.cfg.WhisperMode)
+	if whisperMode == "" {
+		whisperMode = "http" // 默认HTTP模式
+	}
+
+	switch whisperMode {
+	case "http", "go-whisper":
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[Orchestrator] Using GoWhisper HTTP mode (API=%s)", apiURL)
+	case "faster-whisper":
+		// FasterWhisper也使用HTTP API
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[Orchestrator] Using FasterWhisper HTTP mode (API=%s)", apiURL)
+	case "cli", "local-whisper":
+		// 使用本地CLI模式
+		programPath := "/app/bin/whisper/whisper"
+		modelPath := o.cfg.WhisperModel
+		if modelPath == "" {
+			modelPath = "ggml-base.bin"
+		}
+		var err error
+		primaryTranscriber, err = whisper.NewLocalWhisperImpl(programPath, modelPath)
+		if err != nil {
+			return fmt.Errorf("failed to create LocalWhisperImpl: %w", err)
+		}
+		log.Printf("[Orchestrator] Using LocalWhisper CLI mode (program=%s, model=%s)", programPath, modelPath)
+	default:
+		// 默认使用HTTP模式
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[Orchestrator] WhisperMode unspecified, defaulting to GoWhisper HTTP (API=%s)", apiURL)
+	}
+
+	// 2. 创建Fallback Transcriber (MockTranscriber)
+	fallbackTranscriber := whisper.NewMockTranscriber()
+	log.Printf("[Orchestrator] Fallback transcriber: MockTranscriber (graceful degradation)")
+
+	// 3. 创建HealthChecker (使用Config中的值)
+	checkInterval := o.cfg.HealthCheckInterval
+	if checkInterval == 0 {
+		checkInterval = 5 * time.Minute // 回退到默认值
+	}
+	failThreshold := o.cfg.HealthCheckFailThreshold
+	if failThreshold == 0 {
+		failThreshold = 3 // 回退到默认值
+	}
+	o.healthChecker = health.NewHealthChecker(primaryTranscriber, checkInterval, failThreshold)
+	log.Printf("[Orchestrator] HealthChecker created (interval=%s, failThreshold=%d)", checkInterval, failThreshold)
+
 	// 仅在启用持续录制模式时启动 FFmpeg 录音
 	if o.cfg.UseContinuous {
-		o.recorder = NewRecorder(o.cfg, o.asrQ, &o.wg)
+		o.recorder = NewRecorder(o.cfg, o.asrQ, &o.wg, o.pathManager)
+
+		// 确定起始 chunk ID
+		startID := 0
 		if o.startChunkID > 0 {
-			o.recorder.chunkID = o.startChunkID
+			// 用户明确指定了起始 ID (reprocess 模式)
+			startID = o.startChunkID
+		} else if o.nextChunkID > 0 {
+			// 从上次停止的位置恢复
+			startID = o.nextChunkID
+			log.Printf("[Orchestrator] Resuming from previous session, nextChunkID=%d", startID)
+		} else {
+			// 检测目录中已有的最大 chunk ID
+			maxID := o.detectMaxChunkID()
+			if maxID >= 0 {
+				startID = maxID + 1
+				log.Printf("[Orchestrator] Detected existing chunks, starting from chunkID=%d", startID)
+			}
 		}
+
+		o.recorder.chunkID = startID
+		log.Printf("[Orchestrator] Recorder initialized with chunkID=%d", startID)
 		o.recorder.Start()
 	}
-	
+
 	o.procCtx, o.procCancel = context.WithCancel(context.Background())
+
+	// 4. 启动HealthChecker (使用procCtx) - 在goroutine中运行以避免阻塞
+	go o.healthChecker.Start(o.procCtx)
+	log.Printf("[Orchestrator] HealthChecker started")
+
+	// 5. 创建DegradationController
+	o.degradationController = degradation.NewDegradationController(
+		primaryTranscriber,
+		fallbackTranscriber,
+		o.healthChecker,
+	)
+	log.Printf("[Orchestrator] DegradationController created")
+
+	// 启动所有处理队列的 worker
+	log.Printf("[Orchestrator] Starting all workers...")
 	o.asrWorker(o.procCtx)
 	o.sdWorker(o.procCtx)
 	o.embeddingWorker(o.procCtx)
 	o.mergeWorker(o.procCtx)
+	log.Printf("[Orchestrator] All workers started (ASR -> SD -> EMB -> MERGE)")
+
+	// 6. 启动 DependencyClient 定期健康检查 (仅 fallback 模式)
+	if o.cfg.DependencyMode == "fallback" && o.dependencyClient != nil {
+		o.healthTicker = time.NewTicker(5 * time.Minute)
+		go o.healthCheckWorker()
+		log.Printf("[Orchestrator] Dependency health check worker started (interval=5m)")
+	}
+
 	o.state = StateRunning
 	return nil
 }
@@ -1187,7 +2006,21 @@ func (o *Orchestrator) Stop() {
 	reproc := o.reprocess
 	recorder := o.recorder
 	cancel := o.procCancel
+	healthChecker := o.healthChecker // 保存引用
+	healthTicker := o.healthTicker   // 保存引用
 	o.mutex.Unlock()
+
+	// 停止健康检查器 (在停止其他组件之前)
+	if healthChecker != nil {
+		log.Printf("[Orchestrator] Stopping HealthChecker")
+		healthChecker.Stop()
+	}
+
+	// 停止 DependencyClient 健康检查 Ticker
+	if healthTicker != nil {
+		log.Printf("[Orchestrator] Stopping dependency health check ticker")
+		healthTicker.Stop()
+	}
 
 	if reproc { // 重处理：立即终止所有外部进程并放弃剩余队列
 		if cancel != nil {
@@ -1208,13 +2041,14 @@ func (o *Orchestrator) Stop() {
 	}
 	// 录制模式：停止当前 ffmpeg，保留部分 wav 并继续处理队列
 	if recorder != nil {
+		// 保存下一个 chunk ID 供下次启动使用
+		o.nextChunkID = recorder.chunkID
+		log.Printf("[Orchestrator] Saved nextChunkID=%d for next start", o.nextChunkID)
 		recorder.FinalizeAndStop()
 	}
 	go func() {
 		o.wg.Wait()
 		o.mutex.Lock()
-		o.state = StateDraining
-		o.mutex.Unlock()
 		_, _ = o.ConcatAllMerged()
 
 		o.mutex.Lock()
@@ -1223,37 +2057,140 @@ func (o *Orchestrator) Stop() {
 	}()
 }
 
+// detectMaxChunkID 扫描输出目录,返回已存在的最大 chunk ID
+// 如果没有找到任何 chunk 文件,返回 -1
+func (o *Orchestrator) detectMaxChunkID() int {
+	maxID := -1
+
+	// 检查输出目录是否存在
+	if _, err := os.Stat(o.cfg.OutputDir); os.IsNotExist(err) {
+		return maxID
+	}
+
+	// 扫描目录中的所有文件
+	entries, err := os.ReadDir(o.cfg.OutputDir)
+	if err != nil {
+		log.Printf("[Orchestrator] Failed to read output directory: %v", err)
+		return maxID
+	}
+
+	// 匹配 chunk_XXXX.wav 格式的文件
+	chunkPattern := regexp.MustCompile(`^chunk_(\d{4})\.wav$`)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		matches := chunkPattern.FindStringSubmatch(entry.Name())
+		if matches != nil {
+			chunkID, err := strconv.Atoi(matches[1])
+			if err == nil && chunkID > maxID {
+				maxID = chunkID
+			}
+		}
+	}
+
+	return maxID
+}
+
 // EnqueueAudioChunk 将外部上传的音频文件推入转录队列
 // 用于浏览器录音或文件上传场景
 func (o *Orchestrator) EnqueueAudioChunk(chunkID int, wavPath string) {
 	o.mutex.Lock()
 	state := o.state
 	o.mutex.Unlock()
-	
+
+	// 【修复】如果 Orchestrator 从未启动(StateCreated)，自动调用 Start()
+	// 这样支持纯文件上传模式（无需手动调用 Start 按钮）
+	if state == StateCreated {
+		fmt.Printf("[AUDIO] Orchestrator not started, auto-starting for file upload mode...\n")
+		if err := o.Start(); err != nil {
+			fmt.Printf("[AUDIO] Failed to auto-start orchestrator: %v\n", err)
+			return
+		}
+		// 重新获取状态
+		o.mutex.Lock()
+		state = o.state
+		o.mutex.Unlock()
+		fmt.Printf("[AUDIO] Orchestrator auto-started, state=%s\n", state)
+	}
+
 	// 允许在运行、停止中、排空中状态下接受音频chunk
 	// 这样可以处理停止按钮触发后仍在上传的最后几个chunk
 	if state != StateRunning && state != StateStopping && state != StateDraining {
 		fmt.Printf("[AUDIO] Cannot enqueue chunk %d: orchestrator state=%s\n", chunkID, state)
 		return
 	}
-	
+
 	// 获取文件信息
 	fileInfo, err := os.Stat(wavPath)
 	if err != nil {
 		fmt.Printf("[AUDIO] Cannot stat file %s: %v\n", wavPath, err)
 		return
 	}
-	
+
 	// 创建 AudioChunk 并推入队列
 	chunk := AudioChunk{
 		ID:        chunkID,
 		Path:      wavPath,
 		StartTime: fileInfo.ModTime(), // 使用文件修改时间作为开始时间
-		EndTime:   time.Now(),          // 当前时间作为结束时间
+		EndTime:   time.Now(),         // 当前时间作为结束时间
 	}
-	
+
 	fmt.Printf("[AUDIO] Enqueuing chunk %d for transcription: %s\n", chunkID, wavPath)
 	o.asrQ.Push(chunk)
+}
+
+// GetDegradationController 返回降级控制器实例 (用于API访问)
+func (o *Orchestrator) GetDegradationController() *degradation.DegradationController {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.degradationController
+}
+
+func (o *Orchestrator) GetDependencyClient() *dependency.DependencyClient {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.dependencyClient
+}
+
+// GetHealthChecker 返回健康检查器实例 (用于API访问)
+func (o *Orchestrator) GetHealthChecker() *health.HealthChecker {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.healthChecker
+}
+
+// healthCheckWorker periodically checks dependency client availability (fallback mode only).
+// Runs in background goroutine, exits when procCtx is cancelled.
+func (o *Orchestrator) healthCheckWorker() {
+	log.Printf("[HealthCheckWorker] Starting periodic dependency availability check")
+	defer log.Printf("[HealthCheckWorker] Exiting")
+
+	for {
+		select {
+		case <-o.healthTicker.C:
+			// Perform health check with timeout
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := o.dependencyClient.HealthCheck(ctx)
+			cancel()
+
+			if err != nil {
+				slog.Warn("dependency client health check failed (degradation may occur)",
+					"error", err.Error())
+				// Note: Do not trigger alerts here - let FallbackExecutor handle degradation
+				// automatically on next command execution.
+			} else {
+				slog.Info("dependency client health check passed",
+					"mode", o.cfg.DependencyMode)
+			}
+
+		case <-o.procCtx.Done():
+			// Orchestrator is stopping, exit health check loop
+			return
+		}
+	}
 }
 
 // Scan progress
