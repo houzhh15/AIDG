@@ -120,3 +120,16 @@ export async function adminReload(): Promise<{success:boolean; message:string}> 
   const r = await api.post('/admin/reload', {});
   return r.data;
 }
+
+// Services status
+export interface ServicesStatus {
+  whisper_available: boolean;
+  deps_service_available: boolean;
+  whisper_mode?: string;
+  dependency_mode?: string;
+}
+
+export async function getServicesStatus(): Promise<ServicesStatus> {
+  const r = await api.get('/services/status');
+  return r.data;
+}

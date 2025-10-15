@@ -367,7 +367,7 @@ networks:
 ### 1. 环境变量
 ```bash
 # 设置 HuggingFace Token
-export HUGGINGFACE_TOKEN=hf_your_token_here
+export HUGGINGFACE_TOKEN=hf_REPLACE_WITH_YOUR_TOKEN_HERE
 
 # 验证
 echo $HUGGINGFACE_TOKEN

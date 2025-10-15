@@ -11,7 +11,7 @@ import { RightPanel } from './components/RightPanel';
 import ProjectTaskSelector from './components/ProjectTaskSelector';
 import { AudioModeSelectModal, AudioMode } from './components/AudioModeSelectModal';
 import { useAudioService } from './services/audioService';
-import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, updateTaskDevice } from './api/client';
+import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, updateTaskDevice, getServicesStatus, ServicesStatus } from './api/client';
 import { authedApi } from './api/auth';
 import { login, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
 import { TaskSummary, ChunkFlag } from './types';
@@ -40,16 +40,23 @@ const MeetingView: React.FC<{
   filterProductLine?: string; setFilterProductLine:(v: string|undefined)=>void;
   filterMeetingDateRange: [dayjs.Dayjs, dayjs.Dayjs] | null; setFilterMeetingDateRange: (v: [dayjs.Dayjs, dayjs.Dayjs] | null)=>void;
   scopes: string[];
+  servicesStatus: ServicesStatus | null;
 }> = ({
   tasks, currentTask, onSelectTask, refreshTasks,
   chunks, currentChunk, onSelectChunk, onPlay,
   handleCreate, handleDelete, handleStart, handleStop, handleChangeDevice,
   filterProductLine, setFilterProductLine,
   filterMeetingDateRange, setFilterMeetingDateRange,
-  scopes
+  scopes,
+  servicesStatus
 }) => {
   const canWriteMeeting = scopes.includes('meeting.write');
   const canReadMeeting = canWriteMeeting || scopes.includes('meeting.read');
+  
+  // 检查是否应该显示 chunk 相关功能
+  // 只有当 whisper 和 deps-service 都可用时才显示
+  const showChunkFeatures = servicesStatus?.whisper_available && servicesStatus?.deps_service_available;
+  
   return (
     <>
       <TaskSidebar
@@ -65,7 +72,7 @@ const MeetingView: React.FC<{
         scopes={scopes}
       />
       <Content style={{ display:'flex', height: '100%', minHeight: 0 }}>
-        {canReadMeeting && (
+        {canReadMeeting && showChunkFeatures && (
           <div className="scroll-region" style={{ width:280, borderRight:'1px solid #f0f0f0', height: '100%' }}>
             {(() => { const taskObj = tasks.find(t=>t.id===currentTask); return (
               <ChunkList 
@@ -81,9 +88,10 @@ const MeetingView: React.FC<{
         <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height: '100%' }}>
           <RightPanel 
             taskId={currentTask||''} 
-            chunkId={canReadMeeting ? currentChunk : undefined} 
+            chunkId={canReadMeeting && showChunkFeatures ? currentChunk : undefined} 
             canWriteMeeting={canWriteMeeting} 
             canReadMeeting={canReadMeeting}
+            showChunkDetails={showChunkFeatures}
           />
         </div>
       </Content>
@@ -108,6 +116,7 @@ const App: React.FC = () => {
   const [showSync, setShowSync] = useState(false);
   const [svnRunning, setSvnRunning] = useState(false);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
+  const [servicesStatus, setServicesStatus] = useState<ServicesStatus | null>(null);
   
   // 音频录制模式选择
   const [audioModalOpen, setAudioModalOpen] = useState(false);
@@ -166,9 +175,26 @@ const App: React.FC = () => {
       if(!currentChunk && ch.length>0) setCurrentChunk(ch[0].id); 
     } catch(e:any){ /* ignore */ }
   }
+  
+  async function refreshServicesStatus(){
+    if(!auth) return;
+    try {
+      const status = await getServicesStatus();
+      setServicesStatus(status);
+    } catch(e:any){ 
+      console.error('Failed to get services status:', e);
+      // 如果获取失败，设置默认值（假设服务不可用）
+      setServicesStatus({
+        whisper_available: false,
+        deps_service_available: false
+      });
+    }
+  }
+  
   useEffect(()=>{ if(auth) refreshTasks(); },[auth]);
   useEffect(()=>{ if(auth) refreshChunks(); },[currentTask, auth]);
   useEffect(()=>{ if(auth) refreshTasks(); },[filterProductLine, filterMeetingDateRange, auth]);
+  useEffect(()=>{ if(auth) refreshServicesStatus(); },[auth]);
   
   // 当选择项目时检查权限
   useEffect(() => {
@@ -460,6 +486,7 @@ const App: React.FC = () => {
             filterMeetingDateRange={filterMeetingDateRange}
             setFilterMeetingDateRange={setFilterMeetingDateRange}
             scopes={auth.scopes}
+            servicesStatus={servicesStatus}
           />
         )}
         {viewMode === 'project' && (

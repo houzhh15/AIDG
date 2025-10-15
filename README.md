@@ -3,52 +3,58 @@
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Node Version](https://img.shields.io/badge/Node.js-18+-339933?style=flat&logo=node.js)](https://nodejs.org)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+
+> **让 AI 开发变得可控、透明、可追溯** ✨
 
 ---
 
 ## 📖 简介
 
-这是作者在实际开发中使用的自用工具，其核心理念并非提升 AI 的智能，而是规范其行为，确保人机协作的有效性。它通过为项目上下文建立“单一事实来源”，并记录 AI 的每一次决策依据，致力于让 AI 开发过程变得更可控、透明和可追溯。
+"AI-Dev-Gov 不是让 AI 更聪明，而是为'无状态'的 AI 构建'有状态'的外部记忆与治理系统，通过'先取证、后推理、必审批、可追溯'的强制工作流，将 AI 开发从'黑盒魔法'转变为'透明工程'，重新定义了 AI 时代开发者的核心价值：从'编写代码'到'定义问题、构建上下文、审查结果'的架构师角色。"
+
+### 关键特性
+
+1. 治理闭环：先取证后推理、审批把关、提示词与执行步骤前置记录，形成“证据—决策—产出—审计”链条。
+2. 上下文结构：多层级文档 + 任务级需求/设计/测试 + 执行计划工件，使信息从会议/原始素材 → 结构化知识 → 精准注入。
+3. 可追溯执行：执行计划与提示词日志，双轴记录 AI 所“依据什么做了什么”。
+4. 可视化：项目状态页、步骤状态、依赖图、时间维度进展树、特性列表与架构一体化展示，降低认知负荷与协调成本。
+
+### 核心理念
 
 
-## ⚡ 关键特性 (Key Features)
+#### AI辅助开发时代的挑战：
 
+1. AI 开发的瓶颈不在于模型能力，而在于上下文管理和过程治理
+- **误区**: 认为 AI 开发问题源于"模型不够聪明"，期待 GPT-5、Claude 4 来解决一切
+- **真相**: 即使模型能力再强，如果缺乏上下文管理和过程治理，仍会导致"垃圾进、垃圾出"
+**深层原因**: 人类倾向于相信"技术奇点"能解决一切问题，而不愿意承认"管理和规范"才是关键。
 
-1. **上下文不再缺失**  
-   AI 必须先从"单一事实来源"获取项目上下文，不能再"自由发挥"。
+2. 真正的 AI 驱动开发，不是让 AI 代替人思考，而是构建一个能让人和 AI 的思考过程"相互对齐"并"留下痕迹"的系统
+- **误区**: 期望 AI 能"一步到位"地解决问题，追求"无人干预的全自动化"
+- **真相**: AI 的价值在于"辅助"而非"替代"，人机协同的关键是"思考过程的透明化"
+**深层原因**: 过度乐观主义（Techno-optimism）导致人们忽视了 AI 的局限性和不可预测性。
 
-2. **决策过程可追溯**  
-   每次 AI 的推理依据（最终提示词）都被完整记录，问题可以快速定位。
+3. 在 AI 时代，开发者的核心价值正在从"编写代码"转向"定义问题、构建上下文和审查结果"
+- **误区**: 认为 AI 会"取代程序员"，引发职业焦虑
+- **真相**: AI 只会淘汰"打字员式的程序员"，而提升"架构师式的程序员"的价值
+**深层原因**: 人们低估了"问题定义"和"质量控制"的难度，高估了"代码编写"的价值。
+—
 
-3. **人机协作可控**  
-   AI 提交执行计划，人工审批后再执行，关键环节始终由人类把关。
+#### 洞察与机遇
+
+1. “AI 的 ‘无状态’ 与 项目开发 ‘有状态’ 的结构性矛盾，必须靠外部治理层弥合。”
+2. “治理提升不是限制 AI，而是把 AI 的能力从‘瞬时灵感’固化为‘可迭代资产’。”
+3. “提示词模板是把最佳实践从‘经验’升级为‘协议’的媒介，策略即代码。”
+4. “导航算法让计划成为‘活文档’，执行状态本身就是对计划质量的持续验证。”
+
+#### AIDG 的核心理念：
+
+1. 复杂系统必须支持"发散-收敛"的知识迭代模式
+2. 过程的透明化是质量保证和持续改进的基础
+3. 单一事实来源 (SSoT) 是避免信息不一致的唯一可靠方法
 
 ---
-
-## 👥 使用场景
-
-
-#### 1. **独立开发者/全栈工程师**
-
-- **特点**: 同时负责前后端、运维、产品设计，时间和精力有限
-- **需求**: 希望 AI 能尽可能独立完成任务，人工只在关键环节干预
-- **痛点**: 项目规模变大后，上下文爆炸、可维护性下降、AI 幻觉频发
-
-#### 2. **项目管理者/技术主管**
-
-- **特点**: 需要掌控项目进度、技术决策和团队协作
-- **需求**: 需要清晰的任务跟踪、文档管理、进度统计和决策依据
-- **痛点**: AI 辅助开发的过程不透明，难以审查和追溯
-
-#### 3. **产品经理/需求分析师**
-
-- **特点**: 需要快速验证想法、完成原型、管理需求变更
-- **需求**: 需要将会议讨论、需求想法快速转化为结构化文档
-- **痛点**: 需求散落在会议记录、聊天记录、邮件中，整理成本高
-
----
-
 
 ## 🚀 快速开始 (Getting Started)
 
@@ -117,43 +123,28 @@ open http://localhost:8000
 
 AIDG 基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 提供标准化接口，支持任何兼容 MCP 的 AI 工具接入。
 
-**推荐工具**:
-- **Cursor** - 强大的 AI 代码编辑器
-- **Continue** - VS Code 的 AI 辅助插件
-- **Cline** - 命令行 AI 助手
-
-**配置步骤** (以 Cursor 为例):
-
-1. **打开 MCP 配置文件**:
-   ```bash
-   # macOS/Linux
-   code ~/.cursor/mcp.json
-   
-   # Windows
-   code %APPDATA%\Cursor\mcp.json
-   ```
-2. **添加 AIDG MCP Server**:
-   ```json
-   {
-     "mcpServers": {
-       "aidg": {
-         "url": "http://localhost:8081",
-         "apiKey": "your-jwt-token-here"
-       }
-     }
-   }
-   ```
-
-3. **获取 API Key**:
+1. **获取 API Key**:
    - 在 AIDG Web 界面登录
    - 导航至"用户设置" → "API 令牌"
    - 复制 JWT Token 并填入配置文件
 
-4. **重启 AI 工具**，配置生效 ✅
-
-**详细配置说明**: [MCP 配置文档](docs/MCP_PROMPTS_CONFIGURATION.md)
+2. **添加 AIDG MCP Server**:
+   在 `config.json` 中添加 MCP 服务器配置：
+   ```json
+   {
+     "mcpServers": {
+       "aidg": {
+         "url": "http://localhost:8081/mcp",
+         "headers": {
+		"Authorization": "Bearer your-jwt-token-here"
+	 }
+       }
+     }
+   }	
+   ```
 
 ---
+
 ### 🔄 4. 完整开发流程
 
 AIDG 支持完整的任务驱动开发流程：
@@ -376,58 +367,11 @@ make docker-build
 
 ---
 
-## 🤝 社区与支持
-
-
-
-### 获取帮助
-
-遇到问题？以下是获取帮助的途径：
-
-1. **📖 查看文档**  
-   - [快速开始](docs/QUICK_START.md)
-   - [友好部署指南](docs/DEPLOYMENT_GUIDE_FRIENDLY.md)
-   - [故障排查](docs/troubleshooting.md)
-
-2. **🐛 提交 Issue**  
-   在 [GitHub Issues](https://github.com/houzhh15-hub/AIDG/issues) 报告 Bug 或提出功能建议
-
-3. **💬 加入讨论**  
-   在 [GitHub Discussions](https://github.com/houzhh15-hub/AIDG/discussions) 参与社区讨论
-
-### 常见问题 (FAQ)
-
-**Q: 基础版和完整版有什么区别？**  
-A: 基础版（100MB）包含核心的项目管理、任务管理、文档管理和 AI 治理功能。完整版（~2.5GB）额外包含会议录音自动转写和说话人识别功能。
-
-**Q: 支持哪些 AI 工具接入？**  
-A: AIDG 基于标准的 Model Context Protocol (MCP) 提供接口，理论上支持任何兼容 MCP 的 AI 工具，包括 Cursor、Continue、Cline 等。
-
-**Q: 数据存储在哪里？如何备份？**  
-A: 所有数据存储在 `data/` 目录下，使用 JSON 文件格式。建议定期备份该目录，可以使用 `tar` 或 `rsync` 等工具。
-
-**Q: 如何升级到新版本？**  
-A: 拉取最新镜像后重启服务即可：
-```bash
-docker compose pull
-docker compose up -d
-```
-
-**Q: 可以在生产环境使用吗？**  
-A: 可以。但请务必完成"安全建议"章节中的配置检查清单，特别是密钥、密码和 CORS 配置。
-
-**Q: 支持多用户和权限管理吗？**  
-A: 支持。AIDG 提供基于角色的访问控制 (RBAC)，可以创建多个用户并分配不同的权限。
-
-更多问题，请查看 [故障排查文档](docs/troubleshooting.md)。
-
----
-
 ## 📜 许可证
 
 本项目采用 [Apache-2.0 许可证](LICENSE)。
 
-## 🙏 致谢
+## 感谢
 
 AIDG 的开发过程中受益于以下开源项目和社区：
 
@@ -439,13 +383,3 @@ AIDG 的开发过程中受益于以下开源项目和社区：
 - [PyAnnote](https://github.com/pyannote/pyannote-audio) - 说话人识别库
 
 ---
-
-<div align="center">
-
-**让 AI 开发变得可控、透明、可追溯** ✨
-
-Made with ❤️ by the AIDG Community
-
-[⭐ Star on GitHub](https://github.com/houzhh15-hub/AIDG) | [📖 Documentation](docs/) | [💬 Discussions](https://github.com/houzhh15-hub/AIDG/discussions)
-
-</div>

@@ -14,9 +14,16 @@ interface RightPanelProps {
   chunkId?: string;
   canWriteMeeting?: boolean; // 是否有 meeting.write 权限
   canReadMeeting?: boolean; // 是否拥有 meeting.read 权限（write 隐式包含）
+  showChunkDetails?: boolean; // 是否显示 Chunk 详情（基于服务部署状态）
 }
 
-export const RightPanel: React.FC<RightPanelProps> = ({ taskId, chunkId, canWriteMeeting, canReadMeeting }) => {
+export const RightPanel: React.FC<RightPanelProps> = ({ 
+  taskId, 
+  chunkId, 
+  canWriteMeeting, 
+  canReadMeeting,
+  showChunkDetails = true // 默认显示，向后兼容
+}) => {
   const [activeTab, setActiveTab] = useState<string>('context');
   const allowWrite = !!canWriteMeeting;
   const allowRead = canReadMeeting ?? allowWrite;
@@ -78,7 +85,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({ taskId, chunkId, canWrit
         </div>
       ),
     },
-    allowRead ? {
+    // 只有当服务可用且有读取权限时才显示 Chunk 详情
+    (allowRead && showChunkDetails) ? {
       key: 'chunks',
       label: (
         <span>

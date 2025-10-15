@@ -794,6 +794,23 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.POST("/api/v1/tasks/:id/chunks/:cid/asr_once", api.HandleASROnce(meetingsReg))
 	r.GET("/api/v1/tasks/:id/merged", api.HandleGetMerged(meetingsReg))
 
+	// ========== Services Status API ==========
+	// 检查服务部署状态（whisper 和 deps-service）
+	r.GET("/api/v1/services/status", func(c *gin.Context) {
+		// 从meetingsReg获取任意一个正在运行的task的orchestrator
+		var activeOrch *orchestrator.Orchestrator
+		for _, task := range meetingsReg.List() {
+			if task.Orch != nil {
+				activeOrch = task.Orch
+				break
+			}
+		}
+
+		// 调用status handler
+		handler := api.HandleServicesStatus(activeOrch)
+		handler(c)
+	})
+
 	// ========== Whisper Service Health API ==========
 	// 动态获取运行中的orchestrator实例
 	r.GET("/api/v1/services/whisper/health", func(c *gin.Context) {
