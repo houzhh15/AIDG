@@ -3,7 +3,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://golang.org)
 [![Node Version](https://img.shields.io/badge/Node.js-18+-339933?style=flat&logo=node.js)](https://nodejs.org)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com)
-[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 > **让 AI 开发变得可控、透明、可追溯** ✨
 
@@ -17,31 +17,21 @@ AI-Dev-Gov 不是让 AI 更聪明，而是为'无状态'的 AI 构建'有状态'
 
 ### 关键特性
 
-1. 治理闭环：先取证后推理、审批把关、提示词与执行步骤前置记录，形成“证据—决策—产出—审计”链条。
-2. 上下文结构：多层级文档 + 任务级需求/设计/测试 + 执行计划工件，使信息从会议/原始素材 → 结构化知识 → 精准注入。
-3. 可追溯执行：执行计划与提示词日志，双轴记录 AI 所“依据什么做了什么”。
-4. 可视化：项目状态页、步骤状态、依赖图、时间维度进展树、特性列表与架构一体化展示，降低认知负荷与协调成本。
+1. **治理闭环**：先取证后推理、审批把关、提示词与执行步骤前置记录，形成"证据—决策—产出—审计"的完整链条。
+2. **上下文结构化**：多层级文档架构，信息从会议/原始素材 → 结构化知识 → 项目/任务/执行计划逐层分解 → 精准注入开发 → 知识回流沉淀。
+3. **可追溯执行**：执行计划与提示词日志双轴记录，完整追踪 AI "依据什么做了什么"。
+4. **协议化集成**：基于 MCP 协议提供工具和提示词模板，以非侵入方式集成到现有开发环境，最小化心智负担。
+5. **可视化治理**：项目状态页、步骤状态、依赖图、时间维度进展树、特性列表与架构一体化展示，降低认知负荷与协调成本。
 
 ### 核心理念
+
 
 
 #### AI辅助开发时代的挑战：
 
 1. AI 开发的瓶颈不在于模型能力，而在于上下文管理和过程治理
-- **误区**: 认为 AI 开发问题源于"模型不够聪明"，期待 GPT-5、Claude 4 来解决一切
-- **真相**: 即使模型能力再强，如果缺乏上下文管理和过程治理，仍会导致"垃圾进、垃圾出"
-**深层原因**: 人类倾向于相信"技术奇点"能解决一切问题，而不愿意承认"管理和规范"才是关键。
-
 2. 真正的 AI 驱动开发，不是让 AI 代替人思考，而是构建一个能让人和 AI 的思考过程"相互对齐"并"留下痕迹"的系统
-- **误区**: 期望 AI 能"一步到位"地解决问题，追求"无人干预的全自动化"
-- **真相**: AI 的价值在于"辅助"而非"替代"，人机协同的关键是"思考过程的透明化"
-**深层原因**: 过度乐观主义（Techno-optimism）导致人们忽视了 AI 的局限性和不可预测性。
-
 3. 在 AI 时代，开发者的核心价值正在从"编写代码"转向"定义问题、构建上下文和审查结果"
-- **误区**: 认为 AI 会"取代程序员"，引发职业焦虑
-- **真相**: AI 只会淘汰"打字员式的程序员"，而提升"架构师式的程序员"的价值
-**深层原因**: 人们低估了"问题定义"和"质量控制"的难度，高估了"代码编写"的价值。
-—
 
 #### 洞察与机遇
 
@@ -61,6 +51,54 @@ AI-Dev-Gov 不是让 AI 更聪明，而是为'无状态'的 AI 构建'有状态'
 ## 🚀 快速开始 (Getting Started)
 
 
+
+### 💡 工作原理示意图
+
+```mermaid
+graph TD
+    subgraph E["外部依赖"]
+        E1("LLM 服务");
+        E2("AI 助手<br/>VS Code/Cursor");
+    end
+
+    subgraph D["开发者"]
+        D1("人工操作");
+    end
+
+    subgraph B["AIDG 系统"]
+        B_Web("Web 界面<br/>项目/任务管理");
+        B_MCP("MCP Server<br/>AI 接口");
+        B1("知识中心<br/>文档/架构");
+        B2("任务中心<br/>需求/设计/计划");
+    end
+
+    %% 核心工作流
+    D1 -- "①绑定任务" --> B_Web;
+    D1 -- "②发出指令" --> E2;
+    E2 -- "③(MCP)获取上下文" --> B_MCP;
+    B_MCP -- "④返回项目知识" --> E2;
+    B1 -."提供数据".-> B_MCP;
+    B2 -."提供数据".-> B_MCP;
+    E2 -- "⑤记录提示词" --> B_MCP;
+    E2 -- "⑥调用 LLM" --> E1;
+    E1 -- "⑦返回结果" --> E2;
+    E2 -- "⑧呈现给用户" --> D1;
+    D1 -- "⑨评审确认" --> B_Web;
+    B_Web -- "⑩知识回流" --> B1;
+
+    style B fill:#e1f5ff
+    style E2 fill:#fff4e1
+    style D1 fill:#f0f0f0
+```
+
+**核心流程说明**：
+
+1. **人机协同**：开发者在 Web 界面绑定任务，在 AI 工具中发出指令
+2. **上下文注入**：AI 助手通过 MCP 协议自动获取项目知识和任务上下文
+3. **过程留痕**：提示词被记录后才调用 LLM，确保决策过程可追溯
+4. **知识闭环**：AI 产出经人工评审后回流到知识中心，持续沉淀
+
+---
 
 ### 📦 1. 快速部署（5 分钟）
 
@@ -149,11 +187,38 @@ AIDG 基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 提
 
 ### 🔄 4. 完整开发流程
 
-AIDG 支持完整的任务驱动开发流程：
+AIDG 的工作流与 MCP（Model Context Protocol）内置的提示词模板紧密集成，实现引导式的、结构化的开发流程。
 
-```
-需求阶段 → 设计阶段 → 执行阶段 → 测试阶段 → 集成阶段 → 知识回流
-```
+**提示词模板使用方式**：
+- 在 VS Code 中输入：`/mcp.aidg.{prompt-name}`
+- 例如：`/mcp.aidg.requirements` 或 `/mcp.aidg.design`
+
+**典型开发流程**：
+
+1.  **需求文档生成**
+    *   在 Web 界面创建任务后，使用提示词模板引导 AI 生成需求文档
+    *   `/mcp.aidg.requirements` - 基于项目特性列表和任务描述生成需求文档
+
+2.  **设计文档生成**
+    *   基于需求文档，引导 AI 生成技术设计
+    *   `/mcp.aidg.design` - 创建技术设计，包括模块划分、接口定义等
+
+3.  **执行计划提交**
+    *   AI 根据设计文档生成详细的、可分步执行的计划
+    *   `/mcp.aidg.planning` - 生成编码或操作步骤的执行计划
+    *   人工在 Web 界面对计划进行审批，确保执行方向正确
+
+4.  **自主执行与追踪**
+    *   计划审批后，AI 通过 MCP 工具获取下一步操作
+    *   `/mcp.aidg.executing` - 按计划逐步执行，自动获取可执行步骤
+    *   完成后通过 MCP 工具回写执行状态和结果
+    *   整个过程在 Web 界面实时追踪，确保过程可控
+
+5.  **任务总结**
+    *   任务完成后生成结构化总结
+    *   `/mcp.aidg.task_summary` - 生成任务完成报告，记录关键产出和经验
+
+**提示词模板位置**：`cmd/mcp-server/prompts/*.prompt.md`
 
 #### 📋 典型工作流
 
@@ -185,18 +250,20 @@ AIDG 的工作流与 MCP（Model Context Protocol）内置的提示词模板紧�
 
 ### 📖 文档导航
 
-1. **[快速开始 (QUICK_START.md)](docs/QUICK_START.md)**  
-   ⏱️ 5 分钟快速部署，适合想快速体验的用户
+AIDG 采用统一容器架构，提供三个 Docker 镜像：
 
-2. **[友好部署指南 (DEPLOYMENT_GUIDE_FRIENDLY.md)](docs/DEPLOYMENT_GUIDE_FRIENDLY.md)**  
-   📘 完整的部署指南，包含两种方案：
-   - **方案一**: 基础版部署（100MB，核心功能）
-   - **方案二**: 完整版部署（会议录音转写功能）
-   
-   使用友好的语言，适合非技术人员阅读。
+**基础镜像 - aidg-aidg** (~100MB)  
+包含 Web Server（REST API + 人机交互界面）、MCP Server（AI 工具接口）和 Frontend（React 单页应用）。适合大部分场景，提供完整的项目管理、任务管理、文档管理和 AI 治理功能。
 
-3. **[环境变量配置手册 (ENVIRONMENT_VARIABLES.md)](docs/ENVIRONMENT_VARIABLES.md)**  
-   ⚙️ 所有环境变量的详细说明、默认值和最佳实践
+**依赖服务 - aidg-deps-service** (~2GB)  
+提供说话人识别服务（基于 PyAnnote AI 模型）。仅在需要会议录音转写和说话人分离功能时使用。
+
+**语音转写 - go-whisper** (~500MB)  
+提供 Whisper 语音转写服务（基于 OpenAI Whisper 模型）。仅在需要会议录音自动转文字功能时使用。
+
+**部署建议**：
+- 🎯 只需要 AI 治理、任务管理、文档管理 → 基础版（100MB）
+- 🎙️ 需要会议录音自动转写功能 → 完整版（~2.5GB，三个镜像全部部署）
 
 ### 🏗️ 架构说明
 
@@ -256,39 +323,6 @@ AIDG 采用统一容器架构，提供三个 Docker 镜像：
 
 ---
 
-## 🏗️ 技术栈
-
-
-
-### 后端技术
-
-- **Go 1.22+** - 高性能后端服务
-- **Gin Web Framework** - RESTful API 框架
-- **JWT 认证** - 安全的用户认证机制
-- **JSON 文件存储** - 轻量级数据持久化
-- **Supervisor** - 进程管理和服务协调
-
-### 前端技术
-
-- **React 18** - 现代化前端框架
-- **TypeScript 5** - 类型安全的 JavaScript
-- **Ant Design** - 企业级 UI 组件库
-- **Vite 5** - 极速的构建工具
-- **React Router 6** - 客户端路由
-
-### AI 集成
-
-- **Model Context Protocol (MCP)** - 标准化 AI 工具接口
-
-### 部署技术
-
-- **Docker** - 容器化部署
-- **Docker Compose** - 多服务编排
-- **Alpine Linux** - 轻量级基础镜像
-- **GitHub Actions** - CI/CD 自动化
-
----
-
 ## 🔧 开发指南
 
 
@@ -299,12 +333,6 @@ AIDG 采用统一容器架构，提供三个 Docker 镜像：
 
 #### 前置要求
 
-- **Go 1.22+** - [安装指南](https://golang.org/doc/install)
-- **Node.js 18+** - [安装指南](https://nodejs.org/)
-- **Make** - 构建工具
-
-#### 启动开发环境
-
 ```bash
 # 1. 克隆仓库
 git clone https://github.com/houzhh15-hub/AIDG.git
@@ -312,25 +340,68 @@ cd AIDG
 
 # 2. 安装依赖
 make install
+# 这会自动安装 Go 和前端依赖
 
-# 3. 配置环境变量
-cp .env.example .env
-# 编辑 .env，设置 JWT_SECRET、ADMIN_DEFAULT_PASSWORD 等
-
-# 4. 启动开发服务器
+# 3. 启动开发环境 (推荐 - 一键启动)
 make dev
-# 这会同时启动 Web Server、MCP Server 和前端开发服务器
+# 自动启动：Web Server (8000) + MCP Server (8081) + 前端 (5173)
+# 自动配置开发环境变量（JWT_SECRET、USER_JWT_SECRET 等）
 
-# 或者分别启动（推荐，便于调试）
+# 或者分别启动（便于调试）
 # Terminal 1: 启动后端
-./bin/server
+ENV=development \
+  JWT_SECRET=dev-jwt-secret-at-least-32-characters-long \
+  USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-characters-long \
+  ADMIN_DEFAULT_PASSWORD=admin123 \
+  go run ./cmd/server
 
-# Terminal 2: 启动 MCP Server
-./bin/mcp-server
+# Terminal 2: 启动 MCP Server  
+ENV=development go run ./cmd/mcp-server
 
 # Terminal 3: 启动前端
 cd frontend && npm run dev
+
+# 4. 访问应用
+# Web 界面: http://localhost:5173
+# API 文档: http://localhost:8000/health
+# MCP 服务: http://localhost:8081/health
 ```
+
+**注意**：
+- 开发模式使用 `ENV=development`（不是 `dev`）
+- `make dev` 已自动配置所有必需的环境变量
+- 分别启动时需要手动设置 `JWT_SECRET` 和 `USER_JWT_SECRET`（至少 32 字符）
+
+#### 启动开发环境
+
+```bash
+# 开发构建（快速编译，用于测试）
+make build
+# 生成：bin/server, bin/mcp-server
+
+# 生产构建（优化编译，包含版本信息）
+make build-prod
+# 1. 编译后端并嵌入版本号、构建时间、Git 提交哈希
+# 2. 构建前端生产版本 (frontend/dist/)
+# 3. 生成：bin/server, bin/mcp-server + 前端静态文件
+
+# 构建 Docker 镜像
+make docker-build
+# 构建标签为 aidg:{version} 的镜像
+
+# 运行测试
+make test
+# 运行所有 Go 单元测试（带竞态检测和覆盖率）
+
+# 清理构建产物
+make clean
+# 删除 bin/ 和 frontend/dist/ 目录
+```
+
+**版本信息**：生产构建会自动嵌入以下信息
+- `Version`: Git 标签或提交哈希
+- `BuildTime`: 构建时间戳
+- `GitCommit`: Git 提交短哈希
 
 #### 构建生产版本
 
@@ -373,8 +444,6 @@ make docker-build
 
 本项目采用 [Apache-2.0 许可证](LICENSE)。
 
-## 感谢
-
 AIDG 的开发过程中受益于以下开源项目和社区：
 
 - [Model Context Protocol](https://modelcontextprotocol.io/) - 标准化的 AI 工具协议
@@ -384,4 +453,4 @@ AIDG 的开发过程中受益于以下开源项目和社区：
 - [Whisper](https://github.com/openai/whisper) - OpenAI 语音识别模型
 - [PyAnnote](https://github.com/pyannote/pyannote-audio) - 说话人识别库
 
----
+> ---![](![]())
