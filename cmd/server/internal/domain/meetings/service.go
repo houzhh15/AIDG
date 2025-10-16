@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	meetingsRootPath = "meetings"
+	meetingsRootPath = "./data/meetings"
 	tasksRootPath    = meetingsRootPath
 	taskStatePath    = filepath.Join(meetingsRootPath, "server_tasks.json")
 )
@@ -30,7 +30,7 @@ func InitPaths() {
 		}
 	}
 	if meetingsRootPath == "" {
-		meetingsRootPath = "meetings"
+		meetingsRootPath = "./data/meetings"
 	}
 	meetingsRootPath = filepath.Clean(meetingsRootPath)
 	tasksRootPath = meetingsRootPath

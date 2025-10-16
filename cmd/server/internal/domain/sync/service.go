@@ -10,14 +10,14 @@ import (
 )
 
 const (
-	ProjectsRoot = "projects"
-	TasksRoot    = "tasks"
+	ProjectsRoot = "./data/projects"
+	TasksRoot    = "./data/meetings"
 )
 
 // DefaultSyncAllowList returns the default list of allowed sync paths
 var DefaultSyncAllowList = []string{
-	"projects/server_projects.json",
-	"tasks/server_tasks.json",
+	"./data/projects/server_projects.json",
+	"./data/meetings/server_tasks.json",
 	"user_current_tasks.json",
 	ProjectsRoot + "/",
 	TasksRoot + "/",

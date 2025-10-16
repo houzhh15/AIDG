@@ -59,10 +59,10 @@ func LoadConfig() (*Config, error) {
 			Port: getEnv("PORT", "8000"),
 		},
 		Data: DataConfig{
-			ProjectsDir:  getEnv("PROJECTS_DIR", "./projects"),
-			UsersDir:     getEnv("USERS_DIR", "./users"),
-			MeetingsDir:  getEnv("MEETINGS_DIR", "./meetings"),
-			AuditLogsDir: getEnv("AUDIT_LOGS_DIR", "./audit_logs"),
+			ProjectsDir:  getEnv("PROJECTS_DIR", "./data/projects"),
+			UsersDir:     getEnv("USERS_DIR", "./data/users"),
+			MeetingsDir:  getEnv("MEETINGS_DIR", "./data/meetings"),
+			AuditLogsDir: getEnv("AUDIT_LOGS_DIR", "./data/audit_logs"),
 		},
 		Log: LogConfig{
 			Level:  getEnv("LOG_LEVEL", "info"),

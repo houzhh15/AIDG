@@ -26,8 +26,8 @@ func InitPaths() {
 		ProjectsStatePath = filepath.Join(ProjectsRoot, "server_projects.json")
 	} else {
 		// Fallback to relative paths
-		ProjectsRoot = "projects"
-		ProjectsStatePath = "projects/server_projects.json"
+		ProjectsRoot = "./data/projects"
+		ProjectsStatePath = "./data/projects/server_projects.json"
 	}
 }
 

@@ -172,18 +172,24 @@ func HandleCopyFromTask(projectsReg *projects.ProjectRegistry, meetingsReg *meet
 			case "feature-list":
 				srcPath := filepath.Join(sourceTask.Cfg.OutputDir, "feature_list.md")
 				if content, err := os.ReadFile(srcPath); err == nil {
-					destPath := filepath.Join(projectDir, "feature_list.md")
-					if err := os.WriteFile(destPath, content, 0644); err == nil {
-						copied = append(copied, kind)
+					destPath := filepath.Join(projectDir, "docs/feature_list.md")
+					// Ensure docs directory exists
+					if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0755); err == nil {
+						if err := os.WriteFile(destPath, content, 0644); err == nil {
+							copied = append(copied, kind)
+						}
 					}
 				}
 
 			case "architecture-design":
 				srcPath := filepath.Join(sourceTask.Cfg.OutputDir, "architecture_new.md")
 				if content, err := os.ReadFile(srcPath); err == nil {
-					destPath := filepath.Join(projectDir, "architecture_new.md")
-					if err := os.WriteFile(destPath, content, 0644); err == nil {
-						copied = append(copied, kind)
+					destPath := filepath.Join(projectDir, "docs/architecture_design.md")
+					// Ensure docs directory exists
+					if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0755); err == nil {
+						if err := os.WriteFile(destPath, content, 0644); err == nil {
+							copied = append(copied, kind)
+						}
 					}
 				}
 
@@ -192,10 +198,12 @@ func HandleCopyFromTask(projectsReg *projects.ProjectRegistry, meetingsReg *meet
 				files, _ := filepath.Glob(filepath.Join(sourceTask.Cfg.OutputDir, "tech_design_*.md"))
 				if len(files) > 0 {
 					if content, err := os.ReadFile(files[0]); err == nil {
-						filename := filepath.Base(files[0])
-						destPath := filepath.Join(projectDir, filename)
-						if err := os.WriteFile(destPath, content, 0644); err == nil {
-							copied = append(copied, kind)
+						destPath := filepath.Join(projectDir, "docs/tech_design.md")
+						// Ensure docs directory exists
+						if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0755); err == nil {
+							if err := os.WriteFile(destPath, content, 0644); err == nil {
+								copied = append(copied, kind)
+							}
 						}
 					}
 				}

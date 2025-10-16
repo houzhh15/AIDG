@@ -910,7 +910,7 @@ func HandleGetFeatureList(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
-		filePath := filepath.Join(dir, "feature_list.md")
+		filePath := filepath.Join(dir, "docs/feature_list.md")
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
@@ -1004,7 +1004,7 @@ func HandleGetArchitectureDesign(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			return
 		}
 
-		filePath := filepath.Join(dir, "architecture_new.md")
+		filePath := filepath.Join(dir, "docs/architecture_design.md")
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
@@ -1024,13 +1024,8 @@ func HandleGetTechDesign(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
-		files, _ := filepath.Glob(filepath.Join(dir, "tech_design_*.md"))
-		if len(files) == 0 {
-			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
-			return
-		}
-
-		data, err := os.ReadFile(files[0])
+		filePath := filepath.Join(dir, "docs/tech_design.md")
+		data, err := os.ReadFile(filePath)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
 			return
