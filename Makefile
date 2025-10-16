@@ -42,9 +42,13 @@ test:
 dev:
 	@echo "Starting development environment..."
 	@echo "Starting server on :8000..."
-	ENV=dev go run ./cmd/server &
+	ENV=development \
+		JWT_SECRET=dev-jwt-secret-at-least-32-characters-long \
+		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-characters-long \
+		ADMIN_DEFAULT_PASSWORD=admin123 \
+		go run ./cmd/server &
 	@echo "Starting MCP server on :8081..."
-	ENV=dev go run ./cmd/mcp-server &
+	ENV=development go run ./cmd/mcp-server &
 	@echo "Starting frontend on :5173..."
 	cd frontend && npm run dev
 
