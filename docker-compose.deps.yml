@@ -1,19 +1,80 @@
 version: '3.8'
 
 services:
-  # Main AIDG service (lightweight)
-  aidg-main:
-    image: aidg-aidg:lite
-    container_name: aidg-main
+  # Whisper 转录服务
+  whisper:
+    image: ghcr.io/mutablelogic/go-whisper:latest
+    container_name: aidg-whisper
+    ports:
+      - "8082:80"
+    volumes:
+      - ./models/whisper:/data
+      - ./data/meetings:/output
+    networks:
+      - aidg-network
+    restart: unless-stopped
+    # 注意：whisper 容器可能需要较长启动时间
+    # 如果健康检查持续失败，可以临时移除 healthcheck 或调整为更宽松的配置
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Command Executor Service (FFmpeg + PyAnnote)
+  deps-service:
+    image: aidg-deps-service:latest
+    container_name: aidg-deps-service
+    volumes:
+      - ./data:/data
+      - ./config:/app/config:ro  # 挂载整个 config 目录（与 build-deps-service.sh 一致）
+      - ./models/huggingface:/models/huggingface
+    environment:
+      - LOG_LEVEL=info
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - HF_HOME=/models/huggingface
+      - TRANSFORMERS_CACHE=/models/huggingface  # Transformers 缓存目录
+      - TORCH_HOME=/models/huggingface  # PyTorch 缓存目录
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    networks:
+      - aidg-network
+    restart: unless-stopped
+
+  # Main AIDG service
+  aidg:
+    image: aidg-aidg:lite-test
+    container_name: aidg-unified
     environment:
       # 依赖服务配置（符合 task_1760229132 设计）
-      - DEPENDENCY_MODE=fallback
-      - DEPENDENCY_SERVICE_URL=http://deps-service:8080
+      - DEPENDENCY_MODE=remote
+      - DEPS_SERVICE_URL=http://aidg-deps-service:8080
       - DEPENDENCY_SHARED_VOLUME=/data
+      # Whisper 配置
+      - WHISPER_API_URL=http://aidg-whisper:80
+      - WHISPER_MODE=go-whisper
       # 音频处理配置（通过依赖服务）
-      - ENABLE_AUDIO_CONVERSION=false
-      - ENABLE_SPEAKER_DIARIZATION=false
-      - ENABLE_DEGRADATION=false
+      - ENABLE_AUDIO_CONVERSION=true
+      - ENABLE_SPEAKER_DIARIZATION=true
+      - ENABLE_DEGRADATION=true
+      - ENABLE_OFFLINE=false  # 禁用离线模式，允许 PyAnnote 下载模型
       # 基础配置
       - ENV=production
       - PORT=8000
@@ -33,19 +94,14 @@ services:
       - AUDIT_LOGS_DIR=/data/audit_logs
       # CORS 配置
       - CORS_ALLOWED_ORIGINS=http://localhost:8000,http://localhost:3000
-      # Whisper 配置（如果需要）
-      - WHISPER_API_URL=${WHISPER_API_URL:-}
-      - WHISPER_MODE=disabled
     volumes:
-      - shared-data:/data
-      - ./data/projects:/data/projects
-      - ./data/users:/data/users
-      - ./data/meetings:/data/meetings
-      - ./data/audit_logs:/data/audit_logs
+      - ./data:/data
     ports:
       - "8000:8000"
       - "8081:8081"
     depends_on:
+      whisper:
+        condition: service_started
       deps-service:
         condition: service_healthy
     networks:
@@ -56,39 +112,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  # Command Executor Service
-  deps-service:
-    image: aidg-deps-service:latest
-    container_name: aidg-deps-service
-    volumes:
-      - shared-data:/data
-      - ./config/commands.yaml:/app/config/commands.yaml:ro
-    environment:
-      - LOG_LEVEL=info
-      - HUGGINGFACE_ACCESS_TOKEN=${HUGGINGFACE_ACCESS_TOKEN}
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '2'
-          memory: 4G
-    networks:
-      - aidg-network
-
-volumes:
-  shared-data:
-    driver: local
 
 networks:
   aidg-network:

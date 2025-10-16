@@ -363,7 +363,7 @@ func DefaultConfig() Config {
 	dependencySharedVolume := strings.TrimSpace(os.Getenv("DEPENDENCY_SHARED_VOLUME"))
 
 	// 从环境变量读取离线模式配置
-	enableOffline := true // 默认启用离线模式
+	enableOffline := false // 默认禁用离线模式，允许下载模型
 	if offlineEnv := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OFFLINE"))); offlineEnv != "" {
 		enableOffline = offlineEnv == "true" || offlineEnv == "1"
 	}
@@ -400,7 +400,7 @@ func DefaultConfig() Config {
 		EmbeddingAutoLowerMin:    "0.45",
 		EmbeddingAutoLowerStep:   "0.02",
 		InitialEmbeddingsPath:    "",
-		HFTokenValue:             "hf_REPLACE_WITH_YOUR_TOKEN_HERE",
+		HFTokenValue:             os.Getenv("HUGGINGFACE_TOKEN"), // 从环境变量读取，不硬编码
 		EnableOffline:            enableOffline,
 		EnableDegradation:        enableDegradation,
 		HealthCheckInterval:      healthCheckInterval,
@@ -1127,7 +1127,6 @@ func (o *Orchestrator) sdWorker(ctx context.Context) {
 					audioPath = targetPath
 				}
 				// ========== End File Sharing ==========
-				// ========== End File Sharing ==========
 
 				// Transform path for deps-service container if needed
 				// unified: /app/data/meetings/... -> deps-service: /data/meetings/...
@@ -1141,67 +1140,33 @@ func (o *Orchestrator) sdWorker(ctx context.Context) {
 					)
 				}
 
-				// Prepare diarization arguments
-				scriptPath := o.cfg.DiarizationScriptPath
-				if scriptPath == "" {
-					scriptPath = "/app/scripts/pyannote_diarize.py"
-				}
-
-				args := []string{scriptPath, "--input", audioPathForDeps, "--device", o.cfg.DeviceDefault}
-				if o.cfg.EnableOffline {
-					args = append(args, "--offline")
-				}
-
-				// Prepare environment variables
-				// Note: HUGGINGFACE_ACCESS_TOKEN is set in deps-service container
-				// Python scripts will read it automatically via os.getenv()
-				var env map[string]string
-				if o.cfg.EnableOffline {
-					env = map[string]string{
-						"HF_HUB_OFFLINE": "1",
-					}
-				}
-
-				// Execute diarization via DependencyClient (lower-level API)
+				// Execute diarization via DependencyClient high-level API
 				diarizationCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 				defer cancel()
 
-				// Construct CommandRequest directly for flexibility
-				req := dependency.CommandRequest{
-					Command: "python",
-					Args:    args,
-					Env:     env,
-					Timeout: 10 * time.Minute,
+				// Prepare diarization options
+				opts := &dependency.DiarizationOptions{
+					Device:        o.cfg.DeviceDefault,
+					EnableOffline: o.cfg.EnableOffline,
+					// Note: HFToken will be read from environment in deps-service
+					// No need to pass it here for security reasons
 				}
 
-				// Validate and execute
-				if err := dependency.ValidateCommandRequest(req, o.dependencyClient.Config()); err != nil {
-					slog.Error("[SD] diarization validation failed",
-						"chunk_id", item.Chunk.ID,
-						"error", err.Error(),
-					)
-					continue
-				}
-
-				resp, err := o.dependencyClient.ExecuteCommand(diarizationCtx, req)
-				if err != nil || !resp.Success || resp.ExitCode != 0 {
+				// Use RunDiarization high-level API which handles script path internally
+				err := o.dependencyClient.RunDiarization(diarizationCtx, audioPathForDeps, speakersPath, opts)
+				if err != nil {
 					slog.Error("[SD] diarization failed via DependencyClient",
 						"chunk_id", item.Chunk.ID,
-						"exit_code", resp.ExitCode,
-						"stderr", resp.Stderr,
-						"error", err,
-					)
-					continue
-				}
-
-				// Write stdout to speakers file (pyannote outputs JSON to stdout)
-				if err := os.WriteFile(speakersPath, []byte(resp.Stdout), 0644); err != nil {
-					slog.Error("[SD] failed to write diarization output",
-						"chunk_id", item.Chunk.ID,
 						"error", err.Error(),
 					)
 					continue
 				}
+
+				slog.Info("[SD] diarization completed successfully",
+					"chunk_id", item.Chunk.ID,
+					"audio", audioPathForDeps,
+					"output", speakersPath,
+				)
 			} else {
 				// Fallback: direct Python script execution (legacy behavior)
 				scriptPath := o.cfg.DiarizationScriptPath
