@@ -279,3 +279,15 @@ func deleteContentHistory(dir, filename string, version int) error {
 
 	return os.WriteFile(historyFile, data, 0644)
 }
+
+// getContentHistoryWithFallback tries new path first, then falls back to old path for backward compatibility
+func getContentHistoryWithFallback(dir, newFilename, oldFilename string) ([]ContentHistory, error) {
+	// Try new path first
+	history, err := getContentHistory(dir, newFilename)
+	if err == nil && len(history) > 0 {
+		return history, nil
+	}
+
+	// Fallback to old path
+	return getContentHistory(dir, oldFilename)
+}

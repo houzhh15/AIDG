@@ -24,7 +24,8 @@ func HandleGetProjectFeatureListHistory(reg *projects.ProjectRegistry) gin.Handl
 		}
 
 		projDir := filepath.Join(projectsRoot(), p.ID)
-		history, err := getContentHistory(projDir, "docs/feature_list.md")
+		// Try new path first, fallback to old path
+		history, err := getContentHistoryWithFallback(projDir, "docs/feature_list.md", "feature_list.md")
 		if err != nil {
 			errorResponse(c, http.StatusInternalServerError, "failed to get history")
 			return
@@ -81,7 +82,8 @@ func HandleGetProjectArchitectureHistory(reg *projects.ProjectRegistry) gin.Hand
 		}
 
 		projDir := filepath.Join(projectsRoot(), p.ID)
-		history, err := getContentHistory(projDir, "docs/architecture_design.md")
+		// Try new path first, fallback to old path
+		history, err := getContentHistoryWithFallback(projDir, "docs/architecture_design.md", "architecture_new.md")
 		if err != nil {
 			errorResponse(c, http.StatusInternalServerError, "failed to get history")
 			return
@@ -138,7 +140,8 @@ func HandleGetProjectTechDesignHistory(reg *projects.ProjectRegistry) gin.Handle
 		}
 
 		projDir := filepath.Join(projectsRoot(), p.ID)
-		history, err := getContentHistory(projDir, "docs/tech_design.md")
+		// Try new path first, fallback to old path (note: old tech design might have different names)
+		history, err := getContentHistoryWithFallback(projDir, "docs/tech_design.md", "tech_design_v1.md")
 		if err != nil {
 			errorResponse(c, http.StatusInternalServerError, "failed to get history")
 			return

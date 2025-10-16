@@ -910,11 +910,17 @@ func HandleGetFeatureList(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
+		// Try new path first, fallback to old path for backward compatibility
 		filePath := filepath.Join(dir, "docs/feature_list.md")
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
-			return
+			// Fallback to old path
+			filePath = filepath.Join(dir, "feature_list.md")
+			data, err = os.ReadFile(filePath)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"content": string(data), "exists": true})
 	}
@@ -1004,11 +1010,17 @@ func HandleGetArchitectureDesign(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			return
 		}
 
+		// Try new path first, fallback to old path for backward compatibility
 		filePath := filepath.Join(dir, "docs/architecture_design.md")
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
-			return
+			// Fallback to old path
+			filePath = filepath.Join(dir, "architecture_new.md")
+			data, err = os.ReadFile(filePath)
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"content": string(data), "exists": true})
 	}
@@ -1024,11 +1036,21 @@ func HandleGetTechDesign(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
+		// Try new path first, fallback to old path for backward compatibility
 		filePath := filepath.Join(dir, "docs/tech_design.md")
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
-			return
+			// Fallback to old path (glob pattern)
+			files, _ := filepath.Glob(filepath.Join(dir, "tech_design_*.md"))
+			if len(files) == 0 {
+				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
+				return
+			}
+			data, err = os.ReadFile(files[0])
+			if err != nil {
+				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"content": string(data), "exists": true})
 	}
