@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Whisper 转录服务
   whisper:
@@ -66,7 +64,7 @@ services:
       # 依赖服务配置（符合 task_1760229132 设计）
       - DEPENDENCY_MODE=remote
       - DEPS_SERVICE_URL=http://aidg-deps-service:8080
-      - DEPENDENCY_SHARED_VOLUME=/data
+      - DEPENDENCY_SHARED_VOLUME=/app/data
       # Whisper 配置
       - WHISPER_API_URL=http://aidg-whisper:80
       - WHISPER_MODE=go-whisper
@@ -88,14 +86,19 @@ services:
       # MCP 配置
       - MCP_PASSWORD=${MCP_PASSWORD:-dev-mcp-password}
       # 数据目录
-      - PROJECTS_DIR=/data/projects
-      - USERS_DIR=/data/users
-      - MEETINGS_DIR=/data/meetings
-      - AUDIT_LOGS_DIR=/data/audit_logs
+      - PROJECTS_DIR=/app/data/projects
+      - USERS_DIR=/app/data/users
+      - MEETINGS_DIR=/app/data/meetings
+      - AUDIT_LOGS_DIR=/app/data/audit_logs
       # CORS 配置
       - CORS_ALLOWED_ORIGINS=http://localhost:8000,http://localhost:3000
     volumes:
+      - ./data/projects:/app/data/projects
+      - ./data/users:/app/data/users
+      - ./data/meetings:/app/data/meetings
+      - ./data/audit_logs:/app/data/audit_logs
       - ./data:/data
+      - ./models:/models:ro
     ports:
       - "8000:8000"
       - "8081:8081"
