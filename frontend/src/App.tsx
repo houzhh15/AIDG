@@ -10,6 +10,7 @@ import TaskDocuments from './components/TaskDocuments';
 import { RightPanel } from './components/RightPanel';
 import ProjectTaskSelector from './components/ProjectTaskSelector';
 import { AudioModeSelectModal, AudioMode } from './components/AudioModeSelectModal';
+import { UploadModal } from './components/UploadModal';
 import { useAudioService } from './services/audioService';
 import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, updateTaskDevice, getServicesStatus, ServicesStatus } from './api/client';
 import { authedApi } from './api/auth';
@@ -69,6 +70,7 @@ const MeetingView: React.FC<{
         onStart={canWriteMeeting ? (async (id)=>{ await handleStart(id); }) : (async()=>{})}
         onStop={canWriteMeeting ? (async (id)=>{ await handleStop(id); }) : (async()=>{})}
         onChangeDevice={canWriteMeeting ? (async (id, dev)=>{ await handleChangeDevice(id, dev); }) : (async()=>{})}
+        onRefreshTasks={refreshTasks}
         scopes={scopes}
       />
       <Content style={{ display:'flex', height: '100%', minHeight: 0 }}>
@@ -120,6 +122,8 @@ const App: React.FC = () => {
   
   // 音频录制模式选择
   const [audioModalOpen, setAudioModalOpen] = useState(false);
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [selectedUploadMode, setSelectedUploadMode] = useState<AudioMode>('file_upload');
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   
   // 音频服务（使用 pendingTaskId 或 currentTask，优先使用 pendingTaskId）
@@ -245,8 +249,8 @@ const App: React.FC = () => {
   /**
    * 用户选择录音模式后的处理
    */
-  async function handleAudioModeSelect(mode: AudioMode) {
-    console.log('[Debug] handleAudioModeSelect called', { mode, pendingTaskId, currentTask });
+  async function handleAudioModeSelect(mode: AudioMode, deviceId?: string) {
+    console.log('[Debug] handleAudioModeSelect called', { mode, deviceId, pendingTaskId, currentTask });
     setAudioModalOpen(false);
     
     if (!pendingTaskId) {
@@ -264,19 +268,22 @@ const App: React.FC = () => {
       // 根据选择的模式执行相应操作
       if (mode === 'browser_record') {
         // 浏览器录音模式
-        console.log('[Debug] Calling audioService.startBrowserRecording()');
-        await audioService.startBrowserRecording();
+        console.log('[Debug] Calling audioService.startBrowserRecording() with deviceId:', deviceId);
+        await audioService.startBrowserRecording(deviceId);
         console.log('[Debug] startBrowserRecording() completed');
-      } else if (mode === 'file_upload') {
-        // 文件上传模式
-        console.log('[Debug] Calling audioService.triggerFileUpload()');
-        audioService.triggerFileUpload();
+        
+        // 同时调用原有的startTask（兼容后端状态管理）
+        console.log('[Debug] Calling startTask API for:', pendingTaskId);
+        await startTask(pendingTaskId); 
+        refreshTasks();
+      } else if (mode === 'file_upload' || mode === 'text_upload') {
+        // 音频或文本文件上传模式 - 打开上传 Modal
+        console.log('[Debug] Opening upload modal for mode:', mode);
+        setSelectedUploadMode(mode);
+        setUploadModalOpen(true);
+        
+        // 注意：不在这里调用 startTask，等待文件上传成功后再调用
       }
-      
-      // 同时调用原有的startTask（兼容后端状态管理）
-      console.log('[Debug] Calling startTask API for:', pendingTaskId);
-      await startTask(pendingTaskId); 
-      refreshTasks();
     } catch(e:any){ 
       console.error('[Debug] Error in handleAudioModeSelect:', e);
       
@@ -299,7 +306,39 @@ const App: React.FC = () => {
         message.error(e.message); 
       }
     } finally {
-      setPendingTaskId(null);
+      // 只在浏览器录音模式下清除 pendingTaskId
+      // 文件上传模式需要保留 pendingTaskId 直到上传完成
+      if (mode === 'browser_record') {
+        setPendingTaskId(null);
+      }
+    }
+  }
+  
+  /**
+   * 上传成功后的处理
+   */
+  async function handleUploadSuccess() {
+    console.log('[Debug] Upload success for:', pendingTaskId, 'mode:', selectedUploadMode);
+    if (pendingTaskId) {
+      try {
+        // 根据上传模式决定提示信息
+        if (selectedUploadMode === 'file_upload') {
+          // 音频文件上传：后端已自动创建 orchestrator 并开始处理
+          console.log('[Debug] Audio file uploaded, processing started automatically');
+          message.success('音频文件上传成功，正在处理');
+        } else if (selectedUploadMode === 'text_upload') {
+          // 文本文件上传：不触发处理流程
+          console.log('[Debug] Text file uploaded, no processing needed');
+          message.success('文本文件上传成功');
+        }
+        
+        refreshTasks();
+      } catch (e: any) {
+        console.error('[Debug] Error after upload:', e);
+        message.error(e.message);
+      } finally {
+        setPendingTaskId(null);
+      }
     }
   }
   
@@ -322,7 +361,7 @@ const App: React.FC = () => {
 
   function onPlay(chunkId: string){
     if(!currentTask) return;
-    const url = `/api/v1/tasks/${currentTask}/audio/chunk_${chunkId}.wav`;
+    const url = `/api/v1/tasks/${encodeURIComponent(currentTask)}/audio/chunk_${chunkId}.wav`;
     const audio = new Audio(url); audio.play();
   }
 
@@ -575,6 +614,18 @@ const App: React.FC = () => {
         setPendingTaskId(null);
       }}
       onConfirm={handleAudioModeSelect}
+    />
+    
+    {/* 文件上传对话框 */}
+    <UploadModal
+      open={uploadModalOpen}
+      mode={selectedUploadMode}
+      taskId={pendingTaskId || ''}
+      onCancel={() => {
+        setUploadModalOpen(false);
+        setPendingTaskId(null);
+      }}
+      onSuccess={handleUploadSuccess}
     />
   </TaskRefreshProvider>
   );

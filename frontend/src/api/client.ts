@@ -13,46 +13,46 @@ export async function createTask(): Promise<TaskSummary> {
 }
 
 export async function deleteTask(id: string) {
-  await api.delete(`/tasks/${id}`);
+  await api.delete(`/tasks/${encodeURIComponent(id)}`);
 }
 
 export async function startTask(id: string) {
-  await api.post(`/tasks/${id}/start`);
+  await api.post(`/tasks/${encodeURIComponent(id)}/start`);
 }
 
 export async function stopTask(id: string) {
-  await api.post(`/tasks/${id}/stop`);
+  await api.post(`/tasks/${encodeURIComponent(id)}/stop`);
 }
 
 export async function reprocessTask(id: string) {
-  await api.post(`/tasks/${id}/reprocess`);
+  await api.post(`/tasks/${encodeURIComponent(id)}/reprocess`);
 }
 
 export async function updateTaskDevice(id: string, ffmpegDevice: string) {
-  await api.patch(`/tasks/${id}/config`, { ffmpeg_device: ffmpegDevice });
+  await api.patch(`/tasks/${encodeURIComponent(id)}/config`, { ffmpeg_device: ffmpegDevice });
 }
 
 export async function updateTaskDiarization(id: string, backend: string) {
-  await api.patch(`/tasks/${id}/config`, { diarization_backend: backend });
+  await api.patch(`/tasks/${encodeURIComponent(id)}/config`, { diarization_backend: backend });
 }
 
 export async function updateTaskEmbeddingScript(id: string, script: string) {
-  await api.patch(`/tasks/${id}/config`, { embedding_script: script });
+  await api.patch(`/tasks/${encodeURIComponent(id)}/config`, { embedding_script: script });
 }
 
 export async function statusTask(id: string) {
-  const r = await api.get(`/tasks/${id}/status`);
+  const r = await api.get(`/tasks/${encodeURIComponent(id)}/status`);
   return r.data;
 }
 
 export async function listChunks(id: string): Promise<ChunkFlag[]> {
-  const r = await api.get(`/tasks/${id}/chunks`);
+  const r = await api.get(`/tasks/${encodeURIComponent(id)}/chunks`);
   return r.data.chunks;
 }
 
 export async function mergeOnly(taskId: string): Promise<string> {
   try {
-    const r = await api.post(`/tasks/${taskId}/merge_only`);
+    const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/merge_only`);
     return r.data.merged_all;
   } catch(e:any){
     if(e.response?.data) throw new Error(JSON.stringify(e.response.data));
@@ -62,7 +62,7 @@ export async function mergeOnly(taskId: string): Promise<string> {
 
 export async function mergeChunk(taskId: string, chunkId: string): Promise<string> {
   try {
-    const r = await api.post(`/tasks/${taskId}/chunks/${chunkId}/merge`);
+    const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/merge`);
     return r.data.merged;
   } catch(e:any){
     if(e.response?.data) throw new Error(JSON.stringify(e.response.data));
@@ -71,42 +71,42 @@ export async function mergeChunk(taskId: string, chunkId: string): Promise<strin
 }
 
 export async function debugChunk(taskId: string, chunkId: string): Promise<any> {
-  const r = await api.get(`/tasks/${taskId}/chunks/${chunkId}/debug`);
+  const r = await api.get(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/debug`);
   return r.data;
 }
 
 export async function redoSpeakers(taskId: string, chunkId: string) {
-  const r = await api.post(`/tasks/${taskId}/chunks/${chunkId}/redo/speakers`);
+  const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/redo/speakers`);
   return r.data;
 }
 
 export async function redoEmbeddings(taskId: string, chunkId: string) {
-  const r = await api.post(`/tasks/${taskId}/chunks/${chunkId}/redo/embeddings`);
+  const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/redo/embeddings`);
   return r.data;
 }
 
 export async function redoMapped(taskId: string, chunkId: string) {
-  const r = await api.post(`/tasks/${taskId}/chunks/${chunkId}/redo/mapped`);
+  const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/redo/mapped`);
   return r.data;
 }
 
 export async function getChunkFile(taskId: string, chunkId: string, kind: string) {
-  const r = await api.get(`/tasks/${taskId}/chunks/${chunkId}/${kind}`);
+  const r = await api.get(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/${kind}`);
   return r.data;
 }
 
 export async function getChunkFileRaw(taskId: string, chunkId: string, kind: string, noCache = false) {
   const suffix = noCache ? `?_ts=${Date.now()}` : '';
-  const r = await api.get(`/tasks/${taskId}/chunks/${chunkId}/${kind}${suffix}`, { responseType: 'text' });
+  const r = await api.get(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/${kind}${suffix}`, { responseType: 'text' });
   return r.data;
 }
 
 export async function updateSegments(taskId: string, chunkId: string, data: SegmentsFile) {
-  await api.put(`/tasks/${taskId}/chunks/${chunkId}/segments`, data);
+  await api.put(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/segments`, data);
 }
 
 export async function asrOnce(taskId: string, chunkId: string, model: string, segments: string){
-  const r = await api.post(`/tasks/${taskId}/chunks/${chunkId}/asr_once`, { model, segments });
+  const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/asr_once`, { model, segments });
   return r.data;
 }
 

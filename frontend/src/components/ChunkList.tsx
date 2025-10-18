@@ -31,7 +31,7 @@ export const ChunkList: React.FC<Props> = ({ taskId, chunks, current, onSelect, 
     if(localDuration!=null) return; // already have
     (async()=>{
       try {
-        const r = await authedApi.get(`/tasks/${taskId}/config`);
+        const r = await authedApi.get(`/tasks/${encodeURIComponent(taskId)}/config`);
         if(typeof r.data.record_chunk_seconds === 'number') setLocalDuration(r.data.record_chunk_seconds);
       } catch { /* ignore */ }
     })();

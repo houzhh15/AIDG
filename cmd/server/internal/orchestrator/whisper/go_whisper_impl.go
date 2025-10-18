@@ -32,12 +32,14 @@ type GoWhisperImpl struct {
 // Returns:
 //   - *GoWhisperImpl: Configured instance ready to perform transcription
 //
-// The HTTP client is configured with a 120-second timeout to accommodate large audio files.
+// The HTTP client is configured with a 10-minute timeout to accommodate large audio files.
+// Since audio chunks can be up to 5 minutes long, and transcription time is roughly equal
+// to audio duration, we need at least 5+ minutes timeout. Setting to 10 minutes for safety.
 func NewGoWhisperImpl(apiURL string) *GoWhisperImpl {
 	return &GoWhisperImpl{
 		apiURL: apiURL,
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second, // 2-minute timeout for transcription requests
+			Timeout: 10 * time.Minute, // 10-minute timeout for long audio chunk transcription
 		},
 	}
 }

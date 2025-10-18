@@ -23,8 +23,9 @@ func NewRemoteExecutor(config ExecutorConfig) *RemoteExecutor {
 	return &RemoteExecutor{
 		config: config,
 		httpClient: &http.Client{
-			// HTTP timeout should be slightly larger than command timeout
-			Timeout: config.DefaultTimeout + 10*time.Second,
+			// No timeout on HTTP client - rely on context timeout from caller
+			// This allows long-running operations like PyAnnote model download
+			Timeout: 0,
 		},
 	}
 }

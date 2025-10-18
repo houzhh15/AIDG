@@ -369,15 +369,16 @@ func HandleRedoSpeakers(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
+		// Note: Both aidg-unified and aidg-deps-service use /app/data after volume mount fix,
+		// so paths (wav, speakersPath) can be used directly without transformation
+
 		// Build command based on diarization backend
 		var scriptPath string
 		var cmdArgs []string
 
 		if t.Cfg.DiarizationBackend == "speechbrain" {
-			scriptPath = "/app/speechbrain/speechbrain_diarize.py" // Path inside deps-service
-			cmdArgs = []string{scriptPath, "--input", wav, "--device", t.Cfg.DeviceDefault}
-
-			// SpeechBrain specific parameters
+			scriptPath = "/app/speechbrain/speechbrain_diarize.py"                          // Path inside deps-service
+			cmdArgs = []string{scriptPath, "--input", wav, "--device", t.Cfg.DeviceDefault} // SpeechBrain specific parameters
 			if t.Cfg.SBEnergyVAD {
 				cmdArgs = append(cmdArgs, "--energy_vad", "--energy_vad_thr", fmt.Sprintf("%g", t.Cfg.SBEnergyVADThr))
 			}
@@ -411,17 +412,16 @@ func HandleRedoSpeakers(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		// Execute diarization via DependencyClient
-		diarizationCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+		// Use 30 minutes timeout (same as queue processing) to allow model download on first run
+		diarizationCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
 		defer cancel()
 
 		req := dependency.CommandRequest{
 			Command: "python",
 			Args:    cmdArgs,
 			Env:     env,
-			Timeout: 10 * time.Minute,
-		}
-
-		// Validate and execute
+			Timeout: 30 * time.Minute, // Same as queue processing
+		} // Validate and execute
 		if err := dependency.ValidateCommandRequest(req, depClient.Config()); err != nil {
 			log.Printf("[API][RedoSpeakers] validation failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "command validation failed", "details": err.Error()})
@@ -504,6 +504,9 @@ func HandleRedoEmbeddings(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
+		// Note: Both aidg-unified and aidg-deps-service use /app/data after volume mount fix,
+		// so paths (wav, speakers, embeddingsPath) can be used directly without transformation
+
 		// Prepare command
 		scriptPath := "/app/speechbrain/speechbrain_embeddings.py" // Path inside deps-service
 		cmdArgs := []string{
@@ -514,16 +517,15 @@ func HandleRedoEmbeddings(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		// Execute via DependencyClient
-		embeddingCtx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+		// Use 30 minutes timeout (same as queue processing)
+		embeddingCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Minute)
 		defer cancel()
 
 		req := dependency.CommandRequest{
 			Command: "python",
 			Args:    cmdArgs,
-			Timeout: 10 * time.Minute,
-		}
-
-		// Validate and execute
+			Timeout: 30 * time.Minute, // Same as queue processing
+		} // Validate and execute
 		if err := dependency.ValidateCommandRequest(req, depClient.Config()); err != nil {
 			log.Printf("[API][RedoEmbeddings] validation failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "command validation failed", "details": err.Error()})

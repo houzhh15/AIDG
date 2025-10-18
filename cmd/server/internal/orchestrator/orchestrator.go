@@ -380,10 +380,10 @@ func DefaultConfig() Config {
 		DependencyServiceURL:     dependencyServiceURL,
 		DependencySharedVolume:   dependencySharedVolume,
 		WhisperMode:              "http",
-		WhisperAPIURL:            whisperURL,  // 从环境变量读取或使用默认值
-		WhisperModel:             "ggml-base", // 修改为与容器中实际存在的模型匹配
-		WhisperSegments:          "20s",
-		DeviceDefault:            "cpu", // 使用 CPU (Linux 容器中 mps 不可用)
+		WhisperAPIURL:            whisperURL,      // 从环境变量读取或使用默认值
+		WhisperModel:             "ggml-large-v3", // 默认使用 large-v3 模型
+		WhisperSegments:          "15s",           // 修改为 15s
+		DeviceDefault:            "cpu",           // 使用 CPU (Linux 容器中 mps 不可用)
 		DiarizationBackend:       "pyannote",
 		DiarizationScriptPath:    "/app/scripts/pyannote_diarize.py",
 		SBMinSpeakers:            1,
@@ -397,7 +397,7 @@ func DefaultConfig() Config {
 		EmbeddingScriptPath:      "/app/scripts/generate_speaker_embeddings.py",
 		EmbeddingDeviceDefault:   "auto",
 		EmbeddingThreshold:       "0.55",
-		EmbeddingAutoLowerMin:    "0.45",
+		EmbeddingAutoLowerMin:    "0.35", // 修改为 0.35
 		EmbeddingAutoLowerStep:   "0.02",
 		InitialEmbeddingsPath:    "",
 		HFTokenValue:             os.Getenv("HUGGINGFACE_TOKEN"), // 从环境变量读取，不硬编码
@@ -1129,22 +1129,15 @@ func (o *Orchestrator) sdWorker(ctx context.Context) {
 				// ========== End File Sharing ==========
 
 				// Transform path for deps-service container if needed
-				// unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+				// Note: After volume mount fix, both containers use /app/data, so no transformation needed
 				audioPathForDeps := audioPath
-				if strings.HasPrefix(audioPath, "/app/data/") {
-					audioPathForDeps = strings.Replace(audioPath, "/app/data/", "/data/", 1)
-					slog.Info("[SD] transformed path for deps-service",
-						"chunk_id", item.Chunk.ID,
-						"original", audioPath,
-						"transformed", audioPathForDeps,
-					)
-				}
+				// Previously: unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+				// Now: Both use /app/data/meetings/... (transformation not needed)
 
 				// Execute diarization via DependencyClient high-level API
-				diarizationCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-				defer cancel()
-
-				// Prepare diarization options
+				// Use 30 minutes timeout to allow model download on first run
+				diarizationCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+				defer cancel() // Prepare diarization options
 				opts := &dependency.DiarizationOptions{
 					Device:        o.cfg.DeviceDefault,
 					EnableOffline: o.cfg.EnableOffline,
@@ -1329,35 +1322,20 @@ func (o *Orchestrator) embeddingWorker(ctx context.Context) {
 			// ========== End File Sharing ==========
 
 			// Transform paths for deps-service container if needed
-			// unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+			// Note: After volume mount fix, both containers use /app/data, so no transformation needed
 			audioPathForDeps := audioPath
 			speakersPathForDeps := speakersPath
 			embPathForDeps := embPath
 			existingForDeps := existing
+			// Previously: unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+			// Now: Both use /app/data/meetings/... (transformation not needed)
 
-			if strings.HasPrefix(audioPath, "/app/data/") {
-				audioPathForDeps = strings.Replace(audioPath, "/app/data/", "/data/", 1)
-			}
-			if strings.HasPrefix(speakersPath, "/app/data/") {
-				speakersPathForDeps = strings.Replace(speakersPath, "/app/data/", "/data/", 1)
-			}
-			if strings.HasPrefix(embPath, "/app/data/") {
-				embPathForDeps = strings.Replace(embPath, "/app/data/", "/data/", 1)
-			}
-			if existing != "" && strings.HasPrefix(existing, "/app/data/") {
-				existingForDeps = strings.Replace(existing, "/app/data/", "/data/", 1)
-			}
-
-			slog.Info("[EMB] transformed paths for deps-service",
+			slog.Info("[EMB] using paths for deps-service",
 				"chunk_id", item.Chunk.ID,
-				"audio_original", audioPath,
-				"audio_transformed", audioPathForDeps,
-				"speakers_original", speakersPath,
-				"speakers_transformed", speakersPathForDeps,
-				"output_original", embPath,
-				"output_transformed", embPathForDeps,
-				"existing_original", existing,
-				"existing_transformed", existingForDeps,
+				"audio", audioPathForDeps,
+				"speakers", speakersPathForDeps,
+				"output", embPathForDeps,
+				"existing", existingForDeps,
 			)
 
 			// Construct EmbeddingOptions from config
@@ -1369,13 +1347,11 @@ func (o *Orchestrator) embeddingWorker(ctx context.Context) {
 				AutoLowerThreshold: true, // Always enable auto-lowering
 				AutoLowerMin:       o.cfg.EmbeddingAutoLowerMin,
 				AutoLowerStep:      o.cfg.EmbeddingAutoLowerStep,
-				ExistingEmbeddings: existingForDeps, // Use transformed path
+				ExistingEmbeddings: existingForDeps, // Use path (no transformation needed)
 			}
 
 			log.Printf("[EMB] Calling DependencyClient.GenerateEmbeddings: audio=%s, speakers=%s, output=%s, device=%s, threshold=%s",
-				audioPathForDeps, speakersPathForDeps, embPathForDeps, opts.Device, opts.Threshold)
-
-			// Use DependencyClient to generate embeddings (use transformed paths)
+				audioPathForDeps, speakersPathForDeps, embPathForDeps, opts.Device, opts.Threshold) // Use DependencyClient to generate embeddings (use transformed paths)
 			if err := o.dependencyClient.GenerateEmbeddings(ctx, audioPathForDeps, speakersPathForDeps, embPathForDeps, opts); err != nil {
 				log.Printf("[EMB] error: %v", err)
 				continue
@@ -1682,7 +1658,7 @@ func initDependencyClient(cfg Config) (*dependency.DependencyClient, error) {
 		SharedVolumePath: sharedVolume,
 		LocalBinaryPaths: localBinaryPaths,
 		DefaultTimeout:   timeout,
-		AllowedCommands:  []string{"ffmpeg", "pyannote", "python"},
+		AllowedCommands:  []string{"ffmpeg", "ffprobe", "pyannote", "python"},
 	}
 
 	// Create dependency client
@@ -2118,6 +2094,44 @@ func (o *Orchestrator) GetDependencyClient() *dependency.DependencyClient {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 	return o.dependencyClient
+}
+
+// EnqueueExistingChunks 扫描并推送指定范围的 chunk 文件到 ASR 队列
+// 用于音频文件上传后的批量处理
+func (o *Orchestrator) EnqueueExistingChunks(startChunkID, endChunkID int) error {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	if o.state != StateRunning {
+		return fmt.Errorf("orchestrator is not running (state=%s)", o.state)
+	}
+
+	meetingID := filepath.Base(o.cfg.OutputDir)
+	log.Printf("[Orchestrator] Enqueuing existing chunks: %d to %d", startChunkID, endChunkID-1)
+
+	for chunkID := startChunkID; chunkID < endChunkID; chunkID++ {
+		wavPath := o.pathManager.GetChunkAudioPath(meetingID, chunkID, "wav")
+
+		// 检查文件是否存在
+		fileInfo, err := os.Stat(wavPath)
+		if err != nil {
+			log.Printf("[Orchestrator] Chunk file not found, skipping: %s (error: %v)", wavPath, err)
+			continue
+		}
+
+		chunk := AudioChunk{
+			ID:        chunkID,
+			Path:      wavPath,
+			StartTime: fileInfo.ModTime(),
+			EndTime:   time.Now(),
+		}
+
+		log.Printf("[Orchestrator] Enqueuing chunk %d: %s", chunkID, wavPath)
+		o.asrQ.Push(chunk)
+	}
+
+	log.Printf("[Orchestrator] Enqueued %d chunks for processing", endChunkID-startChunkID)
+	return nil
 }
 
 // GetHealthChecker 返回健康检查器实例 (用于API访问)

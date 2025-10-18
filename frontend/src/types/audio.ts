@@ -83,7 +83,7 @@ export interface AudioUploadResponse {
   data?: {
     chunk_id: string;
     file_path: string;
-    processing_status: 'queued' | 'processing' | 'completed';
+    processing_status: 'queued' | 'processing' | 'completed' | 'uploaded' | 'already_processed' | 'cached';
   };
   message?: string;
 }

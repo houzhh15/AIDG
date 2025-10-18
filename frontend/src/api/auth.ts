@@ -79,6 +79,29 @@ authedApi.interceptors.response.use(r=>r, (err: AxiosError)=>{
     // 让组件自己决定如何处理权限错误
     console.warn('Permission denied:', err.config?.url);
     // 不调用 message.error()，避免显示错误提示
+  } else if (err.response?.status === 404) {
+    // 404 资源不存在错误
+    // 对于会议文档（topic, meeting-context, feature-list等），404是正常的（文档未生成）
+    // 不显示错误提示，让组件自己决定如何处理
+    const url = err.config?.url || '';
+    const isOptionalDocument = [
+      '/topic', 
+      '/meeting-context', 
+      '/feature-list', 
+      '/summary', 
+      '/polish',
+      '/merged_all',
+      '/architecture-design',
+      '/segments'
+    ].some(path => url.includes(path));
+    
+    if (isOptionalDocument) {
+      // 可选文档的404是正常的，静默处理
+      console.log('Optional document not found (404):', url);
+    } else {
+      // 其他404可能是错误，输出警告但不显示提示
+      console.warn('Resource not found (404):', url);
+    }
   }
   return Promise.reject(err);
 });

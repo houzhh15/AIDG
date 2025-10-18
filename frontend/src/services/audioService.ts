@@ -13,6 +13,7 @@ export type AudioMode = 'browser_record' | 'file_upload' | null;
 
 interface UseAudioServiceOptions {
   taskId: string;
+  deviceId?: string;  // 可选：指定音频设备ID
   onSuccess?: () => void;
   onError?: (error: Error) => void;
 }
@@ -26,7 +27,7 @@ interface UseAudioServiceReturn {
   uploadProgress: number;
   
   // 浏览器录音相关
-  startBrowserRecording: () => Promise<void>;
+  startBrowserRecording: (deviceId?: string) => Promise<void>;
   pauseRecording: () => void;
   resumeRecording: () => void;
   stopRecording: () => Promise<void>;
@@ -41,9 +42,11 @@ interface UseAudioServiceReturn {
 /**
  * 音频录制服务Hook
  * 统一管理浏览器录音和文件上传逻辑
+ * 支持指定音频设备
  */
 export function useAudioService({
   taskId,
+  deviceId,
   onSuccess,
   onError
 }: UseAudioServiceOptions): UseAudioServiceReturn {
@@ -53,7 +56,7 @@ export function useAudioService({
 
   // 麦克风权限管理
   const { permissionStatus, stream, requestPermission, error: permissionError } =
-    useMicrophonePermission();
+    useMicrophonePermission({ deviceId });
 
   // 音频上传管理
   const { uploadChunk, uploadFile, progress: uploadProgress } = useAudioUpload({
@@ -83,15 +86,19 @@ export function useAudioService({
 
   /**
    * 开始浏览器录音
+   * @param specificDeviceId 可选：指定特定设备ID，优先级高于初始化时的deviceId
    */
-  const startBrowserRecording = useCallback(async () => {
+  const startBrowserRecording = useCallback(async (specificDeviceId?: string) => {
     try {
       setMode('browser_record');
+      
+      // 使用传入的设备ID，或者使用初始化时的deviceId
+      const targetDeviceId = specificDeviceId || deviceId;
       
       // 请求麦克风权限并获取 stream
       let mediaStream = stream;
       if (permissionStatus !== 'granted' || !mediaStream) {
-        mediaStream = await requestPermission();
+        mediaStream = await requestPermission(targetDeviceId);
       }
 
       // 直接将获取到的 stream 传递给 startRecording
@@ -104,7 +111,7 @@ export function useAudioService({
       setMode(null);
       throw err;
     }
-  }, [stream, permissionStatus, requestPermission, startRecording]);
+  }, [stream, permissionStatus, requestPermission, startRecording, deviceId]);
 
   /**
    * 停止录音

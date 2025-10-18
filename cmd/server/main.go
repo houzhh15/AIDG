@@ -199,6 +199,18 @@ func main() {
 	// Add Whisper service endpoints (no authentication required)
 	r.GET("/api/v1/services/whisper/models", api.HandleGetWhisperModels())
 
+	// Services Status API (no authentication required)
+	// 检查服务部署状态（whisper 和 deps-service）
+	// 使用全局检查器，不依赖于具体的会议任务
+	globalServiceChecker := api.NewGlobalServiceChecker()
+	r.GET("/api/v1/services/status", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		defer cancel()
+
+		status := globalServiceChecker.CheckAllServices(ctx)
+		c.JSON(http.StatusOK, status)
+	})
+
 	// Debug endpoint (no authentication required for testing)
 	r.POST("/api/v1/debug/tasks/:id/enqueue/:chunk_id", api.HandleDebugEnqueueChunk(meetingsReg))
 
@@ -369,7 +381,8 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"POST /api/v1/tasks/:id/chunks/:cid/redo/mapped": {users.ScopeMeetingWrite}, "GET /api/v1/tasks/:id/chunks/:cid/:kind": {users.ScopeMeetingRead},
 		"PUT /api/v1/tasks/:id/chunks/:cid/segments": {users.ScopeMeetingWrite}, "POST /api/v1/tasks/:id/chunks/:cid/asr_once": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id/merged": {users.ScopeMeetingRead}, "GET /api/v1/tasks/:id/merged_all": {users.ScopeMeetingRead},
-		"GET /api/v1/tasks/:id/polish": {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/polish": {users.ScopeMeetingWrite},
+		"PUT /api/v1/tasks/:id/merged_all": {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/polish":     {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/polish": {users.ScopeMeetingWrite},
 		// 会议文档（保留 meeting.* 权限，因为这些是会议记录的一部分）
 		"GET /api/v1/tasks/:id/feature-list": {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/feature-list": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id/architecture": {users.ScopeMeetingRead}, "PUT /api/v1/tasks/:id/architecture": {users.ScopeMeetingWrite},
@@ -449,8 +462,8 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// 跳过不需要认证的路由：登录、健康检查、OPTIONS请求、非API路由
-		if path == "/api/v1/login" || path == "/api/v1/health" || c.Request.Method == http.MethodOptions || !strings.HasPrefix(path, "/api/") {
+		// 跳过不需要认证的路由：登录、健康检查、服务状态、OPTIONS请求、非API路由
+		if path == "/api/v1/login" || path == "/api/v1/health" || path == "/api/v1/services/status" || c.Request.Method == http.MethodOptions || !strings.HasPrefix(path, "/api/") {
 			c.Next()
 			return
 		}
@@ -794,23 +807,6 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.POST("/api/v1/tasks/:id/chunks/:cid/asr_once", api.HandleASROnce(meetingsReg))
 	r.GET("/api/v1/tasks/:id/merged", api.HandleGetMerged(meetingsReg))
 
-	// ========== Services Status API ==========
-	// 检查服务部署状态（whisper 和 deps-service）
-	r.GET("/api/v1/services/status", func(c *gin.Context) {
-		// 从meetingsReg获取任意一个正在运行的task的orchestrator
-		var activeOrch *orchestrator.Orchestrator
-		for _, task := range meetingsReg.List() {
-			if task.Orch != nil {
-				activeOrch = task.Orch
-				break
-			}
-		}
-
-		// 调用status handler
-		handler := api.HandleServicesStatus(activeOrch)
-		handler(c)
-	})
-
 	// ========== Whisper Service Health API ==========
 	// 动态获取运行中的orchestrator实例
 	r.GET("/api/v1/services/whisper/health", func(c *gin.Context) {
@@ -861,6 +857,7 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.PUT("/api/v1/tasks/:id/tech-design", api.HandleUpdateTaskTechDesign(meetingsReg))
 	r.GET("/api/v1/tasks/:id/audio", api.HandleGetTaskAudio(meetingsReg))
 	r.PUT("/api/v1/tasks/:id/polish", api.HandleUpdateTaskPolish(meetingsReg))
+	r.PUT("/api/v1/tasks/:id/merged_all", api.HandleUpdateTaskMergedAll(meetingsReg))
 
 	// Audio upload routes
 	r.POST("/api/v1/meetings/:meeting_id/audio/upload", api.HandleAudioUpload(meetingsReg))

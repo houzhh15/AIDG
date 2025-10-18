@@ -2,6 +2,7 @@ package dependency
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -92,6 +93,130 @@ func (c *DependencyClient) ConvertAudio(ctx context.Context, inputPath, outputPa
 	return nil
 }
 
+// GetAudioDuration uses ffprobe to detect the duration of an audio file.
+//
+// Returns the duration in seconds (as float64).
+//
+// Example:
+//
+//	duration, err := client.GetAudioDuration(ctx, "/data/meetings/123/uploaded_audio.mp3")
+func (c *DependencyClient) GetAudioDuration(ctx context.Context, audioPath string) (float64, error) {
+	// Construct ffprobe command to get duration in JSON format
+	req := CommandRequest{
+		Command: "ffprobe",
+		Args: []string{
+			"-v", "error",
+			"-show_entries", "format=duration",
+			"-of", "json",
+			audioPath,
+		},
+		Timeout: 30 * time.Second,
+	}
+
+	// Validate request security
+	if err := ValidateCommandRequest(req, c.config); err != nil {
+		return 0, fmt.Errorf("command validation failed: %w", err)
+	}
+
+	// Execute command
+	resp, err := c.executor.ExecuteCommand(ctx, req)
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe execution failed: %w", err)
+	}
+
+	// Check execution result
+	if !resp.Success || resp.ExitCode != 0 {
+		return 0, fmt.Errorf("ffprobe failed (exit code %d): %s", resp.ExitCode, resp.Stderr)
+	}
+
+	// Parse JSON output to extract duration
+	var result struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+
+	if err := json.Unmarshal([]byte(resp.Stdout), &result); err != nil {
+		return 0, fmt.Errorf("failed to parse ffprobe output: %w", err)
+	}
+
+	// Convert duration string to float64
+	duration := 0.0
+	if _, err := fmt.Sscanf(result.Format.Duration, "%f", &duration); err != nil {
+		return 0, fmt.Errorf("failed to parse duration value: %w", err)
+	}
+
+	return duration, nil
+}
+
+// SplitAudioIntoChunks splits a large audio file into fixed-duration chunks using ffmpeg.
+//
+// Parameters:
+//   - inputPath: Path to the input audio file
+//   - outputPattern: Output path pattern with %04d placeholder (e.g., "/data/meetings/123/chunk_%04d.wav")
+//   - chunkDurationSec: Duration of each chunk in seconds (e.g., 300 for 5 minutes)
+//
+// Returns the number of chunks created.
+//
+// Example:
+//
+//	numChunks, err := client.SplitAudioIntoChunks(ctx, "/data/meetings/123/uploaded.mp3", "/data/meetings/123/chunk_%04d.wav", 300)
+func (c *DependencyClient) SplitAudioIntoChunks(ctx context.Context, inputPath, outputPattern string, chunkDurationSec int) (int, error) {
+	// First, get the total duration
+	totalDuration, err := c.GetAudioDuration(ctx, inputPath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get audio duration: %w", err)
+	}
+
+	// Calculate number of chunks (round up)
+	numChunks := int((totalDuration / float64(chunkDurationSec)) + 0.999) // ceil without math package
+
+	slog.Info("[DependencyClient] splitting audio into chunks",
+		"input_path", inputPath,
+		"output_pattern", outputPattern,
+		"chunk_duration_sec", chunkDurationSec,
+		"total_duration_sec", totalDuration,
+		"estimated_chunks", numChunks,
+	)
+
+	// Construct ffmpeg command for segmentation
+	req := CommandRequest{
+		Command: "ffmpeg",
+		Args: []string{
+			"-i", inputPath,
+			"-f", "segment",
+			"-segment_time", fmt.Sprintf("%d", chunkDurationSec),
+			"-c", "copy", // Copy without re-encoding (fast)
+			"-reset_timestamps", "1",
+			outputPattern,
+		},
+		Timeout: c.config.DefaultTimeout,
+	}
+
+	// Validate request security
+	if err := ValidateCommandRequest(req, c.config); err != nil {
+		return 0, fmt.Errorf("command validation failed: %w", err)
+	}
+
+	// Execute command
+	resp, err := c.executor.ExecuteCommand(ctx, req)
+	if err != nil {
+		return 0, fmt.Errorf("audio splitting failed: %w", err)
+	}
+
+	// Check execution result
+	if !resp.Success || resp.ExitCode != 0 {
+		return 0, fmt.Errorf("audio splitting failed (exit code %d): %s", resp.ExitCode, resp.Stderr)
+	}
+
+	slog.Info("[DependencyClient] audio splitting completed",
+		"num_chunks", numChunks,
+		"duration_ms", resp.Duration.Milliseconds(),
+	)
+
+	return numChunks, nil
+}
+
 // DiarizationOptions contains optional parameters for RunDiarization.
 type DiarizationOptions struct {
 	// Device specifies the device to use (e.g., "cuda", "cpu").
@@ -174,7 +299,7 @@ func (c *DependencyClient) RunDiarization(ctx context.Context, audioPath, output
 		Command: "python",
 		Args:    args,
 		Env:     env,
-		Timeout: 10 * time.Minute, // Diarization is slower than audio conversion
+		Timeout: 30 * time.Minute, // Allow time for model download on first run
 	}
 
 	// Validate request security

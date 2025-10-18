@@ -20,10 +20,11 @@ interface Props {
   onStart: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
   onChangeDevice: (id: string, dev: string) => Promise<void>;
+  onRefreshTasks?: () => void; // 刷新任务列表的回调
   scopes?: string[]; // 可选：传入当前用户权限
 }
 
-export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreate, onDelete, onStart, onStop, onChangeDevice, scopes }) => {
+export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreate, onDelete, onStart, onStop, onChangeDevice, onRefreshTasks, scopes }) => {
   const canWriteMeeting = scopes ? scopes.includes('meeting.write') : true;
   const currentTask = tasks.find(t=>t.id===current);
   // moved device/backend settings into TaskDetailSettings drawer
@@ -33,12 +34,20 @@ export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreat
     if(!currentTask) return;
     try {
   // Prefer dedicated config endpoint to populate settings drawer
-  const r = await authedApi.get(`/tasks/${currentTask.id}/config`);
+  const r = await authedApi.get(`/tasks/${encodeURIComponent(currentTask.id)}/config`);
       setConfigSnapshot(r.data);
     } catch(e:any){ message.error(e.message); }
   }
   React.useEffect(()=>{ if(settingsOpen){ refreshConfig(); } }, [settingsOpen, currentTask?.id]);
   React.useEffect(()=>{}, [currentTask?.ffmpeg_device, currentTask?.diarization_backend, current]);
+  
+  // 处理任务重命名后的刷新
+  const handleAfterRename = () => {
+    setSettingsOpen(false);
+    if (onRefreshTasks) {
+      onRefreshTasks();
+    }
+  };
 
   async function loadDevices(force=false){}
   return (
@@ -123,7 +132,14 @@ export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreat
           )}
         </Space>
       </div>
-  <TaskDetailSettings open={!!currentTask && settingsOpen} onClose={()=>setSettingsOpen(false)} taskId={currentTask?.id||''} initial={configSnapshot} refresh={refreshConfig} />
+  <TaskDetailSettings 
+    open={!!currentTask && settingsOpen} 
+    onClose={()=>setSettingsOpen(false)} 
+    taskId={currentTask?.id||''} 
+    initial={configSnapshot} 
+    refresh={refreshConfig}
+    onAfterRename={handleAfterRename}
+  />
     </Layout.Sider>
   );
 };

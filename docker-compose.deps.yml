@@ -17,17 +17,20 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 2G
+          memory: 6G  # large-v3 模型需要 ~3GB + 运行时开销
         reservations:
           cpus: '1'
-          memory: 1G
+          memory: 3G  # 预留 3GB 确保模型加载
 
   # Command Executor Service (FFmpeg + PyAnnote)
   deps-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.deps
     image: aidg-deps-service:latest
     container_name: aidg-deps-service
     volumes:
-      - ./data:/data
+      - ./data:/app/data  # 修改挂载路径为 /app/data，与 commands.yaml 的 shared_volume_path 一致
       - ./config:/app/config:ro  # 挂载整个 config 目录（与 build-deps-service.sh 一致）
       - ./models/huggingface:/models/huggingface
     environment:
@@ -58,6 +61,9 @@ services:
 
   # Main AIDG service
   aidg:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
     image: aidg-aidg:lite-test
     container_name: aidg-unified
     environment:
@@ -80,8 +86,8 @@ services:
       - LOG_LEVEL=info
       - LOG_FORMAT=json
       # JWT 配置
-      - JWT_SECRET=${JWT_SECRET:-please-change-me-in-production}
-      - USER_JWT_SECRET=${USER_JWT_SECRET:-please-change-user-jwt-secret}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-in-production-at-least-32-chars}
+      - USER_JWT_SECRET=${USER_JWT_SECRET:-dev-user-jwt-secret-at-least-32-chars}
       - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
       # MCP 配置
       - MCP_PASSWORD=${MCP_PASSWORD:-dev-mcp-password}

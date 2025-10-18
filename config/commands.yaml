@@ -6,16 +6,42 @@ commands:
       - "^-ar$"             # Audio sampling rate flag
       - "^-ac$"             # Audio channel count flag
       - "^-c:a$"            # Audio codec flag
+      - "^-c$"              # Codec flag (short form)
       - "^-f$"              # Format flag
       - "^-y$"              # Overwrite output flag
       - "^-loglevel$"       # Log level flag
+      - "^-t$"              # Duration/time flag
+      - "^-segment_time$"   # Segment duration flag
+      - "^-reset_timestamps$" # Reset timestamps flag
+      - "^segment$"         # Segment format name
+      - "^copy$"            # Copy codec (no re-encode)
+      - "^1$"               # Boolean values
       - "^[0-9]+$"          # Numeric parameters (sample rate, channels, etc)
       - "^pcm_s16le$"       # Audio codec name
       - "^wav$"             # Format name
       - "^error$"           # Log level value
-      - "^/data/.*"         # File paths must be under /data
+      - "^/data/.*"         # File paths under /data (shared volume in docker)
+      - "^/app/data/.*"     # File paths under /app/data (alternative mount)
     timeout: "300s"         # 5 minutes
     max_concurrent: 5
+
+  - name: "ffprobe"
+    binary_path: "/usr/bin/ffprobe"
+    allowed_args_patterns:
+      - "^-v$"              # Verbosity flag
+      - "^-show_entries$"   # Show entries flag
+      - "^-of$"             # Output format flag
+      - "^-print_format$"   # Print format flag
+      - "^quiet$"           # Quiet verbosity level
+      - "^error$"           # Error verbosity level
+      - "^json$"            # JSON output format
+      - "^default$"         # Default output format
+      - "^format=duration$" # Show duration entry
+      - "^stream=duration$" # Show stream duration
+      - "^/data/.*"         # File paths under /data (shared volume in docker)
+      - "^/app/data/.*"     # File paths under /app/data (alternative mount)
+    timeout: "30s"          # 30 seconds
+    max_concurrent: 10
 
   - name: "python"
     binary_path: "/usr/local/bin/python3"
@@ -44,7 +70,8 @@ commands:
       - "^[0-9]+\\.[0-9]+$"        # Numeric parameters (floats like 0.55, 0.45, 0.02)
       - "^hf_[A-Za-z0-9]+$"        # Hugging Face token values
       - "^pyannote/.*$"            # Hugging Face model names
-      - "^/data/.*"                # File paths must be under /data
+      - "^/data/.*"                # File paths under /data (shared volume)
+      - "^/app/data/.*"            # File paths under /app/data (alternative mount)
       - "^/app/scripts/.*$"        # Script paths (for positional arg)
     env_whitelist:
       - "HUGGINGFACE_ACCESS_TOKEN"
@@ -55,7 +82,7 @@ commands:
     max_concurrent: 2
 
 security:
-  shared_volume_path: "/data"
+  shared_volume_path: "/app/data"  # Changed from /data to /app/data to match actual mount path
   forbidden_paths:
     - "/etc"
     - "/sys"

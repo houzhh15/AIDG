@@ -238,9 +238,19 @@ environment:
 ### 📦 需要的镜像
 
 需要**3个镜像**：
-1. `aidg-aidg`（主程序，~100MB）
-2. `aidg-deps-service`（依赖服务，~2GB，包含 FFmpeg 和 PyAnnote）
-3. `ghcr.io/mutablelogic/go-whisper`（Whisper 服务，~500MB）
+1. `aidg-aidg:lite-test`（主程序，~100MB）
+   - 容器名称：`aidg-unified`
+   - 端口：8000（Web）、8081（MCP）
+2. `aidg-deps-service:latest`（依赖服务，~2GB，包含 FFmpeg 和 PyAnnote）
+   - 容器名称：`aidg-deps-service`
+   - 端口：8080
+3. `ghcr.io/mutablelogic/go-whisper:latest`（Whisper 服务，~500MB）
+   - 容器名称：`aidg-whisper`
+   - 端口：8082（映射到容器内部的80端口）
+
+**容器间通信：**
+- 所有容器通过 `aidg-network` 桥接网络连接
+- 主服务通过容器名称访问其他服务（如 `http://aidg-whisper:80`）
 
 ### 🚀 开始部署
 
@@ -337,18 +347,55 @@ docker-compose -f docker-compose.deps.yml ps
 **预期输出：**
 ```
 NAME                IMAGE                              STATUS
-aidg-unified        aidg-aidg:lite-test                Up
-aidg-deps-service   aidg-deps-service:latest           Up
+aidg-unified        aidg-aidg:lite-test                Up (healthy)
+aidg-deps-service   aidg-deps-service:latest           Up (healthy)
 aidg-whisper        ghcr.io/.../go-whisper:latest      Up
 ```
+
+**健康检查说明：**
+- `aidg-unified`: 通过 `wget http://localhost:8000/health` 检查（30秒间隔）
+- `aidg-deps-service`: 通过 `curl http://localhost:8080/api/v1/health` 检查（10秒间隔）
+- `aidg-whisper`: 无健康检查配置，只要启动即认为正常
 
 **访问各个服务：**
 - 🌐 **Web 界面**: http://localhost:8000
 - 🤖 **MCP 服务**: http://localhost:8081/health
-- 🎙️ **Whisper 服务**: http://localhost:8082
-- 🔧 **Deps 服务**: http://localhost:8080/api/v1/health
+- 🎙️ **Whisper 服务**: http://localhost:8082/ （端口映射 8082:80）
+- 🔧 **Deps 服务**: http://localhost:8080/api/v1/health （端口 8080:8080）
+- 📊 **服务状态检查**: http://localhost:8000/api/v1/services/status （无需认证）
 
 如果所有服务都能访问，恭喜你，完整版部署成功！ 🎊
+
+#### 步骤 5：验证服务集成
+
+完整版部署后，系统会自动检查各个依赖服务的可用性。你可以通过以下方式验证：
+
+**方法1：访问服务状态API（推荐）**
+```bash
+curl http://localhost:8000/api/v1/services/status
+```
+
+**预期返回：**
+```json
+{
+  "whisper_available": true,
+  "deps_service_available": true,
+  "whisper_mode": "available",
+  "dependency_mode": "available"
+}
+```
+
+**方法2：在Web界面中检查**
+- 登录后，打开会议管理页面
+- 如果能看到 "Chunk列表" 和 "Chunk详情" 功能，说明服务正常
+- 如果这些功能被隐藏，说明依赖服务不可用
+
+**如果服务不可用：**
+1. 检查容器是否都在运行：`docker ps --filter "name=aidg"`
+2. 检查容器日志：
+   - `docker logs aidg-whisper`
+   - `docker logs aidg-deps-service`
+3. 确认网络连接：容器间应该能互相访问
 
 ### 📝 完整版配置说明
 
@@ -359,37 +406,99 @@ services:
   # Whisper 转录服务
   whisper:
     image: ghcr.io/mutablelogic/go-whisper:latest
+    container_name: aidg-whisper
     ports:
       - "8082:80"
     volumes:
       - ./models/whisper:/data         # 模型存储
       - ./data/meetings:/output        # 输出目录
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
   # Deps-Service（FFmpeg + PyAnnote）
   deps-service:
     image: aidg-deps-service:latest
+    container_name: aidg-deps-service
     ports:
       - "8080:8080"
     environment:
+      - LOG_LEVEL=info
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}  # 从环境变量读取
       - HF_HOME=/models/huggingface
+      - TRANSFORMERS_CACHE=/models/huggingface
+      - TORCH_HOME=/models/huggingface
     volumes:
       - ./data:/data
-      - ./models:/models:ro
+      - ./config:/app/config:ro
+      - ./models/huggingface:/models/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
 
   # 主服务
   aidg:
+    image: aidg-aidg:lite-test
+    container_name: aidg-unified
     depends_on:
-      - whisper
-      - deps-service
+      whisper:
+        condition: service_started
+      deps-service:
+        condition: service_healthy
     environment:
       # 依赖服务配置
       - DEPENDENCY_MODE=remote
       - DEPS_SERVICE_URL=http://aidg-deps-service:8080
-      - WHISPER_API_URL=http://whisper:80
+      - DEPENDENCY_SHARED_VOLUME=/app/data
+      # Whisper 配置
+      - WHISPER_API_URL=http://aidg-whisper:80
+      - WHISPER_MODE=go-whisper
+      # 音频处理配置
       - ENABLE_AUDIO_CONVERSION=true
       - ENABLE_SPEAKER_DIARIZATION=true
+      - ENABLE_DEGRADATION=true
+      - ENABLE_OFFLINE=false
+      # 基础配置
+      - ENV=production
+      - PORT=8000
+      - MCP_HTTP_PORT=8081
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 ```
+
+**关键环境变量说明：**
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DEPENDENCY_MODE` | `remote` | 依赖服务模式（remote=使用deps-service容器）|
+| `DEPS_SERVICE_URL` | `http://aidg-deps-service:8080` | deps-service 访问地址 |
+| `WHISPER_API_URL` | `http://aidg-whisper:80` | Whisper 服务访问地址 |
+| `ENABLE_OFFLINE` | `false` | 是否启用离线模式（false允许下载模型）|
+| `HUGGINGFACE_TOKEN` | 必需 | HuggingFace访问令牌（用于PyAnnote）|
+| `ENV` | `production` | 运行环境（production/development）|
+| `LOG_LEVEL` | `info` | 日志级别（debug/info/warn/error）|
+| `LOG_FORMAT` | `json` | 日志格式（json/console）|
 
 ---
 
@@ -465,33 +574,45 @@ tar -xzf aidg-backup-20250114.tar.gz
 ### 查看日志
 
 ```bash
-# 查看所有服务日志
+# 基础版：查看所有服务日志
 docker-compose logs -f
 
-# 查看特定服务日志
-docker-compose logs -f aidg
-docker-compose logs -f whisper
-docker-compose logs -f deps-service
+# 完整版：查看所有服务日志
+docker-compose -f docker-compose.deps.yml logs -f
+
+# 查看特定服务日志（使用容器名称）
+docker logs aidg-unified -f          # 主服务
+docker logs aidg-whisper -f          # Whisper服务
+docker logs aidg-deps-service -f     # Deps服务
+
+# 只查看最近的日志
+docker logs aidg-unified --tail 100
 ```
 
 ### 停止服务
 
 ```bash
-# 停止所有服务
+# 基础版：停止所有服务
 docker-compose down
 
-# 或者（完整版）
+# 完整版：停止所有服务
 docker-compose -f docker-compose.deps.yml down
+
+# 停止但保留数据卷
+docker-compose -f docker-compose.deps.yml stop
 ```
 
 ### 更新镜像
 
 ```bash
-# 拉取最新镜像
+# 基础版：拉取最新镜像
 docker-compose pull
 
-# 重新启动
-docker-compose up -d
+# 完整版：拉取最新镜像
+docker-compose -f docker-compose.deps.yml pull
+
+# 重新构建并启动
+docker-compose -f docker-compose.deps.yml up -d --build
 ```
 
 ---
@@ -540,9 +661,13 @@ docker-compose up -d
 
 **答**：可能是音频格式不支持或服务未启动。
 - **解决方法**：
-  1. 确认所有服务都在运行（`docker-compose ps`）
-  2. 支持的音频格式：WAV、MP3、M4A、WebM
-  3. 检查 Whisper 服务日志：`docker-compose logs whisper`
+  1. 确认所有服务都在运行（`docker-compose -f docker-compose.deps.yml ps`）
+  2. 检查服务状态：访问 http://localhost:8000/api/v1/services/status
+  3. 支持的音频格式：WAV、MP3、M4A、WebM
+  4. 检查服务日志：
+     - Whisper: `docker logs aidg-whisper`
+     - Deps-service: `docker logs aidg-deps-service`
+     - 主服务: `docker logs aidg-unified`
 
 ### Q6: 内存不足，服务频繁重启
 
@@ -555,8 +680,11 @@ docker-compose up -d
 
 **答**：
 ```bash
-# 停止并删除所有容器
+# 基础版：停止并删除所有容器
 docker-compose down
+
+# 完整版：停止并删除所有容器
+docker-compose -f docker-compose.deps.yml down
 
 # 删除镜像（可选）
 docker rmi aidg-aidg:lite-test
@@ -565,6 +693,9 @@ docker rmi ghcr.io/mutablelogic/go-whisper:latest
 
 # 删除数据目录（谨慎！会丢失所有数据）
 rm -rf data/
+
+# 删除模型缓存（可选，会重新下载）
+rm -rf models/
 ```
 
 ---
@@ -620,12 +751,30 @@ environment:
 
 ### 完整版优化
 
-- **内存**: 最少 6GB，推荐 8GB+
+**资源配置（根据 docker-compose.deps.yml）：**
+
+**Whisper 服务：**
+- **最小配置**: 1核CPU，1GB内存
+- **推荐配置**: 2核CPU，2GB内存
+- **磁盘**: 约500MB（模型缓存）
+
+**Deps-service（FFmpeg + PyAnnote）：**
+- **最小配置**: 2核CPU，4GB内存
+- **推荐配置**: 4核CPU，8GB内存
+- **磁盘**: 约5GB（PyAnnote模型 + HuggingFace缓存）
+
+**主服务（aidg-unified）：**
+- **最小配置**: 1核CPU，1GB内存
+- **推荐配置**: 2核CPU，2GB内存
+- **磁盘**: 根据数据量（项目、用户、会议记录）
+
+**总体要求：**
+- **内存**: 最少 6GB，推荐 12GB+
 - **CPU**: 4核以上（会议转写会用到）
 - **磁盘**: 
   - 系统: 至少 10GB 空闲
-  - 模型: 5GB（Whisper + PyAnnote）
-  - 数据: 根据使用量预留
+  - 模型缓存: 5-6GB（Whisper + PyAnnote）
+  - 数据存储: 根据使用量预留（建议至少5GB）
 
 ### 加速技巧
 
@@ -686,5 +835,6 @@ docker-compose logs --tail=0
 
 ---
 
-*最后更新：2025-01-14*
+*最后更新：2025-10-17*  
+*根据 docker-compose.deps.yml 校准完成*  
 *有任何问题或建议？欢迎提 Issue 或 PR！*

@@ -46,7 +46,7 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
   useEffect(()=>{
     if(!allowRead) return;
     if(taskId){
-      authedApi.get(`/tasks/${taskId}/config`).then(r=>{
+      authedApi.get(`/tasks/${encodeURIComponent(taskId)}/config`).then(r=>{
         if(!asrModel) setAsrModel(r.data.whisper_model||'');
       }).catch(()=>{});
     }
@@ -69,7 +69,7 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     if(!allowRead) return;
     setLoading(true);
     try {
-      const r = await authedApi.get(`/tasks/${taskId}/merged_all`);
+      const r = await authedApi.get(`/tasks/${encodeURIComponent(taskId)}/merged_all`);
       setRaw(r.data.content || '');
     } catch(e:any){ message.error(e.message); }
     finally { setLoading(false); }
@@ -79,7 +79,7 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     if(!allowRead) return;
     setLoading(true);
     try {
-      const r = await authedApi.get(`/tasks/${taskId}/polish`);
+      const r = await authedApi.get(`/tasks/${encodeURIComponent(taskId)}/polish`);
       setRaw(r.data.content || '');
     } catch(e:any){ message.error(e.message); }
     finally { setLoading(false); }
@@ -90,7 +90,7 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     setLoading(true);
     try {
       message.info('正在生成Polish文件，请稍候...');
-      const r = await authedApi.post(`/tasks/${taskId}/generate_polish`);
+      const r = await authedApi.post(`/tasks/${encodeURIComponent(taskId)}/generate_polish`);
       
       if(r.data.error) {
         message.error(`生成失败: ${r.data.error}`);

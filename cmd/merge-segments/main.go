@@ -26,13 +26,21 @@ func (t Timestamp) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ms)
 }
 
-// UnmarshalJSON decodes milliseconds into Timestamp
+// UnmarshalJSON decodes milliseconds (int) or seconds (float) into Timestamp
 func (t *Timestamp) UnmarshalJSON(data []byte) error {
+	// Try parsing as integer (milliseconds - old format)
 	var ms int64
-	if err := json.Unmarshal(data, &ms); err != nil {
+	if err := json.Unmarshal(data, &ms); err == nil {
+		*t = Timestamp(time.Duration(ms) * time.Millisecond)
+		return nil
+	}
+
+	// Try parsing as float64 (seconds - new format)
+	var sec float64
+	if err := json.Unmarshal(data, &sec); err != nil {
 		return err
 	}
-	*t = Timestamp(time.Duration(ms) * time.Millisecond)
+	*t = Timestamp(time.Duration(sec * float64(time.Second)))
 	return nil
 }
 
@@ -54,6 +62,15 @@ type Transcription struct {
 }
 
 // --- Output formatting functions ---
+
+// WriteSegmentSimple writes segment in simple format: "[Speaker] Text" (no timestamp)
+func WriteSegmentSimple(w io.Writer, s *Segment) {
+	speaker := ""
+	if s.Speaker != "" {
+		speaker = fmt.Sprintf("[%s] ", s.Speaker)
+	}
+	fmt.Fprintf(w, "%s%s", speaker, s.Text)
+}
 
 // WriteSegmentText writes segment in text format: "[HH:MM:SS.mmm --> HH:MM:SS.mmm] [Speaker] Text"
 func WriteSegmentText(w io.Writer, s *Segment) {
@@ -124,13 +141,13 @@ func main() {
 	var format string
 	flag.Usage = func() {
 		exe := filepath.Base(os.Args[0])
-		fmt.Fprintf(os.Stderr, "Usage: %s -segments-file <segments.(json|srt|vtt|ndjson)> -speaker-file <diarization.json> [-format text|json|verbose_json|srt|vtt]\n\n", exe)
+		fmt.Fprintf(os.Stderr, "Usage: %s -segments-file <segments.(json|srt|vtt|ndjson)> -speaker-file <diarization.json> [-format simple|text|json|verbose_json|srt|vtt]\n\n", exe)
 		fmt.Fprintln(os.Stderr, "Options:")
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&segmentsFile, "segments-file", "", "Path to ASR segments file (json/srt/vtt/ndjson)")
 	flag.StringVar(&speakerFile, "speaker-file", "", "Path to diarization JSON file (required)")
-	flag.StringVar(&format, "format", "text", "Output format: json|verbose_json|text|srt|vtt")
+	flag.StringVar(&format, "format", "simple", "Output format: simple|text|json|verbose_json|srt|vtt")
 	flag.Parse()
 
 	// Validate required flags
@@ -175,9 +192,12 @@ func main() {
 			WriteSegmentVtt(&out, segment)
 			fmt.Println(out.String())
 		case "text":
+			WriteSegmentText(&out, segment)
+			fmt.Println(out.String())
+		case "simple":
 			fallthrough
 		default:
-			WriteSegmentText(&out, segment)
+			WriteSegmentSimple(&out, segment)
 			fmt.Println(out.String())
 		}
 	}
@@ -185,7 +205,7 @@ func main() {
 
 func validFormat(f string) bool {
 	switch f {
-	case "json", "verbose_json", "text", "srt", "vtt":
+	case "json", "verbose_json", "text", "simple", "srt", "vtt":
 		return true
 	default:
 		return false

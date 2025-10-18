@@ -45,9 +45,13 @@ func (e *Executor) ExecuteCommand(ctx context.Context, req CommandRequest) (Comm
 	// Build command
 	cmd := exec.CommandContext(ctx, cmdConfig.BinaryPath, req.Args...)
 
+	// Log the command being executed
+	fmt.Printf("[EXECUTOR] Executing command: %s %v (timeout=%v)\n", cmdConfig.BinaryPath, req.Args, timeout)
+
 	// Set working directory if specified
 	if req.WorkingDir != "" {
 		cmd.Dir = req.WorkingDir
+		fmt.Printf("[EXECUTOR] Working directory: %s\n", req.WorkingDir)
 	}
 
 	// Set environment variables if specified
@@ -83,6 +87,22 @@ func (e *Executor) ExecuteCommand(ctx context.Context, req CommandRequest) (Comm
 	// Get exit code if command ran
 	if cmd.ProcessState != nil {
 		resp.ExitCode = cmd.ProcessState.ExitCode()
+	}
+
+	// Log the result
+	if err != nil {
+		fmt.Printf("[EXECUTOR] Command failed: exit_code=%d, error=%v\n", resp.ExitCode, err)
+		if stdout.Len() > 0 {
+			fmt.Printf("[EXECUTOR] Stdout: %s\n", stdout.String())
+		}
+		if stderr.Len() > 0 {
+			fmt.Printf("[EXECUTOR] Stderr: %s\n", stderr.String())
+		}
+	} else {
+		fmt.Printf("[EXECUTOR] Command succeeded: exit_code=%d, duration=%dms\n", resp.ExitCode, resp.DurationMs)
+		if stdout.Len() > 0 {
+			fmt.Printf("[EXECUTOR] Stdout: %s\n", stdout.String())
+		}
 	}
 
 	// Check for timeout error

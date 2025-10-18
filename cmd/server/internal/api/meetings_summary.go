@@ -709,6 +709,54 @@ func HandleUpdateTaskPolish(reg *meetings.Registry) gin.HandlerFunc {
 	}
 }
 
+// HandleUpdateTaskMergedAll handles PUT /tasks/{id}/merged_all
+func HandleUpdateTaskMergedAll(reg *meetings.Registry) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		taskID := c.Param("id")
+
+		if taskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "task_id is required",
+			})
+			return
+		}
+
+		var req struct {
+			Content string `json:"content" binding:"required"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "content field is required",
+			})
+			return
+		}
+
+		// 获取任务
+		t := reg.Get(taskID)
+		if t == nil {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "task not found",
+			})
+			return
+		}
+
+		// 直接写入文件（merged_all 通常不需要历史版本）
+		path := filepath.Join(t.Cfg.OutputDir, "merged_all.txt")
+		if err := os.WriteFile(path, []byte(req.Content), 0644); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to save merged_all document",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "merged_all document updated successfully",
+			"path":    path,
+		})
+	}
+}
+
 // HandleGetTaskAudio handles GET /tasks/{id}/audio
 func HandleGetTaskAudio(reg *meetings.Registry) gin.HandlerFunc {
 	return func(c *gin.Context) {

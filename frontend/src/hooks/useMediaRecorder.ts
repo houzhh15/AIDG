@@ -49,6 +49,9 @@ export function useMediaRecorder(
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const pausedTimeRef = useRef(0); // 累计暂停时长
   const initializedTaskIdRef = useRef<string | null>(null); // 记录已初始化的 taskId
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const chunkTimerRef = useRef<NodeJS.Timeout | null>(null); // 自动分片定时器
 
   /**
    * 初始化 chunk index - 从服务器获取已有的 chunk 列表
@@ -226,12 +229,141 @@ export function useMediaRecorder(
 
       // 类型断言：此时 recorderRef.current 必定存在
       const recorder = recorderRef.current as MediaRecorder;
-      recorder.start(chunkDuration);
+      
+      // ⚠️ 重要修复：不使用 timeslice 参数
+      // 问题：MediaRecorder.start(timeslice) 生成的后续 chunk 缺少 EBML header
+      //      导致 ffmpeg 报错 "EBML header parsing failed"
+      // 解决：使用定时器手动 stop() + 重新 start() 生成独立完整的 WebM 文件
+      //      每个文件不超过 5 分钟，满足后续 ASR 和说话人分离的性能要求
+      recorder.start();  // 不传 timeslice
+      
       setStatus('recording');
       startTimeRef.current = Date.now();
-      // 不重置 chunkIndexRef,保持连续计数 (停止后再开始时从上次位置继续)
-      // chunkIndexRef.current = 0;  // ❌ 已移除
       pausedTimeRef.current = 0;
+      
+      // 自动分片函数
+      const autoChunkSplit = () => {
+        console.log('[MediaRecorder] Auto chunk split triggered', {
+          recorderState: recorderRef.current?.state,
+          streamActive: stream?.active,
+          chunkIndex: chunkIndexRef.current,
+          timerRef: chunkTimerRef.current
+        });
+        
+        const currentRecorder = recorderRef.current;
+        if (!currentRecorder || currentRecorder.state !== 'recording') {
+          console.warn('[MediaRecorder] Cannot split: recorder not in recording state', {
+            hasRecorder: !!currentRecorder,
+            state: currentRecorder?.state
+          });
+          return;
+        }
+        
+        // 停止当前录制（触发 ondataavailable）
+        console.log('[MediaRecorder] Stopping current recorder to generate chunk', chunkIndexRef.current);
+        currentRecorder.stop();
+        
+        // 等待 ondataavailable 处理完成后，重新开始录制
+        setTimeout(() => {
+          // 使用最新的 stream 引用，而不是闭包中的旧引用
+          const currentStream = recorderRef.current?.stream || stream;
+          
+          console.log('[MediaRecorder] Attempting to restart recorder', {
+            hasCurrentStream: !!currentStream,
+            streamActive: currentStream?.active,
+            hasTracks: currentStream?.getAudioTracks().length,
+            status: status
+          });
+          
+          if (!currentStream || !currentStream.active) {
+            console.warn('[MediaRecorder] Stream not active, cannot restart', {
+              hasStream: !!currentStream,
+              active: currentStream?.active,
+              status: status
+            });
+            setStatus('idle');
+            return;
+          }
+          
+          try {
+            // 重新创建 MediaRecorder（生成新的完整 WebM header）
+            const newRecorder = new MediaRecorder(currentStream, {
+              mimeType,
+              audioBitsPerSecond
+            });
+            
+            // 设置事件处理器（使用相同的逻辑）
+            newRecorder.ondataavailable = async (event) => {
+              console.log('[MediaRecorder] Data available (from restarted recorder)', {
+                size: event.data.size,
+                type: event.data.type,
+                chunkIndex: chunkIndexRef.current
+              });
+              
+              if (event.data.size > 0 && onChunk) {
+                try {
+                  await onChunk(event.data, chunkIndexRef.current);
+                  chunkIndexRef.current++;
+                } catch (err) {
+                  console.error('Failed to upload chunk:', err);
+                  const uploadError = err as Error;
+                  setError(uploadError);
+                  setStatus('error');
+                  onError?.(uploadError);
+                }
+              }
+            };
+            
+            newRecorder.onerror = (event: Event) => {
+              const errorEvent = event as ErrorEvent;
+              console.error('[MediaRecorder] Recorder error:', errorEvent);
+              const recorderError = createAudioError(
+                `录音错误: ${errorEvent.message || '未知错误'}`,
+                AudioErrorCode.AUDIO_CAPTURE_FAILED,
+                errorEvent
+              );
+              setError(recorderError);
+              setStatus('error');
+              onError?.(recorderError);
+            };
+            
+            newRecorder.onstop = () => {
+              console.log('[MediaRecorder] Recorder stopped (from restarted recorder)');
+            };
+            
+            recorderRef.current = newRecorder;
+            newRecorder.start();
+            
+            console.log('[MediaRecorder] Chunk restarted successfully, next split in', chunkDuration, 'ms');
+            
+            // 调度下一次分片
+            chunkTimerRef.current = setTimeout(autoChunkSplit, chunkDuration);
+            
+          } catch (err) {
+            console.error('[MediaRecorder] Failed to restart recorder:', err);
+            setError(err as Error);
+            setStatus('error');
+            onError?.(err as Error);
+          }
+        }, 300); // 等待 300ms 确保上一个 chunk 处理完成
+      };
+      
+      // 启动第一个分片周期
+      console.log('[MediaRecorder] Scheduling first chunk split in', chunkDuration, 'ms');
+      chunkTimerRef.current = setTimeout(autoChunkSplit, chunkDuration);
+      
+      // 修改 onstop 以清理定时器
+      const originalOnStop = recorder.onstop;
+      recorder.onstop = (event) => {
+        console.log('[MediaRecorder] Original recorder stopped, clearing timer');
+        if (chunkTimerRef.current) {
+          clearTimeout(chunkTimerRef.current);
+          chunkTimerRef.current = null;
+        }
+        if (originalOnStop) {
+          originalOnStop.call(recorder, event);
+        }
+      };
 
       // 添加调试日志
       console.log('[MediaRecorder] Recording started', {
@@ -245,9 +377,64 @@ export function useMediaRecorder(
           label: track.label,
           enabled: track.enabled,
           muted: track.muted,
-          readyState: track.readyState
+          readyState: track.readyState,
+          settings: track.getSettings()
         }))
       });
+
+      // 创建 AudioContext 监控音频电平
+      try {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        
+        const audioContext = audioContextRef.current;
+        const source = audioContext.createMediaStreamSource(audioStream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        // 监控音频电平
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        let checkCount = 0;
+        let maxLevel = 0;
+        
+        const checkAudioLevel = setInterval(() => {
+          analyser.getByteTimeDomainData(dataArray);
+          
+          // 计算当前音量
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += Math.abs(dataArray[i] - 128);
+          }
+          const average = sum / dataArray.length;
+          
+          if (average > maxLevel) maxLevel = average;
+          checkCount++;
+          
+          // 每 5 秒输出一次统计
+          if (checkCount % 50 === 0) {
+            console.log(`[Audio Level] Current: ${average.toFixed(2)}, Max: ${maxLevel.toFixed(2)}`);
+            if (maxLevel < 1) {
+              console.warn('[Audio Level] ⚠️ No audio signal detected! Check:');
+              console.warn('  1. Is the audio source playing in Loopback?');
+              console.warn('  2. Is Loopback device enabled (green)?');
+              console.warn('  3. Are audio tracks enabled and unmuted?');
+            }
+          }
+        }, 100);
+
+        // 在录音停止时清理
+        const originalStop = recorder.stop.bind(recorder);
+        recorder.stop = function() {
+          clearInterval(checkAudioLevel);
+          console.log(`[Audio Level] Final max level: ${maxLevel.toFixed(2)}`);
+          originalStop();
+        };
+      } catch (audioError) {
+        console.warn('[MediaRecorder] Failed to create audio level monitor:', audioError);
+      }
 
       // 启动时长计时器（每秒更新一次）
       timerRef.current = setInterval(() => {
@@ -321,6 +508,13 @@ export function useMediaRecorder(
       timerRef.current = null;
     }
 
+    // 清除自动分片定时器（重要！）
+    if (chunkTimerRef.current) {
+      console.log('[MediaRecorder] Clearing chunk split timer');
+      clearTimeout(chunkTimerRef.current);
+      chunkTimerRef.current = null;
+    }
+
     // 重置状态
     startTimeRef.current = null;
     pausedTimeRef.current = 0;
@@ -336,6 +530,9 @@ export function useMediaRecorder(
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
+      }
+      if (chunkTimerRef.current) {
+        clearTimeout(chunkTimerRef.current);
       }
       if (recorderRef.current && recorderRef.current.state !== 'inactive') {
         recorderRef.current.stop();

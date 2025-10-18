@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { uploadAudioChunk, uploadAudioFile } from '../utils/uploadUtils';
-import { AudioUploadResponse, AudioFileUploadResponse } from '../types/audio';
+import { AudioUploadResponse, AudioFileUploadResponse, AudioErrorCode } from '../types/audio';
 
 interface UseAudioUploadOptions {
   taskId: string;
@@ -16,14 +16,46 @@ interface UseAudioUploadReturn {
   uploading: boolean;
   progress: number;
   error: Error | null;
+  clearUploadedChunks: () => void; // 清除缓存
 }
+
+// Chunk上传状态缓存 - 使用 Map 存储每个 taskId 的已上传 chunk
+const uploadedChunksCache = new Map<string, Set<number>>();
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2秒
 
+// 文件上传不重试（配置错误或服务器错误不应该重试）
+const FILE_UPLOAD_MAX_RETRIES = 0;
+
+/**
+ * 判断错误是否可重试（仅网络错误可重试）
+ */
+function isRetryableError(error: any): boolean {
+  // 检查错误代码
+  if (error.code === AudioErrorCode.NETWORK_ERROR) {
+    return true;
+  }
+  
+  // 检查错误消息
+  if (error.message && error.message.includes('网络')) {
+    return true;
+  }
+  
+  // 检查是否是网络超时
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+    return true;
+  }
+  
+  // 其他错误（包括200响应后的任何错误）不重试
+  return false;
+}
+
 /**
  * 音频上传 Hook
- * 封装上传逻辑，支持进度追踪和自动重试
+ * 封装上传逻辑，支持进度追踪和智能重试
+ * - 只在网络错误时重试，服务器响应错误不重试
+ * - 添加 chunk 上传状态缓存，避免重复上传
  */
 export function useAudioUpload(options: UseAudioUploadOptions): UseAudioUploadReturn {
   const { taskId, onProgress, onSuccess, onError } = options;
@@ -35,15 +67,44 @@ export function useAudioUpload(options: UseAudioUploadOptions): UseAudioUploadRe
   const retryCountRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // 初始化该 taskId 的上传缓存
+  if (!uploadedChunksCache.has(taskId)) {
+    uploadedChunksCache.set(taskId, new Set<number>());
+  }
+
   /**
    * 延迟函数
    */
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   /**
-   * 上传音频分片（带重试）
+   * 清除已上传chunk缓存
+   */
+  const clearUploadedChunks = useCallback(() => {
+    uploadedChunksCache.delete(taskId);
+    console.log(`[AudioUpload] Cleared uploaded chunks cache for task ${taskId}`);
+  }, [taskId]);
+
+  /**
+   * 上传音频分片（带智能重试和缓存）
    */
   const uploadChunk = useCallback(async (blob: Blob, index: number) => {
+    // 检查是否已上传过
+    const uploadedChunks = uploadedChunksCache.get(taskId);
+    if (uploadedChunks?.has(index)) {
+      console.log(`[AudioUpload] Chunk ${index} already uploaded, skipping`);
+      setProgress(100);
+      onSuccess?.({
+        success: true,
+        data: {
+          chunk_id: `chunk_${String(index).padStart(4, '0')}`,
+          file_path: '',
+          processing_status: 'cached',
+        },
+      } as AudioUploadResponse);
+      return;
+    }
+
     retryCountRef.current = 0;
     setError(null);
     setUploading(true);
@@ -66,6 +127,10 @@ export function useAudioUpload(options: UseAudioUploadOptions): UseAudioUploadRe
           }
         );
 
+        // 上传成功，添加到缓存
+        uploadedChunks?.add(index);
+        console.log(`[AudioUpload] Chunk ${index} uploaded successfully and cached`);
+
         setUploading(false);
         setProgress(100);
         retryCountRef.current = 0;
@@ -73,17 +138,25 @@ export function useAudioUpload(options: UseAudioUploadOptions): UseAudioUploadRe
       } catch (err: any) {
         console.error(`Upload chunk ${index} failed (attempt ${retryCountRef.current + 1}):`, err);
 
-        // 如果还有重试次数
-        if (retryCountRef.current < MAX_RETRIES) {
+        // 只在网络错误时重试
+        const canRetry = isRetryableError(err);
+        
+        if (canRetry && retryCountRef.current < MAX_RETRIES) {
           retryCountRef.current++;
-          console.log(`Retrying upload chunk ${index} (${retryCountRef.current}/${MAX_RETRIES})...`);
+          console.log(`[AudioUpload] Network error, retrying chunk ${index} (${retryCountRef.current}/${MAX_RETRIES})...`);
           
           // 等待后重试
           await delay(RETRY_DELAY);
           return attemptUpload();
         }
 
-        // 重试次数用尽，抛出错误
+        // 不可重试的错误或重试次数用尽
+        if (!canRetry) {
+          console.error(`[AudioUpload] Non-retryable error for chunk ${index}:`, err.message);
+        } else {
+          console.error(`[AudioUpload] Max retries reached for chunk ${index}`);
+        }
+
         setError(err);
         setUploading(false);
         setProgress(0);
@@ -122,10 +195,10 @@ export function useAudioUpload(options: UseAudioUploadOptions): UseAudioUploadRe
       } catch (err: any) {
         console.error(`Upload file failed (attempt ${retryCountRef.current + 1}):`, err);
 
-        // 如果还有重试次数
-        if (retryCountRef.current < MAX_RETRIES) {
+        // 文件上传失败不重试（配置问题或服务器错误）
+        if (retryCountRef.current < FILE_UPLOAD_MAX_RETRIES) {
           retryCountRef.current++;
-          console.log(`Retrying upload file (${retryCountRef.current}/${MAX_RETRIES})...`);
+          console.log(`Retrying upload file (${retryCountRef.current}/${FILE_UPLOAD_MAX_RETRIES})...`);
           
           // 等待后重试
           await delay(RETRY_DELAY);
@@ -150,5 +223,6 @@ export function useAudioUpload(options: UseAudioUploadOptions): UseAudioUploadRe
     uploading,
     progress,
     error,
+    clearUploadedChunks,
   };
 }
