@@ -1,5 +1,5 @@
 import React from 'react';
-import { Drawer, Form, Input, Button, Divider, message, Select } from 'antd';
+import { Drawer, Form, Input, Button, Divider, message, Select, Table, Progress, Space } from 'antd';
 import { authedApi } from '../api/auth';
 
 interface Props {
@@ -16,6 +16,7 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
   const [form] = Form.useForm();
   const [whisperModels, setWhisperModels] = React.useState<string[]>(['ggml-base']);
   const [whisperModelsLoading, setWhisperModelsLoading] = React.useState(false);
+  const [modelDownloadDrawerOpen, setModelDownloadDrawerOpen] = React.useState(false);
 
   React.useEffect(() => {
     const fetchWhisperModels = async () => {
@@ -128,13 +129,19 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
 
         <Divider plain>转录设置</Divider>
         <Form.Item label="Whisper 模型" name="whisper_model">
-          <Select
-            placeholder="选择 Whisper 模型"
-            loading={whisperModelsLoading}
-            options={whisperModels.map(model => ({ label: model, value: model }))}
-            showSearch
-            allowClear
-          />
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <Select
+              placeholder="选择 Whisper 模型"
+              loading={whisperModelsLoading}
+              options={whisperModels.map(model => ({ label: model, value: model }))}
+              showSearch
+              allowClear
+              style={{ flex: 1 }}
+            />
+            <Button type="default" onClick={() => setModelDownloadDrawerOpen(true)}>
+              下载模型
+            </Button>
+          </div>
         </Form.Item>
         <Form.Item label="Segments" name="whisper_segments" tooltip="如 20s; 为空或0表示不加 --segments">
           <Input placeholder="20s" allowClear />
@@ -156,3 +163,182 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
 };
 
 export default TaskDetailSettings;
+
+// 模型下载抽屉组件
+interface ModelDownloadDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  onModelDownloaded: () => void;
+}
+
+const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose, onModelDownloaded }) => {
+  const [models, setModels] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [downloadingModels, setDownloadingModels] = React.useState<Set<string>>(new Set());
+  const [downloadProgress, setDownloadProgress] = React.useState<Map<string, { status: string; total?: number; completed?: number }>>(new Map());
+
+  React.useEffect(() => {
+    if (open) {
+      fetchModels();
+    }
+  }, [open]);
+
+  const fetchModels = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/v1/services/whisper/models-extended');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data.models) {
+          setModels(data.data.models);
+        }
+      }
+    } catch (error) {
+      message.error('获取模型列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadModel = async (modelPath: string) => {
+    if (downloadingModels.has(modelPath)) return;
+
+    setDownloadingModels(prev => new Set(prev).add(modelPath));
+    setDownloadProgress(prev => new Map(prev).set(modelPath, { status: '准备下载...' }));
+
+    try {
+      const response = await fetch('/api/v1/services/whisper/models/download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: modelPath }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('无法读取响应流');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.status && data.status.includes('downloading')) {
+                // 更新下载进度
+                setDownloadProgress(prev => new Map(prev).set(modelPath, {
+                  status: data.status,
+                  total: data.total,
+                  completed: data.completed
+                }));
+              } else if (data.id) {
+                // 下载完成
+                setDownloadProgress(prev => new Map(prev).set(modelPath, { status: '已完成' }));
+                message.success(`模型 ${data.id} 下载完成`);
+                onModelDownloaded();
+                fetchModels(); // 刷新列表
+                break;
+              }
+            } catch (e) {
+              // 忽略解析错误
+            }
+          }
+        }
+      }
+    } catch (error) {
+      message.error(`下载模型失败: ${error}`);
+      setDownloadProgress(prev => new Map(prev).set(modelPath, { status: '下载失败' }));
+    } finally {
+      setDownloadingModels(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(modelPath);
+        return newSet;
+      });
+    }
+  };
+
+  const columns = [
+    {
+      title: 'Model',
+      dataIndex: 'id',
+      key: 'id',
+    },
+    {
+      title: 'Disk',
+      dataIndex: 'size_mb',
+      key: 'size_mb',
+    },
+    {
+      title: 'Download',
+      key: 'download',
+      render: (_: any, record: any) => {
+        const isDownloading = downloadingModels.has(record.path);
+        const isDownloaded = record.exists;
+        const progress = downloadProgress.get(record.path);
+
+        if (isDownloaded) {
+          return <span style={{ color: 'green' }}>已下载</span>;
+        }
+
+        if (isDownloading && progress) {
+          const percent = progress.total && progress.completed
+            ? Math.round((progress.completed / progress.total) * 100)
+            : 0;
+
+          return (
+            <div style={{ width: 120 }}>
+              <Progress percent={percent} size="small" status={progress.status === '下载失败' ? 'exception' : 'active'} />
+              <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
+                {progress.status}
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <Button
+            type="primary"
+            size="small"
+            loading={isDownloading}
+            onClick={() => downloadModel(record.path)}
+            disabled={isDownloading}
+          >
+            {isDownloading ? '下载中...' : '下载'}
+          </Button>
+        );
+      },
+    },
+  ];
+
+  return (
+    <Drawer
+      title="下载 Whisper 模型"
+      width={600}
+      open={open}
+      onClose={onClose}
+      destroyOnClose
+    >
+      <Table
+        columns={columns}
+        dataSource={models}
+        loading={loading}
+        rowKey="id"
+        pagination={false}
+        size="small"
+      />
+    </Drawer>
+  );
+};

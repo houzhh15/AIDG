@@ -198,6 +198,8 @@ func main() {
 
 	// Add Whisper service endpoints (no authentication required)
 	r.GET("/api/v1/services/whisper/models", api.HandleGetWhisperModels())
+	r.GET("/api/v1/services/whisper/models-extended", api.HandleGetWhisperModelsExtended())
+	r.POST("/api/v1/services/whisper/models/download", api.HandleDownloadWhisperModel())
 
 	// Services Status API (no authentication required)
 	// 检查服务部署状态（whisper 和 deps-service）
