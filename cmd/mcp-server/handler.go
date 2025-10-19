@@ -32,7 +32,7 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	// 会议列表工具 (1个)
 	registry.Register(&tools.ListAllMeetingsTool{})
 
-	// ===== 通用文档工具 (7个) =====
+	// ===== 通用文档工具 (9个) =====
 	// 任务文档通用工具 (3个)
 	registry.Register(&tools.GetTaskDocumentTool{Registry: slotRegistry})
 	registry.Register(&tools.UpdateTaskDocumentTool{Registry: slotRegistry})
@@ -45,6 +45,15 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	// 项目文档通用工具 (2个)
 	registry.Register(&tools.GetProjectDocumentTool{Registry: slotRegistry})
 	registry.Register(&tools.UpdateProjectDocumentTool{Registry: slotRegistry})
+
+	// 多层级文档内容工具 (2个)
+	registry.Register(&tools.ReadDocumentContentTool{})
+	registry.Register(&tools.WriteDocumentContentTool{})
+
+	// 多层级文档结构工具 (3个)
+	registry.Register(&tools.GetHierarchicalDocumentsTool{})
+	registry.Register(&tools.AnalyzeDocumentRelationshipsTool{})
+	registry.Register(&tools.ManageDocumentReferenceTool{})
 
 	// 任务管理工具 (7个)
 	registry.Register(&tools.ListProjectTasksTool{})
