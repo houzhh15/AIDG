@@ -92,6 +92,9 @@ COPY --from=backend-builder --chown=aidg:aidg /app/cmd/mcp-server/prompts /app/p
 # Copy frontend dist
 COPY --from=frontend-builder --chown=aidg:aidg /app/frontend/dist /app/frontend/dist
 
+# Copy config directory with whisper models metadata
+COPY --chown=aidg:aidg config /app/config
+
 # Copy supervisor config
 COPY --chown=aidg:aidg deployments/docker/supervisord.conf /etc/supervisord.conf
 

@@ -1,0 +1,88 @@
+{
+  "models": [
+    {
+      "id": "ggml-tiny",
+      "path": "ggml-tiny.bin",
+      "size": 77704715,
+      "size_mb": "74.1 MB",
+      "description": "Tiny model"
+    },
+    {
+      "id": "ggml-tiny.en",
+      "path": "ggml-tiny.en.bin",
+      "size": 77704715,
+      "size_mb": "74.1 MB",
+      "description": "Tiny English-only model"
+    },
+    {
+      "id": "ggml-base",
+      "path": "ggml-base.bin",
+      "size": 147964211,
+      "size_mb": "141.1 MB",
+      "description": "Base model"
+    },
+    {
+      "id": "ggml-base.en",
+      "path": "ggml-base.en.bin",
+      "size": 147964211,
+      "size_mb": "141.1 MB",
+      "description": "Base English-only model"
+    },
+    {
+      "id": "ggml-small",
+      "path": "ggml-small.bin",
+      "size": 487654139,
+      "size_mb": "465.1 MB",
+      "description": "Small model"
+    },
+    {
+      "id": "ggml-small.en",
+      "path": "ggml-small.en.bin",
+      "size": 487654139,
+      "size_mb": "465.1 MB",
+      "description": "Small English-only model"
+    },
+    {
+      "id": "ggml-medium",
+      "path": "ggml-medium.bin",
+      "size": 1533582883,
+      "size_mb": "1.43 GB",
+      "description": "Medium model"
+    },
+    {
+      "id": "ggml-medium.en",
+      "path": "ggml-medium.en.bin",
+      "size": 1533582883,
+      "size_mb": "1.43 GB",
+      "description": "Medium English-only model"
+    },
+    {
+      "id": "ggml-large-v1",
+      "path": "ggml-large-v1.bin",
+      "size": 3094623499,
+      "size_mb": "2.88 GB",
+      "description": "Large model v1"
+    },
+    {
+      "id": "ggml-large-v2",
+      "path": "ggml-large-v2.bin",
+      "size": 3094623499,
+      "size_mb": "2.88 GB",
+      "description": "Large model v2"
+    },
+    {
+      "id": "ggml-large-v3",
+      "path": "ggml-large-v3.bin",
+      "size": 3094623499,
+      "size_mb": "2.88 GB",
+      "description": "Large model v3"
+    },
+    {
+      "id": "ggml-large-v3-turbo",
+      "path": "ggml-large-v3-turbo.bin",
+      "size": 1621989427,
+      "size_mb": "1.51 GB",
+      "description": "Large model v3 Turbo (faster)"
+    }
+  ]
+}

@@ -2,6 +2,9 @@ import React from 'react';
 import { Drawer, Form, Input, Button, Divider, message, Select, Table, Progress, Space } from 'antd';
 import { authedApi } from '../api/auth';
 
+// 模块加载时立即执行的日志 - 用于验证新代码是否被加载
+console.log('[DEBUG] ========== TaskDetailSettings.tsx MODULE LOADED - BUILD TIME: 2025-10-19 13:32 ==========');
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -12,57 +15,94 @@ interface Props {
 }
 
 export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, initial, refresh, onAfterRename }) => {
+  console.log('[DEBUG] TaskDetailSettings rendered - open:', open, 'taskId:', taskId, 'initial:', initial);
+  
   const [loading, setLoading] = React.useState(false);
   const [form] = Form.useForm();
   const [whisperModels, setWhisperModels] = React.useState<string[]>(['ggml-base']);
   const [whisperModelsLoading, setWhisperModelsLoading] = React.useState(false);
   const [modelDownloadDrawerOpen, setModelDownloadDrawerOpen] = React.useState(false);
 
+  // 获取whisper模型列表 - 组件挂载时立即获取
   React.useEffect(() => {
     const fetchWhisperModels = async () => {
       try {
         setWhisperModelsLoading(true);
+        console.log('[DEBUG] Fetching whisper models from /api/v1/services/whisper/models');
         const response = await fetch('/api/v1/services/whisper/models');
+        console.log('[DEBUG] Response status:', response.status, response.ok);
+        
         if (response.ok) {
           const data = await response.json();
+          console.log('[DEBUG] Response data:', data);
+          
           if (data.success && data.data.models) {
             const modelIds = data.data.models.map((m: any) => m.id);
-            
-            // 确保当前设置的模型在列表中
-            const currentModel = initial?.whisper_model || 'ggml-large-v3';
-            if (currentModel && !modelIds.includes(currentModel)) {
-              modelIds.push(currentModel);
-            }
-            
+            console.log('[DEBUG] Extracted model IDs:', modelIds);
             setWhisperModels(modelIds);
           }
+        } else {
+          console.error('[ERROR] API request failed with status:', response.status);
         }
       } catch (error) {
-        console.warn('Failed to fetch Whisper models:', error);
-        // 如果API失败，至少包含当前设置的模型
-        const currentModel = initial?.whisper_model || 'ggml-large-v3';
-        setWhisperModels([currentModel]);
+        console.warn('[WARN] Failed to fetch Whisper models:', error);
       } finally {
         setWhisperModelsLoading(false);
       }
     };
+    
     fetchWhisperModels();
-  }, [initial?.whisper_model]);
+  }, []); // 空依赖数组,只在组件挂载时执行一次
 
+  // 设置表单初始值
   React.useEffect(() => {
-    if (open) {
-      form.setFieldsValue({
-        whisper_model: initial?.whisper_model || 'ggml-large-v3',
+    if (open && initial) {
+      console.log('[DEBUG] ========== Form Initialization ==========');
+      console.log('[DEBUG] Full initial data:', initial);
+      console.log('[DEBUG] initial.whisper_model:', initial.whisper_model);
+      console.log('[DEBUG] whisperModels array:', whisperModels);
+      
+      const currentModel = initial?.whisper_model || 'ggml-large-v3';
+      console.log('[DEBUG] currentModel (computed):', currentModel);
+      
+      // 确保当前模型在选项列表中（如果还没有）
+      if (currentModel && !whisperModels.includes(currentModel)) {
+        console.log('[DEBUG] Adding current model to whisperModels list');
+        setWhisperModels(prev => [...prev, currentModel]);
+      }
+      
+      // 处理日期 - 如果是无效日期（如 0000 年），则不设置
+      let meetingTime = undefined;
+      if (initial?.meeting_time) {
+        const date = new Date(initial.meeting_time);
+        // 检查日期是否有效且不是 0000 年
+        if (!isNaN(date.getTime()) && date.getFullYear() > 1900) {
+          meetingTime = date.toISOString().slice(0, 16);
+        }
+      }
+      
+      const formValues = {
+        whisper_model: currentModel,
         whisper_segments: initial?.whisper_segments || '15s',
         product_line: initial?.product_line,
-        meeting_time: initial?.meeting_time ? new Date(initial.meeting_time).toISOString().slice(0, 16) : undefined,
+        meeting_time: meetingTime,
         embedding_threshold: initial?.embedding_threshold || '0.55',
         embedding_auto_lower_min: initial?.embedding_auto_lower_min || '0.35',
         embedding_auto_lower_step: initial?.embedding_auto_lower_step || '0.02',
         task_name: taskId,
-      });
+      };
+      
+      console.log('[DEBUG] Setting form values to:', formValues);
+      form.setFieldsValue(formValues);
+      
+      // 验证表单值是否设置成功
+      setTimeout(() => {
+        const actualValues = form.getFieldsValue();
+        console.log('[DEBUG] Form values after setFieldsValue:', actualValues);
+        console.log('[DEBUG] whisper_model field value:', actualValues.whisper_model);
+      }, 100);
     }
-  }, [open, initial, form, taskId]);
+  }, [open, initial, form, taskId, whisperModels]); // 添加 whisperModels 依赖
 
   async function submit() {
     try {
@@ -139,21 +179,28 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
           </Form.Item>
 
           <Divider plain>转录设置</Divider>
-          <Form.Item label="Whisper 模型" name="whisper_model">
-            <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '24px' }}>
+            <Form.Item 
+              label="Whisper 模型" 
+              name="whisper_model"
+              initialValue={initial?.whisper_model || 'ggml-large-v3'}
+              style={{ flex: 1, marginBottom: 0 }}
+            >
               <Select
                 placeholder="选择 Whisper 模型"
                 loading={whisperModelsLoading}
                 options={whisperModels.map(model => ({ label: model, value: model }))}
                 showSearch
-                allowClear
-                style={{ flex: 1 }}
               />
-              <Button type="default" onClick={() => setModelDownloadDrawerOpen(true)}>
-                下载模型
-              </Button>
-            </div>
-          </Form.Item>
+            </Form.Item>
+            <Button 
+              type="default" 
+              onClick={() => setModelDownloadDrawerOpen(true)}
+              style={{ marginTop: '30px' }}
+            >
+              下载模型
+            </Button>
+          </div>
           <Form.Item label="Segments" name="whisper_segments" tooltip="如 20s; 为空或0表示不加 --segments">
             <Input placeholder="20s" allowClear />
           </Form.Item>
@@ -225,14 +272,26 @@ const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose
   const fetchModels = async () => {
     try {
       setLoading(true);
+      console.log('[DEBUG] ModelDownloadDrawer: Fetching models from /api/v1/services/whisper/models-extended');
+      
       const response = await fetch('/api/v1/services/whisper/models-extended');
+      console.log('[DEBUG] ModelDownloadDrawer: Response status:', response.status, response.ok);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('[DEBUG] ModelDownloadDrawer: Response data:', data);
+        
         if (data.success && data.data.models) {
+          console.log('[DEBUG] ModelDownloadDrawer: Setting models:', data.data.models);
           setModels(data.data.models);
+        } else {
+          console.warn('[WARN] ModelDownloadDrawer: API response missing expected structure');
         }
+      } else {
+        console.error('[ERROR] ModelDownloadDrawer: API request failed');
       }
     } catch (error) {
+      console.error('[ERROR] ModelDownloadDrawer: Exception:', error);
       message.error('获取模型列表失败');
     } finally {
       setLoading(false);
@@ -332,19 +391,8 @@ const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose
           return <span style={{ color: 'green' }}>已下载</span>;
         }
 
-        if (isDownloading && progress) {
-          const percent = progress.total && progress.completed
-            ? Math.round((progress.completed / progress.total) * 100)
-            : 0;
-
-          return (
-            <div style={{ width: 120 }}>
-              <Progress percent={percent} size="small" status={progress.status === '下载失败' ? 'exception' : 'active'} />
-              <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
-                {progress.status}
-              </div>
-            </div>
-          );
+        if (isDownloading) {
+          return <span style={{ color: '#1890ff' }}>下载中...</span>;
         }
 
         return (

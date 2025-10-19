@@ -7,6 +7,9 @@ import { TaskSummary, AvDevice } from '../types';
 import { listAvfoundationDevices, updateTaskDiarization, updateTaskEmbeddingScript, reprocessTask } from '../api/client';
 import { authedApi } from '../api/auth';
 
+// 模块加载时立即执行的日志 - 用于验证新代码是否被加载
+console.log('[DEBUG] ========== TaskSidebar.tsx MODULE LOADED - BUILD TIME: 2025-10-19 13:32 ==========');
+
 // 简单缓存设备列表, 减少重复 ffmpeg 调用
 const avCache: { ts: number; devices: AvDevice[] } | null = null;
 const CACHE_TTL = 60_000; // 60s
@@ -35,10 +38,24 @@ export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreat
     try {
   // Prefer dedicated config endpoint to populate settings drawer
   const r = await authedApi.get(`/tasks/${encodeURIComponent(currentTask.id)}/config`);
+      console.log('[DEBUG] TaskSidebar: Config API response:', r.data);
+      console.log('[DEBUG] TaskSidebar: whisper_model in config:', r.data?.whisper_model);
       setConfigSnapshot(r.data);
     } catch(e:any){ message.error(e.message); }
   }
-  React.useEffect(()=>{ if(settingsOpen){ refreshConfig(); } }, [settingsOpen, currentTask?.id]);
+  React.useEffect(()=>{ 
+    console.log('[DEBUG] settingsOpen changed to:', settingsOpen, 'currentTask:', currentTask);
+    if(settingsOpen){ 
+      console.log('[DEBUG] Calling refreshConfig...');
+      refreshConfig(); 
+    } 
+  }, [settingsOpen, currentTask?.id]);
+  
+  React.useEffect(()=>{
+    console.log('[DEBUG] currentTask changed:', currentTask, 'settingsOpen:', settingsOpen);
+    console.log('[DEBUG] open prop will be:', !!currentTask && settingsOpen);
+  }, [currentTask, settingsOpen]);
+  
   React.useEffect(()=>{}, [currentTask?.ffmpeg_device, currentTask?.diarization_backend, current]);
   
   // 处理任务重命名后的刷新
@@ -116,7 +133,10 @@ export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreat
         <Space style={{ width: '100%' }}>
           <Button style={{ flex:1 }} icon={<PlusOutlined />} type="dashed" disabled={!canWriteMeeting} onClick={onCreate}>新建任务</Button>
           <Tooltip title={current ? (canWriteMeeting ? '编辑当前任务设置' : '无写权限') : '请选择一个任务'}>
-            <Button icon={<SettingOutlined />} disabled={!current || !canWriteMeeting} onClick={()=> setSettingsOpen(true)}>编辑任务</Button>
+            <Button icon={<SettingOutlined />} disabled={!current || !canWriteMeeting} onClick={()=> {
+              console.log('[DEBUG] Edit button clicked - currentTask:', currentTask, 'settingsOpen will be set to:', true);
+              setSettingsOpen(true);
+            }}>编辑任务</Button>
           </Tooltip>
           {current && (
             <Popconfirm title="确认删除?" onConfirm={() => onDelete(current)}>
