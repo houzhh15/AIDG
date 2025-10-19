@@ -27,17 +27,27 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
           const data = await response.json();
           if (data.success && data.data.models) {
             const modelIds = data.data.models.map((m: any) => m.id);
+            
+            // 确保当前设置的模型在列表中
+            const currentModel = initial?.whisper_model || 'ggml-large-v3';
+            if (currentModel && !modelIds.includes(currentModel)) {
+              modelIds.push(currentModel);
+            }
+            
             setWhisperModels(modelIds);
           }
         }
       } catch (error) {
         console.warn('Failed to fetch Whisper models:', error);
+        // 如果API失败，至少包含当前设置的模型
+        const currentModel = initial?.whisper_model || 'ggml-large-v3';
+        setWhisperModels([currentModel]);
       } finally {
         setWhisperModelsLoading(false);
       }
     };
     fetchWhisperModels();
-  }, []);
+  }, [initial?.whisper_model]);
 
   React.useEffect(() => {
     if (open) {
@@ -107,58 +117,87 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
   }
 
   return (
-    <Drawer
-      title={`任务设置: ${taskId}`}
-      width={480}
-      open={open}
-      onClose={onClose}
-      destroyOnClose
-      extra={<Button type="primary" onClick={submit} loading={loading}>保存</Button>}
-    >
-      <Form layout="vertical" form={form}>
-        <Divider plain>基础信息</Divider>
-        <Form.Item label="任务名称" name="task_name">
-          <Input placeholder="输入任务名称" />
-        </Form.Item>
-        <Form.Item label="产品线" name="product_line">
-          <Input placeholder="输入产品线名称" />
-        </Form.Item>
-        <Form.Item label="会议时间" name="meeting_time">
-          <Input type="datetime-local" placeholder="选择会议时间" />
-        </Form.Item>
+    <>
+      <Drawer
+        title={`任务设置: ${taskId}`}
+        width={480}
+        open={open}
+        onClose={onClose}
+        destroyOnClose
+        extra={<Button type="primary" onClick={submit} loading={loading}>保存</Button>}
+      >
+        <Form layout="vertical" form={form}>
+          <Divider plain>基础信息</Divider>
+          <Form.Item label="任务名称" name="task_name">
+            <Input placeholder="输入任务名称" />
+          </Form.Item>
+          <Form.Item label="产品线" name="product_line">
+            <Input placeholder="输入产品线名称" />
+          </Form.Item>
+          <Form.Item label="会议时间" name="meeting_time">
+            <Input type="datetime-local" placeholder="选择会议时间" />
+          </Form.Item>
 
-        <Divider plain>转录设置</Divider>
-        <Form.Item label="Whisper 模型" name="whisper_model">
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <Select
-              placeholder="选择 Whisper 模型"
-              loading={whisperModelsLoading}
-              options={whisperModels.map(model => ({ label: model, value: model }))}
-              showSearch
-              allowClear
-              style={{ flex: 1 }}
-            />
-            <Button type="default" onClick={() => setModelDownloadDrawerOpen(true)}>
-              下载模型
-            </Button>
-          </div>
-        </Form.Item>
-        <Form.Item label="Segments" name="whisper_segments" tooltip="如 20s; 为空或0表示不加 --segments">
-          <Input placeholder="20s" allowClear />
-        </Form.Item>
+          <Divider plain>转录设置</Divider>
+          <Form.Item label="Whisper 模型" name="whisper_model">
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <Select
+                placeholder="选择 Whisper 模型"
+                loading={whisperModelsLoading}
+                options={whisperModels.map(model => ({ label: model, value: model }))}
+                showSearch
+                allowClear
+                style={{ flex: 1 }}
+              />
+              <Button type="default" onClick={() => setModelDownloadDrawerOpen(true)}>
+                下载模型
+              </Button>
+            </div>
+          </Form.Item>
+          <Form.Item label="Segments" name="whisper_segments" tooltip="如 20s; 为空或0表示不加 --segments">
+            <Input placeholder="20s" allowClear />
+          </Form.Item>
 
-        <Divider plain>Embedding 参数</Divider>
-        <Form.Item label="初始阈值" name="embedding_threshold">
-          <Input placeholder="0.55" />
-        </Form.Item>
-        <Form.Item label="AutoLower最小" name="embedding_auto_lower_min">
-          <Input placeholder="0.35" />
-        </Form.Item>
-        <Form.Item label="AutoLower步长" name="embedding_auto_lower_step">
-          <Input placeholder="0.02" />
-        </Form.Item>
-      </Form>
-    </Drawer>
+          <Divider plain>Embedding 参数</Divider>
+          <Form.Item label="初始阈值" name="embedding_threshold">
+            <Input placeholder="0.55" />
+          </Form.Item>
+          <Form.Item label="AutoLower最小" name="embedding_auto_lower_min">
+            <Input placeholder="0.35" />
+          </Form.Item>
+          <Form.Item label="AutoLower步长" name="embedding_auto_lower_step">
+            <Input placeholder="0.02" />
+          </Form.Item>
+        </Form>
+      </Drawer>
+
+      {/* 模型下载抽屉 */}
+      <ModelDownloadDrawer
+        open={modelDownloadDrawerOpen}
+        onClose={() => setModelDownloadDrawerOpen(false)}
+        onModelDownloaded={() => {
+          // 刷新模型列表
+          const fetchWhisperModels = async () => {
+            try {
+              setWhisperModelsLoading(true);
+              const response = await fetch('/api/v1/services/whisper/models');
+              if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.data.models) {
+                  const modelIds = data.data.models.map((m: any) => m.id);
+                  setWhisperModels(modelIds);
+                }
+              }
+            } catch (error) {
+              console.warn('Failed to fetch Whisper models:', error);
+            } finally {
+              setWhisperModelsLoading(false);
+            }
+          };
+          fetchWhisperModels();
+        }}
+      />
+    </>
   );
 };
 
