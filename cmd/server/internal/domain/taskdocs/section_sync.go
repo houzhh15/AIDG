@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // SyncManager 负责章节与 compiled.md 的同步
@@ -323,101 +322,4 @@ func InsertSectionInMeta(meta *SectionMeta, title, content string, afterSectionI
 	buildHierarchy(meta.Sections)
 
 	return &newSection, nil
-}
-
-// ReplaceSectionRange 替换 compiled.md 中父章节及其所有子章节的内容
-func ReplaceSectionRange(
-	compiledContent string,
-	parentSection *Section,
-	newContent string,
-	meta *SectionMeta,
-) (string, error) {
-	lines := strings.Split(compiledContent, "\n")
-
-	// 找到父章节的开始位置
-	startIdx := -1
-	for i, line := range lines {
-		if line == parentSection.Title {
-			startIdx = i
-			break
-		}
-	}
-
-	if startIdx == -1 {
-		return "", fmt.Errorf("parent section title not found: %s", parentSection.Title)
-	}
-
-	// 🔧 新逻辑：检查新内容中是否包含同级或更高级别的标题
-	// 如果包含，说明是全文编辑，需要替换到文档末尾
-	newContentLines := strings.Split(strings.TrimSpace(newContent), "\n")
-	hasHigherLevelHeading := false
-	inCodeBlock := false
-
-	for _, line := range newContentLines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
-			continue
-		}
-		if !inCodeBlock && isHeading(line) {
-			level := getHeadingLevel(line)
-			// 跳过第一行（标题本身）
-			if line != parentSection.Title && level <= parentSection.Level {
-				hasHigherLevelHeading = true
-				break
-			}
-		}
-	}
-
-	// 找到父章节范围的结束位置
-	var endIdx int
-	if hasHigherLevelHeading {
-		// 如果新内容包含同级或更高级别标题，替换到文档末尾
-		endIdx = len(lines)
-	} else {
-		// 否则，只替换到下一个同级或更高级别标题之前
-		endIdx = len(lines)
-		inCodeBlock = false
-		for i := startIdx + 1; i < len(lines); i++ {
-			trimmed := strings.TrimSpace(lines[i])
-			// 检测代码块边界
-			if strings.HasPrefix(trimmed, "```") {
-				inCodeBlock = !inCodeBlock
-				continue
-			}
-			// 只在代码块外检测标题
-			if !inCodeBlock && isHeading(lines[i]) {
-				level := getHeadingLevel(lines[i])
-				if level <= parentSection.Level {
-					endIdx = i
-					break
-				}
-			}
-		}
-	}
-
-	// 构建新的 compiled.md
-	var builder strings.Builder
-
-	// 1. 保留开始位置之前的内容
-	for i := 0; i < startIdx; i++ {
-		builder.WriteString(lines[i] + "\n")
-	}
-
-	// 2. 插入新内容（所见即所得）
-	trimmedContent := strings.TrimSpace(newContent)
-	if trimmedContent != "" {
-		builder.WriteString(trimmedContent)
-		if !strings.HasSuffix(trimmedContent, "\n") {
-			builder.WriteString("\n")
-		}
-		builder.WriteString("\n")
-	}
-
-	// 3. 保留结束位置之后的内容
-	for i := endIdx; i < len(lines); i++ {
-		builder.WriteString(lines[i] + "\n")
-	}
-
-	return strings.TrimSpace(builder.String()), nil
 }

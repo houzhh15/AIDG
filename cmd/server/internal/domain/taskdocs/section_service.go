@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -215,13 +216,14 @@ func (s *sectionServiceImpl) UpdateSection(
 }
 
 // UpdateSectionFull 更新父章节的全文内容（包含所有子章节）
+// 确保所见即所得：用户看到的内容范围与实际替换的范围完全一致
 func (s *sectionServiceImpl) UpdateSectionFull(
 	projectID, taskID, docType, sectionID string,
 	fullContent string, expectedVersion int,
 ) error {
 	docPath := s.getDocPath(projectID, taskID, docType)
-	compiledPath := filepath.Join(docPath, "compiled.md")
 	metaPath := filepath.Join(docPath, "sections.json")
+	sectionsDir := filepath.Join(docPath, "sections")
 
 	// 1. 加载并验证版本（sections.json 的版本）
 	meta, err := loadSectionMeta(metaPath)
@@ -239,20 +241,76 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 		return err
 	}
 
-	// 3. 读取当前 compiled.md
-	compiledContent, err := os.ReadFile(compiledPath)
+	// 3. 收集要删除的所有子章节（确保删除范围与用户看到的一致）
+	childrenToDelete := []*Section{}
+	s.collectChildSections(meta, section, &childrenToDelete)
+
+	// 4. 删除所有子章节（级联删除）
+	// 4.1 删除子章节文件
+	for _, child := range childrenToDelete {
+		if err := DeleteSectionFile(sectionsDir, *child); err != nil {
+			// 继续删除，不因为单个文件失败而中止
+			fmt.Printf("Warning: delete child section file %s: %v\n", child.ID, err)
+		}
+	}
+
+	// 4.2 从元数据中删除子章节
+	for _, child := range childrenToDelete {
+		if err := RemoveSectionFromMeta(meta, child.ID, false); err != nil {
+			return fmt.Errorf("remove child section %s from meta: %w", child.ID, err)
+		}
+	}
+
+	// 5. 清空父章节的子章节列表
+	section.Children = []string{}
+	if err := UpdateSectionInMeta(meta, *section); err != nil {
+		return fmt.Errorf("update parent section: %w", err)
+	}
+
+	// 6. 更新父章节的内容
+	// 提取新内容中的正文部分（去掉标题行）
+	lines := strings.Split(strings.TrimSpace(fullContent), "\n")
+	contentWithoutTitle := ""
+	if len(lines) > 0 {
+		// 跳过第一行（标题）
+		if len(lines) > 1 {
+			contentWithoutTitle = strings.Join(lines[1:], "\n")
+		}
+	}
+	contentWithoutTitle = strings.TrimSpace(contentWithoutTitle)
+
+	// 写入父章节文件
+	if err := WriteSectionFile(sectionsDir, *section, contentWithoutTitle); err != nil {
+		return fmt.Errorf("write parent section file: %w", err)
+	}
+
+	// 更新父章节哈希
+	section.Hash = hashContent(contentWithoutTitle)
+	if err := UpdateSectionInMeta(meta, *section); err != nil {
+		return fmt.Errorf("update parent section hash: %w", err)
+	}
+
+	meta.UpdatedAt = time.Now()
+
+	// 7. 保存元数据
+	if err := saveSectionMeta(metaPath, meta); err != nil {
+		return fmt.Errorf("save meta: %w", err)
+	}
+
+	// 8. 重新拼接成 compiled.md
+	sm := NewSyncManager(docPath, docType)
+	if err := sm.SyncToCompiled(); err != nil {
+		return fmt.Errorf("sync to compiled: %w", err)
+	}
+
+	// 9. 读取新的 compiled.md
+	compiledPath := filepath.Join(docPath, "compiled.md")
+	newCompiled, err := os.ReadFile(compiledPath)
 	if err != nil {
 		return fmt.Errorf("read compiled.md: %w", err)
 	}
 
-	// 4. 替换父章节范围
-	newCompiled, err := ReplaceSectionRange(string(compiledContent), section, fullContent, meta)
-	if err != nil {
-		return fmt.Errorf("replace section range: %w", err)
-	}
-
-	// 5. 通过 DocService 保存（记录到 chunks.ndjson）
-	// 使用 replace_full 模式，这样会自动触发章节重新解析
+	// 10. 通过 DocService 保存（记录到 chunks.ndjson）
 	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
 	if err != nil {
 		return fmt.Errorf("load doc meta: %w", err)
@@ -260,16 +318,17 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		newCompiled,           // 新的完整文档内容
-		"section_edit",        // 用户标识
-		&docMeta.Version,      // 使用 doc meta 的版本号进行并发检查
-		"replace_full",        // 操作类型：全文替换
+		string(newCompiled), // 新的完整文档内容
+		"section_edit",      // 用户标识
+		&docMeta.Version,    // 使用 doc meta 的版本号进行并发检查
+		"replace_full",      // 操作类型：全文替换
 		"update_section_full", // 来源：章节全文更新
 	)
 	if err != nil {
 		return fmt.Errorf("save through doc service: %w", err)
 	}
 
+	// 11. 基于新的 compiled.md 重新同步章节（确保一致性）
 	// DocService.Append 已经调用了 SyncFromCompiled，所以不需要再次调用
 
 	return nil
