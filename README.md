@@ -110,19 +110,12 @@ graph TD
 # 1. 下载配置文件
 curl -O https://raw.githubusercontent.com/houzhh15-hub/AIDG/main/docker-compose.ghcr.yml
 
-# 2. 创建配置文件
-cat > .env << 'EOF'
-JWT_SECRET=your-super-secret-key-change-me
-EOF
-
-# 3. 启动服务（基础版，100MB）
+# 2. 启动服务（基础版，100MB）
 docker compose -f docker-compose.ghcr.yml up -d
 
-# 4. 打开浏览器访问
+# 3. 打开浏览器访问
 open http://localhost:8000
 ```
-
-**就这么简单！** 🎉
 
 > 💡 **提示**: 基础版（100MB）已包含核心功能。如需会议录音转写功能，请参考完整部署方案。
 
