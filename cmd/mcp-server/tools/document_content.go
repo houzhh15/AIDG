@@ -294,7 +294,7 @@ func (t *ManageDocumentReferenceTool) Name() string {
 }
 
 func (t *ManageDocumentReferenceTool) Description() string {
-	return "创建或查询任务与文档引用"
+	return "创建或查询任务与文档关联和引用"
 }
 
 func (t *ManageDocumentReferenceTool) InputSchema() map[string]interface{} {
@@ -311,7 +311,7 @@ func (t *ManageDocumentReferenceTool) InputSchema() map[string]interface{} {
 			},
 			"doc_id": map[string]interface{}{
 				"type":        "string",
-				"description": "可选的文档ID，用于创建引用时指定",
+				"description": "可选的文档ID，用于创建关联引用时指定",
 			},
 			"action": map[string]interface{}{
 				"type":        "string",

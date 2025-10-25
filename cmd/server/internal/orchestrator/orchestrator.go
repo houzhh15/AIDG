@@ -212,12 +212,20 @@ func (cfg *Config) ApplyRuntimeDefaults() {
 			cfg.PythonBinaryPath = "python3"
 		}
 	}
-	// Backfill diarization script paths for legacy configs when empty.
-	if strings.TrimSpace(cfg.DiarizationScriptPath) == "" {
+	// Always check environment variables for script paths, regardless of current value
+	if env := strings.TrimSpace(os.Getenv("DIARIZATION_SCRIPT_PATH")); env != "" {
+		cfg.DiarizationScriptPath = env
+	} else if strings.TrimSpace(cfg.DiarizationScriptPath) == "" {
 		cfg.DiarizationScriptPath = "/app/scripts/pyannote_diarize.py"
 	}
-	if strings.TrimSpace(cfg.EmbeddingScriptPath) == "" {
+	if env := strings.TrimSpace(os.Getenv("EMBEDDING_SCRIPT_PATH")); env != "" {
+		cfg.EmbeddingScriptPath = env
+	} else if strings.TrimSpace(cfg.EmbeddingScriptPath) == "" {
 		cfg.EmbeddingScriptPath = "/app/scripts/generate_speaker_embeddings.py"
+	}
+	// Always check environment variables for Whisper mode
+	if env := strings.TrimSpace(os.Getenv("WHISPER_MODE")); env != "" {
+		cfg.WhisperMode = env
 	}
 }
 
@@ -379,11 +387,11 @@ func DefaultConfig() Config {
 		DependencyMode:           dependencyMode,
 		DependencyServiceURL:     dependencyServiceURL,
 		DependencySharedVolume:   dependencySharedVolume,
-		WhisperMode:              "http",
+		WhisperMode:              "",              // 留空，让ApplyRuntimeDefaults从环境变量读取
 		WhisperAPIURL:            whisperURL,      // 从环境变量读取或使用默认值
 		WhisperModel:             "ggml-large-v3", // 默认使用 large-v3 模型
 		WhisperSegments:          "15s",           // 修改为 15s
-		DeviceDefault:            "cpu",           // 使用 CPU (Linux 容器中 mps 不可用)
+		DeviceDefault:            "auto",          // 使用 CPU (Linux 容器中 mps 不可用)
 		DiarizationBackend:       "pyannote",
 		DiarizationScriptPath:    "/app/scripts/pyannote_diarize.py",
 		SBMinSpeakers:            1,
@@ -522,6 +530,13 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 	// Use DegradationController to get active transcriber
 	transcriber := o.degradationController.GetTranscriber()
 
+	// Check if transcriber is LocalWhisperImpl - use direct file output
+	if transcriber.Name() == "local-whisper" {
+		log.Printf("[RunSingleASR] Using LocalWhisper direct file output")
+		return o.runLocalWhisperDirectOutput(ctx, chunkWav, model, out)
+	}
+
+	// For other transcribers, use normal flow
 	// Prepare transcription options
 	opts := &whisper.TranscribeOptions{
 		Model:    model,
@@ -531,20 +546,67 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 	// Call transcriber
 	result, err := transcriber.Transcribe(ctx, chunkWav, opts)
 	if err != nil {
+		log.Printf("[RunSingleASR] Transcription failed: %v", err)
 		return "", fmt.Errorf("transcription failed: %w", err)
 	}
+	log.Printf("[RunSingleASR] Transcription successful, segments count: %d", len(result.Segments))
 
 	// Convert TranscriptionResult to JSON and save
 	jsonData, err := json.Marshal(result)
 	if err != nil {
+		log.Printf("[RunSingleASR] Failed to marshal result: %v", err)
 		return "", fmt.Errorf("failed to marshal transcription result: %w", err)
 	}
+	log.Printf("[RunSingleASR] JSON marshaled, size: %d bytes", len(jsonData))
 
 	if err := os.WriteFile(out, jsonData, 0644); err != nil {
+		log.Printf("[RunSingleASR] Failed to write file %s: %v", out, err)
+		return "", fmt.Errorf("failed to write segments file: %w", err)
+	}
+	log.Printf("[RunSingleASR] Successfully wrote segments file: %s", out)
+
+	return out, nil
+}
+
+// runLocalWhisperDirectOutput runs local whisper and writes output directly to file
+func (o *Orchestrator) runLocalWhisperDirectOutput(ctx context.Context, chunkWav, model, outputPath string) (string, error) {
+	// Get whisper program path
+	programPath := os.Getenv("WHISPER_PROGRAM_PATH")
+	if programPath == "" {
+		programPath = "./bin/whisper/whisper"
+	}
+
+	// Process model name - keep ggml- prefix, just remove .bin suffix if present
+	model = strings.TrimSuffix(model, ".bin")
+	// Ensure it has ggml- prefix
+	if !strings.HasPrefix(model, "ggml-") {
+		model = "ggml-" + model
+	}
+
+	// Build CLI arguments
+	args := []string{"transcribe", model, chunkWav, "--format", "json"}
+
+	// Execute command
+	cmd := exec.CommandContext(ctx, programPath, args...)
+	log.Printf("[LocalWhisperDirect] Executing: %s %s", programPath, strings.Join(args, " "))
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("[LocalWhisperDirect] ERROR: %v", err)
+		log.Printf("[LocalWhisperDirect] Output: %s", string(output))
+		return "", fmt.Errorf("CLI execution failed: %w, output: %s", err, string(output))
+	}
+
+	log.Printf("[LocalWhisperDirect] OK - Output length: %d bytes", len(output))
+
+	// Write raw output directly to file
+	if err := os.WriteFile(outputPath, output, 0644); err != nil {
+		log.Printf("[LocalWhisperDirect] Failed to write file %s: %v", outputPath, err)
 		return "", fmt.Errorf("failed to write segments file: %w", err)
 	}
 
-	return out, nil
+	log.Printf("[LocalWhisperDirect] Successfully wrote segments file: %s", outputPath)
+	return outputPath, nil
 }
 
 // transcribeViaHTTP 通过 HTTP POST 调用 Whisper API 进行转录
@@ -1653,12 +1715,14 @@ func initDependencyClient(cfg Config) (*dependency.DependencyClient, error) {
 
 	// Create executor config
 	execConfig := dependency.ExecutorConfig{
-		Mode:             dependency.ExecutionMode(mode),
-		ServiceURL:       cfg.DependencyServiceURL,
-		SharedVolumePath: sharedVolume,
-		LocalBinaryPaths: localBinaryPaths,
-		DefaultTimeout:   timeout,
-		AllowedCommands:  []string{"ffmpeg", "ffprobe", "pyannote", "python"},
+		Mode:                  dependency.ExecutionMode(mode),
+		ServiceURL:            cfg.DependencyServiceURL,
+		SharedVolumePath:      sharedVolume,
+		LocalBinaryPaths:      localBinaryPaths,
+		DiarizationScriptPath: cfg.DiarizationScriptPath,
+		EmbeddingScriptPath:   cfg.EmbeddingScriptPath,
+		DefaultTimeout:        timeout,
+		AllowedCommands:       []string{"ffmpeg", "ffprobe", "pyannote", "python"},
 	}
 
 	// Create dependency client
@@ -1801,6 +1865,98 @@ func (o *Orchestrator) PrepareResume() error {
 	return nil
 }
 
+// InitForSingleASR initializes an ephemeral orchestrator for single ASR operations.
+// This is a lightweight initialization that sets up transcribers and health checking
+// without starting background workers.
+func (o *Orchestrator) InitForSingleASR() error {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	if o.state != StateCreated {
+		return fmt.Errorf("invalid state for single ASR init: %s", o.state)
+	}
+
+	// Ensure runtime defaults are set and dependencies are available
+	o.cfg.ApplyRuntimeDefaults()
+	if err := o.cfg.ValidateCriticalDependencies(); err != nil {
+		return err
+	}
+
+	// 1. 创建Primary Transcriber (same logic as Start method)
+	var primaryTranscriber whisper.WhisperTranscriber
+	whisperMode := strings.ToLower(o.cfg.WhisperMode)
+	if whisperMode == "" {
+		whisperMode = "http" // 默认HTTP模式
+	}
+
+	switch whisperMode {
+	case "http", "go-whisper":
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[Orchestrator] Using GoWhisper HTTP mode (API=%s)", apiURL)
+	case "faster-whisper":
+		// FasterWhisper也使用HTTP API
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[Orchestrator] Using FasterWhisper HTTP mode (API=%s)", apiURL)
+	case "cli", "local-whisper":
+		// 使用本地CLI模式
+		programPath := os.Getenv("WHISPER_PROGRAM_PATH")
+		if programPath == "" {
+			programPath = "/app/bin/whisper/whisper" // 默认值
+		}
+		// modelPath应该是模型文件目录，而不是模型文件名
+		modelDir := "./models/whisper" // 模型文件所在目录
+		var err error
+		primaryTranscriber, err = whisper.NewLocalWhisperImpl(programPath, modelDir)
+		if err != nil {
+			return fmt.Errorf("failed to create LocalWhisperImpl: %w", err)
+		}
+		log.Printf("[Orchestrator] Using LocalWhisper CLI mode (program=%s, modelDir=%s)", programPath, modelDir)
+	default:
+		// 默认使用HTTP模式
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[Orchestrator] WhisperMode unspecified, defaulting to GoWhisper HTTP (API=%s)", apiURL)
+	}
+
+	// 2. 创建Fallback Transcriber (MockTranscriber)
+	fallbackTranscriber := whisper.NewMockTranscriber()
+	log.Printf("[Orchestrator] Fallback transcriber: MockTranscriber (graceful degradation)")
+
+	// 3. 创建HealthChecker
+	checkInterval := o.cfg.HealthCheckInterval
+	if checkInterval == 0 {
+		checkInterval = 5 * time.Minute // 回退到默认值
+	}
+	failThreshold := o.cfg.HealthCheckFailThreshold
+	if failThreshold == 0 {
+		failThreshold = 3 // 回退到默认值
+	}
+	o.healthChecker = health.NewHealthChecker(primaryTranscriber, checkInterval, failThreshold)
+	log.Printf("[Orchestrator] HealthChecker created (interval=%s, failThreshold=%d)", checkInterval, failThreshold)
+
+	// 4. 创建DegradationController
+	o.degradationController = degradation.NewDegradationController(
+		primaryTranscriber,
+		fallbackTranscriber,
+		o.healthChecker,
+	)
+	log.Printf("[Orchestrator] DegradationController created for single ASR")
+
+	// Note: We don't start the health checker or workers for single ASR operations
+	o.state = StateRunning
+	return nil
+}
+
 func (o *Orchestrator) Start() error {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
@@ -1840,7 +1996,10 @@ func (o *Orchestrator) Start() error {
 		log.Printf("[Orchestrator] Using FasterWhisper HTTP mode (API=%s)", apiURL)
 	case "cli", "local-whisper":
 		// 使用本地CLI模式
-		programPath := "/app/bin/whisper/whisper"
+		programPath := os.Getenv("WHISPER_PROGRAM_PATH")
+		if programPath == "" {
+			programPath = "/app/bin/whisper/whisper" // 默认值
+		}
 		modelPath := o.cfg.WhisperModel
 		if modelPath == "" {
 			modelPath = "ggml-base.bin"

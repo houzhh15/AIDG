@@ -16,7 +16,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: '8'
           memory: 6G  # large-v3 模型需要 ~3GB + 运行时开销
         reservations:
           cpus: '1'
@@ -73,7 +73,7 @@ services:
       - DEPENDENCY_SHARED_VOLUME=/app/data
       # Whisper 配置
       - WHISPER_API_URL=http://aidg-whisper:80
-      - WHISPER_MODE=go-whisper
+      - WHISPER_MODE=go-whisper  # 默认使用独立whisper服务，修改为"cli"可切换到本地CLI模式
       # 音频处理配置（通过依赖服务）
       - ENABLE_AUDIO_CONVERSION=true
       - ENABLE_SPEAKER_DIARIZATION=true

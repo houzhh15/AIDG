@@ -60,17 +60,12 @@ version: 1.1
 
 **第六步：更新设计文档 (Update Design Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
-*   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。为防止文件长度过大导致请求失败，可分多次调用，先调用update_task_document创建文档章节结构，每次update_task_doc_section写入章节内容（不带标题），直至全部完成。
+*   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。为防止文件长度过大导致请求失败，可分多次调用，参考章节编辑标准流程，直至全部完成。
 
 ### 章节级编辑标准流程 (Section-Level Editing Workflow)
-适用：仅调整 / 补充设计文档的个别章节或段落。
-流程：
-1. `get_task_doc_sections` 获取章节结构（强制）
-2. `get_task_doc_section`（如需读取现有正文）
-3. 构造最小差异内容（避免重排无关文本）
-4. `update_task_doc_section` 写入局部更新（expected_version 防并发）
-5. 新增：`insert_task_doc_section`；删除：`delete_task_doc_section`
-禁止：局部变更使用 `update_task_document` 全量覆盖；仅在大规模架构重写并确认 FULL_OVERRIDE_CONFIRM 后使用全文覆盖。
+- 1. 先使用 updata_task_document 提交所有的章节包括子章节。
+- 2. 调用 get_task_doc_sections 获得章节信息
+- 3. 使用 update_task_section更新章节内容。但不要包含任何标题。
 
 ## 4. 详细设计文档结构 (Detailed Design Document Structure)
 

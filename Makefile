@@ -41,16 +41,21 @@ test:
 # 启动开发环境
 dev:
 	@echo "Starting development environment..."
-	@echo "Starting server on :8000..."
-	ENV=development \
-		JWT_SECRET=dev-jwt-secret-at-least-32-characters-long \
-		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-characters-long \
-		ADMIN_DEFAULT_PASSWORD=admin123 \
-		go run ./cmd/server &
-	@echo "Starting MCP server on :8081..."
-	ENV=development go run ./cmd/mcp-server &
-	@echo "Starting frontend on :5173..."
-	cd frontend && npm run dev
+	@bash -c '\
+		if [ -f .env ]; then \
+			echo "Loading .env file..."; \
+			set -a; source .env; set +a; \
+		fi; \
+		echo "Starting server on :8000..."; \
+		ENV=development \
+		JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars \
+		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars \
+		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword! \
+		go run ./cmd/server & \
+		echo "Starting MCP server on :8081..."; \
+		ENV=development go run ./cmd/mcp-server & \
+		echo "Starting frontend on :5173..."; \
+		cd frontend && npm run dev'
 
 # 清理构建产物
 clean:

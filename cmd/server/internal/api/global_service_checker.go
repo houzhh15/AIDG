@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,6 +114,10 @@ func (g *GlobalServiceChecker) CheckAllServices(ctx context.Context) ServicesSta
 		DepsServiceAvailable: false,
 	}
 
+	// 获取环境变量以确定检查模式
+	whisperMode := strings.ToLower(strings.TrimSpace(os.Getenv("WHISPER_MODE")))
+	dependencyMode := strings.ToLower(strings.TrimSpace(os.Getenv("DEPENDENCY_MODE")))
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	wg.Add(2)
@@ -120,19 +125,46 @@ func (g *GlobalServiceChecker) CheckAllServices(ctx context.Context) ServicesSta
 	// 并发检查 Whisper
 	go func() {
 		defer wg.Done()
-		healthy, err := g.CheckWhisperHealth(ctx)
+
+		var healthy bool
+		var err error
+		var mode string
+
+		if whisperMode == "cli" {
+			// CLI 模式：检查 WHISPER_PROGRAM_PATH 文件存在
+			whisperPath := strings.TrimSpace(os.Getenv("WHISPER_PROGRAM_PATH"))
+			if whisperPath != "" {
+				if _, statErr := os.Stat(whisperPath); statErr == nil {
+					healthy = true
+					mode = "cli_available"
+				} else {
+					healthy = false
+					mode = "cli_unavailable"
+					err = fmt.Errorf("file not found: %s", whisperPath)
+				}
+			} else {
+				healthy = false
+				mode = "cli_no_path"
+				err = fmt.Errorf("WHISPER_PROGRAM_PATH not set")
+			}
+		} else {
+			// 服务模式：HTTP健康检查
+			healthy, err = g.CheckWhisperHealth(ctx)
+			if healthy {
+				mode = "service_available"
+			} else {
+				mode = fmt.Sprintf("service_unavailable: %v", err)
+			}
+		}
 
 		mu.Lock()
 		defer mu.Unlock()
 
 		status.WhisperAvailable = healthy
-		if healthy {
-			status.WhisperMode = "available"
-		} else {
-			status.WhisperMode = fmt.Sprintf("unavailable: %v", err)
-		}
+		status.WhisperMode = mode
 
-		slog.Info("[GlobalServiceChecker] Whisper health check",
+		slog.Info("[GlobalServiceChecker] Whisper check",
+			"mode", whisperMode,
 			"available", healthy,
 			"error", err)
 	}()
@@ -140,19 +172,54 @@ func (g *GlobalServiceChecker) CheckAllServices(ctx context.Context) ServicesSta
 	// 并发检查 DepsService
 	go func() {
 		defer wg.Done()
-		healthy, err := g.CheckDepsServiceHealth(ctx)
+
+		var healthy bool
+		var err error
+		var mode string
+
+		if dependencyMode == "local" {
+			// Local 模式：检查脚本文件存在
+			diarizationPath := strings.TrimSpace(os.Getenv("DIARIZATION_SCRIPT_PATH"))
+			embeddingPath := strings.TrimSpace(os.Getenv("EMBEDDING_SCRIPT_PATH"))
+
+			diarizationExists := diarizationPath != "" && func() bool {
+				_, e := os.Stat(diarizationPath)
+				return e == nil
+			}()
+			embeddingExists := embeddingPath != "" && func() bool {
+				_, e := os.Stat(embeddingPath)
+				return e == nil
+			}()
+
+			healthy = diarizationExists && embeddingExists
+			if healthy {
+				mode = "local_available"
+			} else {
+				mode = "local_unavailable"
+				if !diarizationExists {
+					err = fmt.Errorf("diarization script not found: %s", diarizationPath)
+				} else {
+					err = fmt.Errorf("embedding script not found: %s", embeddingPath)
+				}
+			}
+		} else {
+			// 服务模式：HTTP健康检查
+			healthy, err = g.CheckDepsServiceHealth(ctx)
+			if healthy {
+				mode = "service_available"
+			} else {
+				mode = fmt.Sprintf("service_unavailable: %v", err)
+			}
+		}
 
 		mu.Lock()
 		defer mu.Unlock()
 
 		status.DepsServiceAvailable = healthy
-		if healthy {
-			status.DependencyMode = "available"
-		} else {
-			status.DependencyMode = fmt.Sprintf("unavailable: %v", err)
-		}
+		status.DependencyMode = mode
 
-		slog.Info("[GlobalServiceChecker] DepsService health check",
+		slog.Info("[GlobalServiceChecker] DepsService check",
+			"mode", dependencyMode,
 			"available", healthy,
 			"error", err)
 	}()

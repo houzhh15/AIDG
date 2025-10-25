@@ -5,6 +5,7 @@ import { listProjects } from '../api/projects';
 import { getProjectTasks, ProjectTask } from '../api/tasks';
 import { getCurrentTask, setCurrentTask, CurrentTaskInfo } from '../api/currentTask';
 import { loadAuth, onAuthChange } from '../api/auth';
+import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 
 interface ProjectOptionGroup {
   label: string;
@@ -18,6 +19,7 @@ const ProjectTaskSelector: React.FC = () => {
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [saving, setSaving] = useState(false);
   const [current, setCurrent] = useState<CurrentTaskInfo | null>(null);
+  const { refreshTrigger } = useTaskRefresh();
 
   // 初始与登录状态变化时再加载当前任务，避免未登录 401 噪音
   useEffect(() => {
@@ -37,6 +39,29 @@ const ProjectTaskSelector: React.FC = () => {
     });
     return () => dispose();
   }, []);
+
+  // 监听任务刷新触发器，当任务状态改变时重新加载任务列表
+  useEffect(() => {
+    if (projects.length > 0) {
+      // 重新加载所有项目的任务列表
+      const reloadAllTasks = async () => {
+        setLoadingTasks(true);
+        try {
+          for (const p of projects) {
+            const r = await getProjectTasks(p.id);
+            if (r.success && r.data) {
+              setTasksByProject(prev => ({ ...prev, [p.id]: r.data! }));
+            }
+          }
+        } catch (e) {
+          console.error('reloadAllTasks failed', e);
+        } finally {
+          setLoadingTasks(false);
+        }
+      };
+      reloadAllTasks();
+    }
+  }, [refreshTrigger, projects]);
 
   const loadCurrent = async () => {
     try {

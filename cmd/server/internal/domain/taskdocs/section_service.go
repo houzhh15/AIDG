@@ -318,10 +318,10 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		string(newCompiled), // 新的完整文档内容
-		"section_edit",      // 用户标识
-		&docMeta.Version,    // 使用 doc meta 的版本号进行并发检查
-		"replace_full",      // 操作类型：全文替换
+		string(newCompiled),   // 新的完整文档内容
+		"section_edit",        // 用户标识
+		&docMeta.Version,      // 使用 doc meta 的版本号进行并发检查
+		"replace_full",        // 操作类型：全文替换
 		"update_section_full", // 来源：章节全文更新
 	)
 	if err != nil {

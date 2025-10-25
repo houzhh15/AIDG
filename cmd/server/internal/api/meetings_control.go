@@ -242,6 +242,11 @@ func HandleASROnce(reg *meetings.Registry) gin.HandlerFunc {
 		orch := t.Orch
 		if orch == nil { // ephemeral orchestrator (no recording workers)
 			orch = orchestrator.New(t.Cfg)
+			// Initialize ephemeral orchestrator for single ASR operation
+			if err := orch.InitForSingleASR(); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to initialize orchestrator: %v", err)})
+				return
+			}
 		}
 		segPath, err := orch.RunSingleASR(ctx, wavPath, body.Model, body.Segments)
 		if err != nil {

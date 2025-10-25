@@ -87,12 +87,14 @@ authedApi.interceptors.response.use(r=>r, (err: AxiosError)=>{
     const isOptionalDocument = [
       '/topic', 
       '/meeting-context', 
+      '/meeting-summary',
       '/feature-list', 
       '/summary', 
       '/polish',
       '/merged_all',
       '/architecture-design',
-      '/segments'
+      '/segments',
+      '/mapped'
     ].some(path => url.includes(path));
     
     if (isOptionalDocument) {

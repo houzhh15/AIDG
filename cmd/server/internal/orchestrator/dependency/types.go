@@ -74,6 +74,14 @@ type ExecutorConfig struct {
 	// (e.g., {"ffmpeg": "/usr/local/bin/ffmpeg"}). Used in "local" and "fallback" modes.
 	LocalBinaryPaths map[string]string `json:"local_binary_paths" yaml:"local_binary_paths"`
 
+	// DiarizationScriptPath is the path to the PyAnnote diarization script
+	// (e.g., "/app/scripts/pyannote_diarize.py" or "./tmp/pyannote/pyannote_diarize.py")
+	DiarizationScriptPath string `json:"diarization_script_path" yaml:"diarization_script_path"`
+
+	// EmbeddingScriptPath is the path to the embedding extraction script
+	// (e.g., "/app/scripts/extract_embeddings.py" or "./tmp/pyannote/extract_embeddings.py")
+	EmbeddingScriptPath string `json:"embedding_script_path" yaml:"embedding_script_path"`
+
 	// DefaultTimeout is the default execution timeout for all commands.
 	DefaultTimeout time.Duration `json:"default_timeout" yaml:"default_timeout"`
 

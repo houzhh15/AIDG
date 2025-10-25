@@ -133,6 +133,12 @@ func LoadTasks(reg *Registry) error {
 			pt.Cfg.OutputDir = filepath.Join(TasksRoot(), taskID)
 		}
 
+		// Fix Docker container paths: /app/data/meetings/* -> configured meetings root
+		if pt.Cfg.OutputDir != "" && strings.HasPrefix(pt.Cfg.OutputDir, "/app/data/meetings/") {
+			taskID := strings.TrimPrefix(pt.Cfg.OutputDir, "/app/data/meetings/")
+			pt.Cfg.OutputDir = filepath.Join(TasksRoot(), taskID)
+		}
+
 		// ensure output dir exists
 		if pt.Cfg.OutputDir != "" {
 			os.MkdirAll(pt.Cfg.OutputDir, 0o755)

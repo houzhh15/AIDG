@@ -260,7 +260,7 @@ func (c *DependencyClient) RunDiarization(ctx context.Context, audioPath, output
 	}
 
 	if opts.Device == "" {
-		opts.Device = "cpu"
+		opts.Device = "auto"
 	}
 
 	slog.Info("[DependencyClient] starting speaker diarization",
@@ -271,8 +271,13 @@ func (c *DependencyClient) RunDiarization(ctx context.Context, audioPath, output
 		"offline", opts.EnableOffline,
 	)
 
-	// Use fixed script path in deps-service container
-	scriptPath := "/app/scripts/pyannote_diarize.py"
+	// Use configured script path, fallback to container path for backward compatibility
+	scriptPath := c.config.DiarizationScriptPath
+	if scriptPath == "" {
+		scriptPath = "/app/scripts/pyannote_diarize.py"
+		slog.Warn("[DependencyClient] using default diarization script path (not configured)",
+			"path", scriptPath)
+	}
 
 	// Build command arguments (python + script + flags)
 	args := []string{scriptPath, "--input", audioPath, "--device", opts.Device}
@@ -318,8 +323,10 @@ func (c *DependencyClient) RunDiarization(ctx context.Context, audioPath, output
 		slog.Error("[DependencyClient] speaker diarization execution failed",
 			"audio_path", audioPath,
 			"error", err.Error(),
+			"stderr", resp.Stderr,
+			"stdout", resp.Stdout,
 		)
-		return fmt.Errorf("speaker diarization failed: %w", err)
+		return fmt.Errorf("speaker diarization failed: %w, stderr: %s", err, resp.Stderr)
 	}
 
 	// Check execution result
@@ -403,7 +410,7 @@ func (c *DependencyClient) GenerateEmbeddings(ctx context.Context, audioPath, sp
 	}
 
 	if opts.Device == "" {
-		opts.Device = "cpu"
+		opts.Device = "auto"
 	}
 	if opts.Threshold == "" {
 		opts.Threshold = "0.7"
@@ -425,8 +432,13 @@ func (c *DependencyClient) GenerateEmbeddings(ctx context.Context, audioPath, sp
 		"has_existing", opts.ExistingEmbeddings != "",
 	)
 
-	// Use fixed script path in deps-service container
-	scriptPath := "/app/scripts/generate_speaker_embeddings.py"
+	// Use configured script path, fallback to container path for backward compatibility
+	scriptPath := c.config.EmbeddingScriptPath
+	if scriptPath == "" {
+		scriptPath = "/app/scripts/generate_speaker_embeddings.py"
+		slog.Warn("[DependencyClient] using default embedding script path (not configured)",
+			"path", scriptPath)
+	}
 
 	// Build command arguments (python + script + flags)
 	// Note: HF token will be read from HUGGINGFACE_ACCESS_TOKEN env var in deps-service
@@ -489,8 +501,10 @@ func (c *DependencyClient) GenerateEmbeddings(ctx context.Context, audioPath, sp
 		slog.Error("[DependencyClient] embedding generation execution failed",
 			"audio_path", audioPath,
 			"error", err.Error(),
+			"stderr", resp.Stderr,
+			"stdout", resp.Stdout,
 		)
-		return fmt.Errorf("embedding generation failed: %w", err)
+		return fmt.Errorf("embedding generation failed: %w, stderr: %s", err, resp.Stderr)
 	}
 
 	// Check execution result

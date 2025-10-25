@@ -25,15 +25,8 @@ version: 1.1
    - 缺失用 <缺失: X> 标注。
 3. 组装 Effective Prompt（含：原始请求 + 摘要 + 计划）→ create_project_task_prompt；失败重试一次，再失败 PROMPT_RECORD_FAIL。
 4. 后执行，生成markdown格式的“任务分解清单”,包含完整的执行步骤,格式要求见下。每个步骤用非结构化语言进行详细描述（不带有markdown格式与特殊符号，防止格式解析错误，信息丢失），述必须清晰、具体、可执行，禁止模糊和抽象。
-5. update_execution_plan(project_id, task_id, content=任务分解清单)。
+5. update_execution_plan(project_id, task_id, content=任务分解清单)。如果提交失败，请对照markdown格式要求重新生成。
 
-### 附：章节级编辑标准流程 (Section-Level Editing Workflow)
-若某执行步骤需要对现有文档做“局部”编辑（而非整体重写），请遵循：
-1. 获取章节树：`get_task_doc_sections`
-2. 可选获取单章：`get_task_doc_section`
-3. 产出最小修改片段（仅改必需内容）
-4. 应用：`update_task_doc_section` / `insert_task_doc_section` / `delete_task_doc_section`
-5. 仅在确认整体重构且具备 FULL_OVERRIDE_CONFIRM 语义时再考虑 `update_task_document`。
 
 ---
 **# markdown 格式要求 (必须严格遵守)**
