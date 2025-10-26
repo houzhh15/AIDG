@@ -162,6 +162,12 @@ export async function getExecutionPlan(projectId: string, taskId: string): Promi
   return response.data;
 }
 
+// 提交执行计划（Draft -> Pending Approval）
+export async function submitExecutionPlan(projectId: string, taskId: string, data: { comment?: string } = {}): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
+  const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/submit`, data);
+  return response.data;
+}
+
 // 批准执行计划
 export async function approveExecutionPlan(projectId: string, taskId: string, data: ApprovalRequest): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
   const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/approve`, data);
@@ -174,9 +180,38 @@ export async function rejectExecutionPlan(projectId: string, taskId: string, dat
   return response.data;
 }
 
+// 恢复执行计划到待审批状态
+export async function restoreApproval(projectId: string, taskId: string, data: { comment?: string } = {}): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
+  const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/restore-approval`, data);
+  return response.data;
+}
+
 // 更新执行计划内容
 export async function updateExecutionPlanContent(projectId: string, taskId: string, content: string): Promise<ApiResponse<{ plan_id: string; status: string; updated_at: string }>> {
   const response = await authedApi.put<ApiResponse<{ plan_id: string; status: string; updated_at: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan`, { content });
+  return response.data;
+}
+
+// 重置执行计划（生成默认模板）
+export interface ResetPlanResponse {
+  plan_id: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  dependencies: ExecutionPlanDependency[];
+  steps: ExecutionPlanStep[];
+  content: string;
+}
+
+export async function resetExecutionPlan(
+  projectId: string,
+  taskId: string,
+  force: boolean = false
+): Promise<ApiResponse<ResetPlanResponse>> {
+  const response = await authedApi.post<ApiResponse<ResetPlanResponse>>(
+    `/projects/${projectId}/tasks/${taskId}/execution-plan/reset`,
+    { force }
+  );
   return response.data;
 }
 

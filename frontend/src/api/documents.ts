@@ -207,6 +207,11 @@ export const documentsAPI = {
     return response.data
   },
 
+  async deleteReference(projectId: string, referenceId: string): Promise<{ success: boolean }> {
+    const response = await apiClient.delete(`/projects/${projectId}/documents/references/${referenceId}`)
+    return response.data
+  },
+
   // 版本管理
   async getVersionHistory(projectId: string, docId: string, limit?: number): Promise<{ versions: SnapshotMeta[]; total: number }> {
     const params = limit ? `?limit=${limit}` : ''

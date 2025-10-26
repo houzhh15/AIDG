@@ -101,7 +101,9 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
 
       // 处理执行计划状态
       if (executionPlanResult.status === 'fulfilled') {
-        setExecutionPlanExists(!!executionPlanResult.value.data);
+        const executionPlan = executionPlanResult.value.data;
+        // 如果执行计划存在且状态不是 Draft，则认为存在
+        setExecutionPlanExists(!!executionPlan && executionPlan.status !== 'Draft');
       } else {
         setExecutionPlanExists(false);
       }
@@ -175,7 +177,8 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     
     try {
       const result = await getExecutionPlan(projectId, taskId);
-      setExecutionPlanExists(!!result.data);
+      // 如果执行计划存在且状态不是 Draft，则认为存在
+      setExecutionPlanExists(!!result.data && result.data.status !== 'Draft');
     } catch (error) {
       setExecutionPlanExists(false);
     }
@@ -282,7 +285,12 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 padding: '8px 12px',
                 minHeight: 0
               }}>
-                <DocumentTOC content={doc.content} />
+                <DocumentTOC 
+                  content={doc.content} 
+                  projectId={projectId}
+                  taskId={taskId}
+                  docType={docType as 'requirements' | 'design' | 'test'}
+                />
               </div>
             </div>
             <div style={{

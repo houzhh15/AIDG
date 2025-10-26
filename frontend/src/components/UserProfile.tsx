@@ -6,6 +6,7 @@
  * - 项目角色列表
  * - 默认权限展示 (任务负责人/会议创建者)
  * - 修改密码
+ * - MCP Resources 资源管理
  */
 
 import React, { useState, useEffect } from 'react';
@@ -23,6 +24,7 @@ import {
   Spin,
   Typography,
   Alert,
+  Tabs,
 } from 'antd';
 import {
   UserOutlined,
@@ -30,9 +32,12 @@ import {
   SafetyOutlined,
   KeyOutlined,
   CheckCircleOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 import { getUserProfile, changePassword, type UserProfileData } from '../api/permissions';
 import { getScopeLabel } from '../constants/permissions';
+import ResourcesManagement from './ResourcesManagement';
+import { loadAuth } from '../api/auth';
 
 const { Title, Text } = Typography;
 
@@ -181,94 +186,141 @@ export const UserProfile: React.FC = () => {
   ];
   const uniqueScopes = Array.from(new Set(allScopes));
 
+  // 获取当前用户名
+  const currentUsername = loadAuth()?.username || '';
+
+  // Tabs 标签页配置
+  const profileTabs = [
+    {
+      key: 'info',
+      label: (
+        <span>
+          <UserOutlined />
+          基本信息
+        </span>
+      ),
+      children: (
+        <>
+          {/* 基本信息 */}
+          <Card
+            title={
+              <Space>
+                <UserOutlined />
+                <span>基本信息</span>
+              </Space>
+            }
+            style={{ marginBottom: 16 }}
+            extra={
+              <Button
+                type="primary"
+                icon={<LockOutlined />}
+                onClick={() => setPasswordModalVisible(true)}
+              >
+                修改密码
+              </Button>
+            }
+          >
+            <Descriptions column={2} bordered>
+              <Descriptions.Item label="用户名">{profile.username}</Descriptions.Item>
+              <Descriptions.Item label="总权限数">
+                <Tag color="cyan">{uniqueScopes.length} 个</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="项目角色数">
+                {profile.roles.length} 个
+              </Descriptions.Item>
+              <Descriptions.Item label="默认权限数">
+                {profile.default_permissions.length} 个
+              </Descriptions.Item>
+            </Descriptions>
+          </Card>
+
+          {/* 项目角色 */}
+          <Card
+            title={
+              <Space>
+                <SafetyOutlined />
+                <span>项目角色</span>
+              </Space>
+            }
+            style={{ marginBottom: 16 }}
+          >
+            {profile.roles.length === 0 ? (
+              <Alert message="暂未分配项目角色" type="info" showIcon />
+            ) : (
+              <Table
+                dataSource={profile.roles}
+                columns={roleColumns}
+                rowKey="project_id"
+                pagination={false}
+              />
+            )}
+          </Card>
+
+          {/* 默认权限 */}
+          <Card
+            title={
+              <Space>
+                <KeyOutlined />
+                <span>默认权限</span>
+              </Space>
+            }
+          >
+            <Alert
+              message="默认权限说明"
+              description="作为任务负责人或会议创建者时,您将自动获得相应的操作权限,无需额外分配角色。"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            {profile.default_permissions.length === 0 ? (
+              <Alert message="暂无默认权限" type="info" showIcon />
+            ) : (
+              <Table
+                dataSource={profile.default_permissions}
+                columns={defaultPermissionColumns}
+                rowKey="reason"
+                pagination={false}
+              />
+            )}
+          </Card>
+        </>
+      ),
+    },
+    {
+      key: 'resources',
+      label: (
+        <span>
+          <DatabaseOutlined />
+          MCP Resources
+        </span>
+      ),
+      children: (
+        <Card
+          title={
+            <Space>
+              <DatabaseOutlined />
+              <span>MCP Resources 管理</span>
+            </Space>
+          }
+          bodyStyle={{ padding: 0 }}
+        >
+          <ResourcesManagement username={currentUsername} />
+        </Card>
+      ),
+    },
+  ];
+
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
       <Title level={2}>
         <UserOutlined /> 个人中心
       </Title>
 
-      {/* 基本信息 */}
-      <Card
-        title={
-          <Space>
-            <UserOutlined />
-            <span>基本信息</span>
-          </Space>
-        }
-        style={{ marginBottom: 16 }}
-        extra={
-          <Button
-            type="primary"
-            icon={<LockOutlined />}
-            onClick={() => setPasswordModalVisible(true)}
-          >
-            修改密码
-          </Button>
-        }
-      >
-        <Descriptions column={2} bordered>
-          <Descriptions.Item label="用户名">{profile.username}</Descriptions.Item>
-          <Descriptions.Item label="总权限数">
-            <Tag color="cyan">{uniqueScopes.length} 个</Tag>
-          </Descriptions.Item>
-          <Descriptions.Item label="项目角色数">
-            {profile.roles.length} 个
-          </Descriptions.Item>
-          <Descriptions.Item label="默认权限数">
-            {profile.default_permissions.length} 个
-          </Descriptions.Item>
-        </Descriptions>
-      </Card>
-
-      {/* 项目角色 */}
-      <Card
-        title={
-          <Space>
-            <SafetyOutlined />
-            <span>项目角色</span>
-          </Space>
-        }
-        style={{ marginBottom: 16 }}
-      >
-        {profile.roles.length === 0 ? (
-          <Alert message="暂无项目角色" type="info" showIcon />
-        ) : (
-          <Table
-            dataSource={profile.roles}
-            columns={roleColumns}
-            rowKey={(record) => `${record.project_id}-${record.role_id}`}
-            pagination={false}
-          />
-        )}
-      </Card>
-
-      {/* 默认权限 */}
-      <Card
-        title={
-          <Space>
-            <KeyOutlined />
-            <span>默认权限</span>
-          </Space>
-        }
-      >
-        <Alert
-          message="默认权限说明"
-          description="作为任务负责人或会议创建者时,您将自动获得相应的操作权限,无需额外分配角色。"
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-        {profile.default_permissions.length === 0 ? (
-          <Alert message="暂无默认权限" type="info" showIcon />
-        ) : (
-          <Table
-            dataSource={profile.default_permissions}
-            columns={defaultPermissionColumns}
-            rowKey="reason"
-            pagination={false}
-          />
-        )}
-      </Card>
+      <Tabs
+        defaultActiveKey="info"
+        items={profileTabs}
+        style={{ marginTop: 16 }}
+      />
 
       {/* 修改密码模态框 */}
       <Modal

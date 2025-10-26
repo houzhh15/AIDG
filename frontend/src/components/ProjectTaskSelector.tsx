@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Select, Spin, message, Tooltip, Button } from 'antd';
-import { FolderOpenOutlined } from '@ant-design/icons';
+import { FolderOpenOutlined, CopyOutlined } from '@ant-design/icons';
 import { listProjects } from '../api/projects';
 import { getProjectTasks, ProjectTask } from '../api/tasks';
 import { getCurrentTask, setCurrentTask, CurrentTaskInfo } from '../api/currentTask';
@@ -127,6 +127,41 @@ const ProjectTaskSelector: React.FC = () => {
     }
   };
 
+  // 复制任务ID到剪切板
+  const handleCopyTaskId = async (taskId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // 阻止触发选择事件
+    if (!taskId) {
+      message.error('任务ID不存在');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(taskId);
+      message.success(`任务ID已复制: ${taskId}`);
+    } catch (error) {
+      console.error('复制失败:', error);
+      message.error('复制失败，请手动复制');
+    }
+  };
+
+  // 自定义选项渲染
+  const renderOption = (option: any) => {
+    // 从 value 中提取 taskId，确保能获取到正确的ID
+    const taskId = option.taskId || (option.value ? option.value.split('::')[1] : '');
+    return (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+        <span style={{ flex: 1 }}>{option.label}</span>
+        <Button
+          type="text"
+          size="small"
+          icon={<CopyOutlined />}
+          onClick={(e) => handleCopyTaskId(taskId, e)}
+          style={{ marginLeft: 8, color: '#1890ff' }}
+          title={`复制任务ID: ${taskId}`}
+        />
+      </div>
+    );
+  };
+
   // 基于当前登录用户的任务视图构建（按钮所有登录用户可见）
   const auth = loadAuth();
   const username = auth?.username;
@@ -151,10 +186,13 @@ const ProjectTaskSelector: React.FC = () => {
     
     return {
       label: p.name || p.id,
-      options: tasks.map(t => ({
-        label: t.name || t.id,
-        value: `${p.id}::${t.id}`
-      }))
+      options: tasks
+        .filter(t => t.id) // 确保任务有有效的ID
+        .map(t => ({
+          label: t.name || t.id,
+          value: `${p.id}::${t.id}`,
+          taskId: t.id // 添加 taskId 用于复制
+        }))
     };
   }).filter(g => g.options.length > 0);
 
@@ -187,6 +225,7 @@ const ProjectTaskSelector: React.FC = () => {
         suffixIcon={(loadingProjects || loadingTasks) ? <Spin size="small" /> : <FolderOpenOutlined />}
         options={grouped}
         disabled={!username}
+        optionRender={renderOption}
         />
       </Tooltip>
     </div>

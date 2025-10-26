@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/executionplan"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/simhash"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
 )
@@ -585,13 +587,28 @@ func HandleCreateProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
+		// Generate default execution plan template
+		repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
+		if err == nil {
+			generator := executionplan.NewTemplateGenerator()
+			opts := executionplan.TemplateOptions{Force: false}
+			if err := generator.Ensure(c.Request.Context(), repo, taskID, opts); err != nil {
+				// Log warning but don't block task creation
+				if !errors.Is(err, executionplan.ErrPlanExists) {
+					fmt.Printf("[WARN] Failed to generate execution plan template for task %s: %v\n", taskID, err)
+				}
+			} else {
+				fmt.Printf("[INFO] Generated execution plan template for task %s\n", taskID)
+			}
+		} else {
+			fmt.Printf("[WARN] Failed to create execution plan repository for task %s: %v\n", taskID, err)
+		}
+
 		// Read existing tasks or create new list
 		var taskList []map[string]interface{}
 		if data, err := os.ReadFile(tasksFile); err == nil {
 			json.Unmarshal(data, &taskList)
-		}
-
-		// Add new task
+		} // Add new task
 		taskList = append(taskList, taskData)
 
 		// Save tasks.json
@@ -1053,5 +1070,36 @@ func HandleGetTechDesign(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			}
 		}
 		c.JSON(http.StatusOK, gin.H{"content": string(data), "exists": true})
+	}
+}
+
+// HandleGetLegacyDocument GET /api/v1/projects/:id/legacy-documents/:doc_id
+// 获取旧文档系统中的文档内容（用于引用文档）
+func HandleGetLegacyDocument(reg *projects.ProjectRegistry) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		projectID := c.Param("id")
+		docID := c.Param("doc_id")
+
+		dir, err := getProjectDir(reg, projectID)
+		if err != nil {
+			notFoundResponse(c, "project not found")
+			return
+		}
+
+		// 读取旧文档路径: {project_dir}/documents/{doc_id}.md
+		filePath := filepath.Join(dir, "documents", docID+".md")
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				notFoundResponse(c, "document not found")
+			} else {
+				internalErrorResponse(c, fmt.Errorf("failed to read document: %w", err))
+			}
+			return
+		}
+
+		successResponse(c, gin.H{
+			"content": string(data),
+		})
 	}
 }

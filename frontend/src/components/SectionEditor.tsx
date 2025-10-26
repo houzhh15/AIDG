@@ -216,6 +216,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
           sections={sections?.sections || []}
           selectedSectionId={currentSectionId}
           onSelect={handleSectionSelect}
+          projectId={projectId}
+          taskId={taskId}
+          docType={docType as 'requirements' | 'design' | 'test'}
         />
       </Sider>
 

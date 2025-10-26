@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Spin, Alert, Empty, Descriptions, Tag, Timeline, Space, Button, message, Modal } from 'antd';
+import { Card, Spin, Alert, Empty, Descriptions, Tag, Timeline, Space, Button, message, Modal, Popconfirm, Tooltip } from 'antd';
 import { 
   CheckCircleOutlined, 
   ClockCircleOutlined, 
@@ -8,19 +8,36 @@ import {
   ExclamationCircleOutlined,
   CheckOutlined,
   CloseOutlined,
+  SendOutlined,
+  RollbackOutlined,
   EditOutlined,
-  SaveOutlined
+  SaveOutlined,
+  PlusOutlined,
+  DeleteOutlined,
+  InsertRowBelowOutlined
 } from '@ant-design/icons';
 import { 
   getExecutionPlan, 
+  submitExecutionPlan,
   approveExecutionPlan, 
   rejectExecutionPlan,
+  restoreApproval,
   updateExecutionPlanContent,
+  resetExecutionPlan,
   ExecutionPlan, 
   ExecutionPlanStep 
 } from '../api/tasks';
 import MarkdownViewer from './MarkdownViewer';
 import PlanEditor from './ExecutionPlan/PlanEditor';
+import StepEditorModal, { StepFormData, StepEditMode } from './StepEditorModal';
+import { 
+  buildMarkdown, 
+  renumberSteps, 
+  parseStepsFromMarkdown,
+  mergeFrontmatter,
+  ExecutionPlanFrontmatter,
+  ExecutionPlanStep as BuilderStep
+} from '../utils/planMarkdownBuilder';
 
 interface Props {
   projectId: string;
@@ -33,6 +50,8 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [selectedStep, setSelectedStep] = useState<ExecutionPlanStep | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -40,6 +59,13 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   const [saving, setSaving] = useState(false);
   const [taskAssignee, setTaskAssignee] = useState<string>('');
   const [currentUser, setCurrentUser] = useState<string>('');
+  
+  // 步骤编辑器状态
+  const [stepModalVisible, setStepModalVisible] = useState(false);
+  const [stepModalMode, setStepModalMode] = useState<StepEditMode>('create');
+  const [editingStep, setEditingStep] = useState<ExecutionPlanStep | null>(null);
+  const [insertPosition, setInsertPosition] = useState<number | undefined>(undefined);
+  const [resetting, setResetting] = useState(false);
 
   // 辅助函数: 将字面量转义字符转换为实际字符
   const unescapeText = (text: string): string => {
@@ -118,6 +144,46 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
     });
   };
 
+  const handleSubmit = async () => {
+    if (!projectId || !taskId) return;
+    
+    setSubmitting(true);
+    try {
+      await submitExecutionPlan(projectId, taskId, { comment: '提交执行计划审核' });
+      message.success('执行计划已提交审核');
+      await loadExecutionPlan(); // 重新加载以获取最新状态
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error || '提交失败';
+      message.error(errorMsg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (!projectId || !taskId) return;
+    
+    Modal.confirm({
+      title: '确认恢复审核',
+      content: '确定要将执行计划恢复到待审批状态吗？',
+      okText: '确认恢复',
+      cancelText: '取消',
+      onOk: async () => {
+        setRestoring(true);
+        try {
+          await restoreApproval(projectId, taskId, { comment: '恢复执行计划审核' });
+          message.success('执行计划已恢复到待审批状态');
+          await loadExecutionPlan(); // 重新加载以获取最新状态
+        } catch (err: any) {
+          const errorMsg = err?.response?.data?.error || '恢复失败';
+          message.error(errorMsg);
+        } finally {
+          setRestoring(false);
+        }
+      }
+    });
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'succeeded':
@@ -169,7 +235,30 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   // 检查计划状态是否可编辑
   const isEditableState = (status: string): boolean => {
     // 允许编辑已完成的计划（如需要存档管理，请移除 'Completed'）
-    return ['Pending Approval', 'Rejected', 'Approved', 'Executing', 'Completed'].includes(status);
+    return ['Draft', 'Pending Approval', 'Rejected', 'Approved', 'Executing', 'Completed'].includes(status);
+  };
+
+  // 检查是否可以进行步骤级别的编辑（添加、插入、删除步骤）
+  const canEditSteps = (): boolean => {
+    if (!plan) return false;
+    // 在 Approved、Executing、Completed 状态下不允许步骤级别的编辑
+    const restrictedStates = ['Approved', 'Executing', 'Completed'];
+    if (restrictedStates.includes(plan.status)) return false;
+    // 检查状态
+    if (!isEditableState(plan.status)) return false;
+    // TODO: 检查用户权限（当前用户是否为任务负责人）
+    // 这需要从任务信息中获取 assignee 并与当前用户对比
+    return true;
+  };
+
+  // 检查是否可以编辑步骤状态（在任何可编辑状态下都允许）
+  const canEditStepStatus = (): boolean => {
+    if (!plan) return false;
+    // 检查状态
+    if (!isEditableState(plan.status)) return false;
+    // TODO: 检查用户权限（当前用户是否为任务负责人）
+    // 这需要从任务信息中获取 assignee 并与当前用户对比
+    return true;
   };
 
   // 检查用户是否有编辑权限
@@ -225,6 +314,206 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
     }
   };
 
+  // 生成默认执行计划模板
+  const handleResetPlan = async (force: boolean = false) => {
+    if (!projectId || !taskId) return;
+    
+    setResetting(true);
+    try {
+      await resetExecutionPlan(projectId, taskId, force);
+      message.success('执行计划模板已生成');
+      await loadExecutionPlan();
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error || '生成模板失败';
+      message.error(errorMsg);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  // 打开步骤编辑器 - 创建模式
+  const handleAddStep = () => {
+    setStepModalMode('create');
+    setEditingStep(null);
+    setInsertPosition(undefined);
+    setStepModalVisible(true);
+  };
+
+  // 打开步骤编辑器 - 编辑模式
+  const handleEditStep = (step: ExecutionPlanStep) => {
+    setStepModalMode('edit');
+    setEditingStep(step);
+    setInsertPosition(undefined);
+    setStepModalVisible(true);
+  };
+
+  // 打开步骤编辑器 - 插入模式
+  const handleInsertStep = (afterStepIndex: number) => {
+    setStepModalMode('insert');
+    setEditingStep(null);
+    setInsertPosition(afterStepIndex + 1);
+    setStepModalVisible(true);
+  };
+
+  // 删除步骤
+  const handleDeleteStep = async (stepId: string) => {
+    if (!plan || !projectId || !taskId) return;
+    
+    setSaving(true);
+    try {
+      // 过滤掉被删除的步骤
+      const newSteps = plan.steps.filter(s => s.id !== stepId);
+      
+      // 重新编号
+      const renumbered = renumberSteps(newSteps.map(s => ({
+        id: s.id,
+        description: s.description,
+        status: s.status,
+        priority: s.priority as any,
+        dependencies: plan.dependencies
+          .filter(d => d.target === s.id)
+          .map(d => d.source)
+      })));
+
+      // 重建 frontmatter
+      const frontmatter: ExecutionPlanFrontmatter = {
+        plan_id: plan.plan_id,
+        task_id: plan.task_id,
+        status: plan.status,
+        created_at: plan.created_at,
+        updated_at: new Date().toISOString(),
+        dependencies: [] // 将从 renumbered 中提取
+      };
+
+      // 从步骤中提取新的依赖关系
+      const newDeps: any[] = [];
+      renumbered.forEach(step => {
+        step.dependencies?.forEach(depId => {
+          newDeps.push({ source: depId, target: step.id });
+        });
+      });
+      frontmatter.dependencies = newDeps;
+
+      // 重建 Markdown
+      const newContent = buildMarkdown(frontmatter, renumbered);
+      
+      await updateExecutionPlanContent(projectId, taskId, newContent);
+      message.success('步骤已删除');
+      await loadExecutionPlan();
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error || '删除步骤失败';
+      message.error(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // 步骤表单提交
+  const handleStepSubmit = async (formData: StepFormData) => {
+    if (!plan || !projectId || !taskId) return;
+    
+    setSaving(true);
+    try {
+      let newSteps: BuilderStep[];
+      
+      if (stepModalMode === 'create') {
+        // 创建新步骤 - 追加到末尾
+        const newStep: BuilderStep = {
+          id: `step-${String(plan.steps.length + 1).padStart(2, '0')}`,
+          description: formData.description,
+          status: formData.status,
+          priority: formData.priority,
+          dependencies: formData.dependencies
+        };
+        newSteps = [...plan.steps.map(s => ({
+          id: s.id,
+          description: s.description,
+          status: s.status,
+          priority: s.priority as any,
+          dependencies: plan.dependencies
+            .filter(d => d.target === s.id)
+            .map(d => d.source)
+        })), newStep];
+      } else if (stepModalMode === 'insert') {
+        // 插入步骤
+        const allSteps: BuilderStep[] = plan.steps.map(s => ({
+          id: s.id,
+          description: s.description,
+          status: s.status,
+          priority: s.priority as any,
+          dependencies: plan.dependencies
+            .filter(d => d.target === s.id)
+            .map(d => d.source)
+        }));
+        
+        const newStep: BuilderStep = {
+          id: 'temp-id',
+          description: formData.description,
+          status: formData.status,
+          priority: formData.priority,
+          dependencies: formData.dependencies
+        };
+        
+        allSteps.splice(insertPosition || 0, 0, newStep);
+        newSteps = renumberSteps(allSteps);
+      } else {
+        // 编辑现有步骤
+        newSteps = plan.steps.map(s => {
+          if (s.id === editingStep?.id) {
+            return {
+              id: s.id,
+              description: formData.description,
+              status: formData.status,
+              priority: formData.priority,
+              dependencies: formData.dependencies
+            };
+          }
+          return {
+            id: s.id,
+            description: s.description,
+            status: s.status,
+            priority: s.priority as any,
+            dependencies: plan.dependencies
+              .filter(d => d.target === s.id)
+              .map(d => d.source)
+          };
+        });
+      }
+
+      // 重建 frontmatter
+      const frontmatter: ExecutionPlanFrontmatter = {
+        plan_id: plan.plan_id,
+        task_id: plan.task_id,
+        status: plan.status,
+        created_at: plan.created_at,
+        updated_at: new Date().toISOString(),
+        dependencies: []
+      };
+
+      // 从步骤中提取依赖关系
+      const newDeps: any[] = [];
+      newSteps.forEach(step => {
+        step.dependencies?.forEach(depId => {
+          newDeps.push({ source: depId, target: step.id });
+        });
+      });
+      frontmatter.dependencies = newDeps;
+
+      // 重建 Markdown
+      const newContent = buildMarkdown(frontmatter, newSteps);
+      
+      await updateExecutionPlanContent(projectId, taskId, newContent);
+      message.success('步骤已保存');
+      setStepModalVisible(false);
+      await loadExecutionPlan();
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error || '保存步骤失败';
+      message.error(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // 获取指定步骤的依赖项
   const getStepDependencies = (stepId: string): string[] => {
     if (!plan?.dependencies) return [];
@@ -262,11 +551,22 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
       <Empty 
         description="暂无执行计划" 
         image={Empty.PRESENTED_IMAGE_SIMPLE}
-      />
+      >
+        <Button 
+          type="primary" 
+          icon={<PlusOutlined />}
+          loading={resetting}
+          onClick={() => handleResetPlan(false)}
+        >
+          生成默认模板
+        </Button>
+      </Empty>
     );
   }
 
   const showApprovalToolbar = plan.status === 'Pending Approval';
+  const showSubmitToolbar = plan.status === 'Draft' || plan.status === 'Rejected';
+  const showRestoreToolbar = plan.status === 'Approved' || plan.status === 'Executing' || plan.status === 'Completed';
   const showEditButton = canEdit() && !isEditMode;
 
   return (
@@ -323,6 +623,16 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
                     编辑
                   </Button>
                 )}
+                {showSubmitToolbar && (
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    loading={submitting}
+                    onClick={handleSubmit}
+                  >
+                    提交审核
+                  </Button>
+                )}
                 {showApprovalToolbar && (
                   <>
                     <Button
@@ -343,6 +653,16 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
                     </Button>
                   </>
                 )}
+                {showRestoreToolbar && (
+                  <Button
+                    type="default"
+                    icon={<RollbackOutlined />}
+                    loading={restoring}
+                    onClick={handleRestore}
+                  >
+                    恢复审核
+                  </Button>
+                )}
               </Space>
             }
           >
@@ -357,7 +677,22 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
       </Card>
 
       {/* 步骤时间线 */}
-      <Card title="执行步骤" style={{ marginBottom: 16 }}>
+      <Card 
+        title="执行步骤" 
+        style={{ marginBottom: 16 }}
+        extra={
+          canEditSteps() && (
+            <Button 
+              type="primary" 
+              icon={<PlusOutlined />}
+              onClick={handleAddStep}
+              size="small"
+            >
+              添加步骤
+            </Button>
+          )
+        }
+      >
         {plan.steps && plan.steps.length > 0 ? (
           <Timeline>
             {plan.steps.map((step) => {
@@ -397,6 +732,64 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
                     {step.updated_at && (
                       <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
                         更新于: {new Date(step.updated_at).toLocaleString('zh-CN')}
+                      </div>
+                    )}
+                    {canEditSteps() && (
+                      <div style={{ marginTop: 8 }}>
+                        <Space size="small">
+                          <Tooltip title="编辑步骤">
+                            <Button 
+                              type="link" 
+                              size="small"
+                              icon={<EditOutlined />}
+                              onClick={() => handleEditStep(step)}
+                            >
+                              编辑
+                            </Button>
+                          </Tooltip>
+                          <Tooltip title="在此步骤后插入新步骤">
+                            <Button 
+                              type="link" 
+                              size="small"
+                              icon={<InsertRowBelowOutlined />}
+                              onClick={() => handleInsertStep(plan.steps.indexOf(step))}
+                            >
+                              插入
+                            </Button>
+                          </Tooltip>
+                          <Popconfirm
+                            title="确认删除此步骤？"
+                            description="删除后将重新编号所有步骤"
+                            onConfirm={() => handleDeleteStep(step.id)}
+                            okText="确认"
+                            cancelText="取消"
+                          >
+                            <Button 
+                              type="link" 
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                            >
+                              删除
+                            </Button>
+                          </Popconfirm>
+                        </Space>
+                      </div>
+                    )}
+                    {canEditStepStatus() && !canEditSteps() && (
+                      <div style={{ marginTop: 8 }}>
+                        <Space size="small">
+                          <Tooltip title="编辑步骤状态">
+                            <Button 
+                              type="link" 
+                              size="small"
+                              icon={<EditOutlined />}
+                              onClick={() => handleEditStep(step)}
+                            >
+                              编辑状态
+                            </Button>
+                          </Tooltip>
+                        </Space>
                       </div>
                     )}
                   </div>
@@ -453,6 +846,34 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
           </div>
         )}
       </Modal>
+      
+      {/* 步骤编辑器模态框 */}
+      <StepEditorModal
+        mode={stepModalMode}
+        visible={stepModalVisible}
+        initialStep={editingStep ? {
+          id: editingStep.id,
+          description: editingStep.description,
+          status: editingStep.status,
+          priority: editingStep.priority as any,
+          dependencies: plan?.dependencies
+            .filter(d => d.target === editingStep.id)
+            .map(d => d.source)
+        } : undefined}
+        availableSteps={plan?.steps.map(s => ({
+          id: s.id,
+          description: s.description,
+          status: s.status,
+          priority: s.priority as any,
+          dependencies: plan?.dependencies
+            .filter(d => d.target === s.id)
+            .map(d => d.source)
+        })) || []}
+        insertPosition={insertPosition}
+        planStatus={plan?.status}
+        onSubmit={handleStepSubmit}
+        onCancel={() => setStepModalVisible(false)}
+      />
         </>
       )}
     </div>

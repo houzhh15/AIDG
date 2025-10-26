@@ -204,6 +204,32 @@ const TaskLinkedDocuments: React.FC<TaskLinkedDocumentsProps> = ({ projectId, ta
     [documentMeta, projectId]
   );
 
+  const handleUnlinkTask = useCallback(async (documentId: string) => {
+    try {
+      // 找到该文档与当前任务的所有引用
+      const refsToDelete = references.filter(
+        (ref) => ref.document_id === documentId && ref.task_id === taskId
+      );
+
+      if (refsToDelete.length === 0) {
+        message.warning('该文档未与当前任务关联');
+        return;
+      }
+
+      // 删除所有相关的引用
+      for (const ref of refsToDelete) {
+        await documentsAPI.deleteReference(projectId, ref.id);
+      }
+
+      // 重新加载数据
+      await loadData();
+      message.success('解除关联成功');
+    } catch (error) {
+      console.error('解除关联失败:', error);
+      message.error('解除关联失败，请稍后重试');
+    }
+  }, [projectId, taskId, references, loadData]);
+
   const associatedReferences = useMemo(() => {
     if (!documentMeta) {
       return [] as Reference[];
@@ -263,8 +289,9 @@ const TaskLinkedDocuments: React.FC<TaskLinkedDocumentsProps> = ({ projectId, ta
           loading={false}
           searchable={false}
           draggable={false}
-          showContextMenu={false}
+          showContextMenu={true}
           showToolbar={false}
+          onUnlinkTask={handleUnlinkTask}
         />
       </div>
 

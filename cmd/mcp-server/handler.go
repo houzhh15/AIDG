@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
 	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/tools"
 )
@@ -109,6 +110,255 @@ func (h *MCPHandler) extractTokenFromRequest(r *http.Request) string {
 	}
 
 	return ""
+}
+
+// getUsernameFromToken 从 JWT token 中解析用户名
+// 参数:
+//   - token: JWT token 字符串
+//
+// 返回:
+//   - string: 解析出的用户名
+//   - error: token 无效或解析失败时返回错误
+func (h *MCPHandler) getUsernameFromToken(token string) (string, error) {
+	if token == "" {
+		return "", fmt.Errorf("token is empty")
+	}
+
+	// 直接解析 JWT token 获取用户名
+	// 使用与 Web Server 相同的密钥
+	secret := os.Getenv("USER_JWT_SECRET")
+	if secret == "" {
+		secret = "dev-user-jwt-secret-at-least-32-chars" // 默认开发密钥
+	}
+
+	parsed, err := jwt.ParseWithClaims(token, &jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
+		return []byte(secret), nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to parse token: %w", err)
+	}
+
+	if !parsed.Valid {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	claims, ok := parsed.Claims.(*jwt.MapClaims)
+	if !ok {
+		return "", fmt.Errorf("invalid claims")
+	}
+
+	username, ok := (*claims)["username"].(string)
+	if !ok || username == "" {
+		return "", fmt.Errorf("username not found in token")
+	}
+
+	return username, nil
+} // handleResourcesList 处理 resources/list 请求
+// 参数:
+//   - w: HTTP 响应写入器
+//   - req: MCP 请求对象
+//   - r: 原始 HTTP 请求
+//
+// 功能:
+//   - 提取 Authorization Bearer token
+//   - 调用 getUsernameFromToken 解析用户名
+//   - 调用 Web Server API 获取资源列表
+//   - 转换为 MCP 协议格式并返回
+func (h *MCPHandler) handleResourcesList(w http.ResponseWriter, req MCPRequest, r *http.Request) {
+	// 1. 提取 token
+	clientToken := h.extractTokenFromRequest(r)
+	if clientToken == "" {
+		h.sendErrorResponse(w, req.ID, -32602, "Missing authentication token", nil)
+		return
+	}
+
+	// 2. 解析 token 获取 username
+	username, err := h.getUsernameFromToken(clientToken)
+	if err != nil {
+		h.sendErrorResponse(w, req.ID, -32602, "Invalid token", err.Error())
+		return
+	}
+
+	// 3. 调用 Web Server API
+	url := fmt.Sprintf("/api/v1/users/%s/resources", username)
+	resp, err := h.apiClient.MakeRequestWithToken("GET", url, nil, clientToken)
+	if err != nil {
+		h.sendErrorResponse(w, req.ID, -32603, "Failed to fetch resources", err.Error())
+		return
+	}
+
+	// 4. 解析响应
+	var apiResp struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			URI         string `json:"uri"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			MimeType    string `json:"mime_type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp, &apiResp); err != nil {
+		h.sendErrorResponse(w, req.ID, -32603, "Failed to parse response", err.Error())
+		return
+	}
+
+	// 5. 转换为 MCP 协议格式
+	resources := make([]map[string]interface{}, len(apiResp.Data))
+	for i, r := range apiResp.Data {
+		resources[i] = map[string]interface{}{
+			"uri":         r.URI,
+			"name":        r.Name,
+			"description": r.Description,
+			"mimeType":    r.MimeType,
+		}
+	}
+
+	response := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      req.ID,
+		"result": map[string]interface{}{
+			"resources": resources,
+		},
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleResourcesRead 处理 resources/read 请求
+// 参数:
+//   - w: HTTP 响应写入器
+//   - req: MCP 请求对象
+//   - r: 原始 HTTP 请求
+//
+// 功能:
+//   - 提取 URI 参数并校验
+//   - 调用 parseResourceURI 解析资源类型
+//   - 根据类型调用不同 Web Server API
+//   - 构造 MCP 协议格式并返回
+func (h *MCPHandler) handleResourcesRead(w http.ResponseWriter, req MCPRequest, r *http.Request) {
+	// 1. 提取 URI 参数
+	uri, ok := req.Params["uri"].(string)
+	if !ok || uri == "" {
+		h.sendErrorResponse(w, req.ID, -32602, "Missing or invalid URI parameter", nil)
+		return
+	}
+
+	// 2. 解析 URI
+	parsedURI, err := parseResourceURI(uri)
+	if err != nil {
+		h.sendErrorResponse(w, req.ID, -32602, "Invalid URI format", err.Error())
+		return
+	}
+
+	// 3. 提取 token
+	clientToken := h.extractTokenFromRequest(r)
+
+	// 4. 根据 URI 类型调用不同的 API
+	var content string
+	var mimeType string
+
+	switch parsedURI.Type {
+	case "task_document":
+		url := fmt.Sprintf("/api/v1/projects/%s/tasks/%s/%s/export",
+			parsedURI.ProjectID, parsedURI.TaskID, parsedURI.DocType)
+		resp, err := h.apiClient.MakeRequestWithToken("GET", url, nil, clientToken)
+		if err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to fetch task document", err.Error())
+			return
+		}
+		var docResp struct {
+			Content string `json:"content"`
+			Version int    `json:"version"`
+			ETag    string `json:"etag"`
+		}
+		if err := json.Unmarshal(resp, &docResp); err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to parse document response", err.Error())
+			return
+		}
+		content = docResp.Content
+		mimeType = "text/markdown"
+
+	case "project_document":
+		// DocType 已经是 API 格式（连字符），直接使用
+		url := fmt.Sprintf("/api/v1/projects/%s/%s",
+			parsedURI.ProjectID, parsedURI.DocType)
+		resp, err := h.apiClient.MakeRequestWithToken("GET", url, nil, clientToken)
+		if err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to fetch project document", err.Error())
+			return
+		}
+		var docResp struct {
+			Content string `json:"content"`
+			Exists  bool   `json:"exists"`
+		}
+		if err := json.Unmarshal(resp, &docResp); err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to parse document response", err.Error())
+			return
+		}
+		content = docResp.Content
+		mimeType = "text/markdown"
+
+	case "legacy_document":
+		// 引用文档：从Web Server获取内容
+		// 使用内部API (如果存在) 或者让Web Server处理文件读取
+		url := fmt.Sprintf("/api/v1/projects/%s/legacy-documents/%s",
+			parsedURI.ProjectID, parsedURI.DocID)
+		resp, err := h.apiClient.MakeRequestWithToken("GET", url, nil, clientToken)
+		if err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to fetch legacy document", err.Error())
+			return
+		}
+		var docResp struct {
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(resp, &docResp); err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to parse document response", err.Error())
+			return
+		}
+		content = docResp.Content
+		mimeType = "text/markdown"
+
+	case "custom_resource":
+		url := fmt.Sprintf("/api/v1/users/%s/resources/%s",
+			parsedURI.Username, parsedURI.ResourceID)
+		resp, err := h.apiClient.MakeRequestWithToken("GET", url, nil, clientToken)
+		if err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to fetch custom resource", err.Error())
+			return
+		}
+		var resResp struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Content  string `json:"content"`
+				MimeType string `json:"mime_type"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(resp, &resResp); err != nil {
+			h.sendErrorResponse(w, req.ID, -32603, "Failed to parse resource response", err.Error())
+			return
+		}
+		content = resResp.Data.Content
+		mimeType = resResp.Data.MimeType
+
+	default:
+		h.sendErrorResponse(w, req.ID, -32602, "Unsupported resource type", nil)
+		return
+	}
+
+	// 5. 返回 MCP 协议格式
+	response := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      req.ID,
+		"result": map[string]interface{}{
+			"contents": []map[string]interface{}{
+				{
+					"uri":      uri,
+					"mimeType": mimeType,
+					"text":     content,
+				},
+			},
+		},
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // ServeHTTP 实现 http.Handler 接口
@@ -223,6 +473,14 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handlePromptsGet(w, mcpReq)
 		return
 
+	case "resources/list":
+		h.handleResourcesList(w, mcpReq, r)
+		return
+
+	case "resources/read":
+		h.handleResourcesRead(w, mcpReq, r)
+		return
+
 	default:
 		h.sendErrorResponse(w, mcpReq.ID, -32601, "Method not found", nil)
 	}
@@ -243,6 +501,10 @@ func (h *MCPHandler) handleInitialize(w http.ResponseWriter, req struct {
 			"capabilities": map[string]interface{}{
 				"tools":   map[string]interface{}{},
 				"prompts": map[string]interface{}{},
+				"resources": map[string]interface{}{
+					"subscribe":   false,
+					"listChanged": false,
+				},
 			},
 			"serverInfo": map[string]interface{}{
 				"name":    "Meeting Recorder MCP Server V2",

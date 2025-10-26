@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
 // utils.go - 辅助函数
@@ -120,4 +121,71 @@ func maskToken(token string) string {
 		return "***"
 	}
 	return token[:4] + "***" + token[len(token)-4:]
+}
+
+// ResourceURI 解析后的 aidg:// 协议 URI 结构
+// 支持三种资源类型:
+//   - task_document: aidg://project/{project_id}/task/{task_id}/{doc_type}
+//   - project_document: aidg://project/{project_id}/{doc_type}
+//   - custom_resource: aidg://user/{username}/custom/{resource_id}
+type ResourceURI struct {
+	Type       string // "task_document", "project_document", "legacy_document", "custom_resource"
+	ProjectID  string
+	TaskID     string
+	DocType    string
+	DocID      string // for legacy_document
+	Username   string
+	ResourceID string
+}
+
+// parseResourceURI 解析 aidg:// 协议的 URI
+// 参数:
+//   - uri: URI 字符串
+//
+// 返回:
+//   - *ResourceURI: 解析后的 URI 结构
+//   - error: 解析失败时返回错误
+func parseResourceURI(uri string) (*ResourceURI, error) {
+	const prefix = "aidg://"
+	if !strings.HasPrefix(uri, prefix) {
+		return nil, fmt.Errorf("invalid URI scheme, must start with 'aidg://'")
+	}
+
+	path := strings.TrimPrefix(uri, prefix)
+	parts := strings.Split(path, "/")
+
+	result := &ResourceURI{}
+
+	// aidg://project/{project_id}/task/{task_id}/{doc_type}
+	// aidg://project/{project_id}/document/{doc_id}
+	// aidg://project/{project_id}/{doc_type}
+	// aidg://user/{username}/custom/{resource_id}
+	if len(parts) >= 2 && parts[0] == "project" {
+		result.ProjectID = parts[1]
+		if len(parts) == 5 && parts[2] == "task" {
+			// task document
+			result.Type = "task_document"
+			result.TaskID = parts[3]
+			result.DocType = parts[4]
+		} else if len(parts) == 4 && parts[2] == "document" {
+			// legacy document (reference document)
+			result.Type = "legacy_document"
+			result.DocID = parts[3]
+		} else if len(parts) == 3 {
+			// project document
+			result.Type = "project_document"
+			result.DocType = parts[2]
+		} else {
+			return nil, fmt.Errorf("invalid project URI format: expected 3, 4, or 5 parts, got %d", len(parts))
+		}
+	} else if len(parts) == 4 && parts[0] == "user" && parts[2] == "custom" {
+		// custom resource
+		result.Type = "custom_resource"
+		result.Username = parts[1]
+		result.ResourceID = parts[3]
+	} else {
+		return nil, fmt.Errorf("unsupported URI format: %s", uri)
+	}
+
+	return result, nil
 }

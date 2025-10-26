@@ -159,7 +159,6 @@ const ReferencePanel: React.FC<ReferencePanelProps> = ({
     }
     try {
       await onDeleteReference(referenceId);
-      message.success('引用删除成功');
     } catch (error) {
       console.error('引用删除失败:', error);
       message.error('引用删除失败，请稍后重试');

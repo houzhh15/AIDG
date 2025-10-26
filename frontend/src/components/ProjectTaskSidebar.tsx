@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask } from '../api/tasks';
 import { getUsers, User } from '../api/users';
 import { useTaskRefresh } from '../contexts/TaskRefreshContext';
@@ -122,6 +122,16 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
     } catch (error) {
       message.error('任务删除失败');
       console.error(error);
+    }
+  };
+
+  const handleCopyTaskId = async (taskId: string) => {
+    try {
+      await navigator.clipboard.writeText(taskId);
+      message.success(`任务ID已复制: ${taskId}`);
+    } catch (error) {
+      console.error('复制失败:', error);
+      message.error('复制失败，请手动复制');
     }
   };
 
@@ -261,6 +271,11 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                         },
                         { type: 'divider' },
                         {
+                          key: 'copy-id',
+                          icon: <CopyOutlined />,
+                          label: '复制任务ID',
+                        },
+                        {
                           key: 'edit',
                           icon: <EditOutlined />,
                           label: '编辑任务',
@@ -273,6 +288,9 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                         },
                       ],
                       onClick: ({ key }) => {
+                        if (key === 'copy-id') {
+                          handleCopyTaskId(task.id);
+                        }
                         if (key === 'edit') {
                           handleEdit(task);
                         }

@@ -42,8 +42,11 @@ func (h *Handler) RegisterRoutes(r gin.IRouter) {
 	// Web API (面向前端) - 使用标准 RESTful 方法
 	r.GET("/api/v1/projects/:id/tasks/:task_id/execution-plan", h.GetExecutionPlan)
 	r.PUT("/api/v1/projects/:id/tasks/:task_id/execution-plan", h.UpdateExecutionPlanContent)
+	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/submit", h.SubmitExecutionPlan)
 	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/approve", h.ApproveExecutionPlan)
 	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/reject", h.RejectExecutionPlan)
+	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/restore-approval", h.RestoreApproval)
+	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/reset", h.ResetExecutionPlan)
 }
 
 func (h *Handler) UpdateExecutionPlan(c *gin.Context) {
@@ -212,6 +215,55 @@ func (h *Handler) GetExecutionPlan(c *gin.Context) {
 	})
 }
 
+func (h *Handler) SubmitExecutionPlan(c *gin.Context) {
+	projectID := c.Param("id")
+	taskID := c.Param("task_id")
+
+	var req struct {
+		Comment string `json:"comment"`
+	}
+	c.ShouldBindJSON(&req)
+
+	svc, err := h.newService(projectID, taskID)
+	if err != nil {
+		h.writeRepositoryError(c, err)
+		return
+	}
+
+	plan, err := svc.Load(c.Request.Context())
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+
+	// 验证计划状态
+	if plan.Status != models.PlanStatusDraft && plan.Status != models.PlanStatusRejected {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "plan is not in draft or rejected status",
+		})
+		return
+	}
+
+	// 更新计划状态为 Pending Approval
+	plan, err = svc.UpdatePlanStatus(c.Request.Context(), models.PlanStatusPendingApproval)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "execution plan submitted successfully",
+		"plan": gin.H{
+			"plan_id":      plan.PlanID,
+			"task_id":      plan.TaskID,
+			"status":       plan.Status,
+			"updated_at":   plan.UpdatedAt,
+			"dependencies": plan.Dependencies,
+			"steps":        toStepsResponse(plan.Steps),
+		},
+	})
+}
+
 func (h *Handler) ApproveExecutionPlan(c *gin.Context) {
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
@@ -308,6 +360,57 @@ func (h *Handler) RejectExecutionPlan(c *gin.Context) {
 	})
 }
 
+// RestoreApproval 恢复执行计划到待审批状态 (Web API)
+// POST /api/v1/projects/:id/tasks/:task_id/execution-plan/restore-approval
+func (h *Handler) RestoreApproval(c *gin.Context) {
+	projectID := c.Param("id")
+	taskID := c.Param("task_id")
+
+	var req struct {
+		Comment string `json:"comment"`
+	}
+	c.ShouldBindJSON(&req)
+
+	svc, err := h.newService(projectID, taskID)
+	if err != nil {
+		h.writeRepositoryError(c, err)
+		return
+	}
+
+	plan, err := svc.Load(c.Request.Context())
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+
+	// 验证计划状态 - 只允许从 Approved、Executing、Completed 状态恢复
+	if plan.Status != models.PlanStatusApproved &&
+		plan.Status != models.PlanStatusExecuting &&
+		plan.Status != models.PlanStatusCompleted {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "plan status does not allow restoration to pending approval",
+		})
+		return
+	}
+
+	// 更新计划状态为 Pending Approval
+	plan, err = svc.UpdatePlanStatus(c.Request.Context(), models.PlanStatusPendingApproval)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"plan_id":    plan.PlanID,
+			"status":     plan.Status,
+			"updated_at": plan.UpdatedAt,
+		},
+		"message": "plan restored to pending approval successfully",
+	})
+}
+
 // UpdateExecutionPlanContent 更新执行计划内容 (Web API)
 // PUT /api/v1/projects/:id/tasks/:task_id/execution-plan
 func (h *Handler) UpdateExecutionPlanContent(c *gin.Context) {
@@ -383,6 +486,113 @@ func (h *Handler) UpdateExecutionPlanContent(c *gin.Context) {
 			"updated_at": plan.UpdatedAt,
 		},
 		"message": "plan updated successfully",
+	})
+}
+
+// ResetExecutionPlan 重置或生成执行计划模板 (Web API)
+// POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reset
+func (h *Handler) ResetExecutionPlan(c *gin.Context) {
+	projectID := c.Param("id")
+	taskID := c.Param("task_id")
+
+	// 解析请求体
+	var req struct {
+		Force bool `json:"force"`
+	}
+	c.ShouldBindJSON(&req)
+
+	// 从 Gin context 获取当前用户和权限
+	userInterface, exists := c.Get("user")
+	if !exists {
+		fmt.Printf("[ExecutionPlan] ERROR: user not found in context - ProjectID: %s, TaskID: %s, Path: %s, Method: %s\n",
+			projectID, taskID, c.Request.URL.Path, c.Request.Method)
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "user not authenticated",
+		})
+		return
+	}
+	username, ok := userInterface.(string)
+	if !ok || username == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "invalid user context",
+		})
+		return
+	}
+
+	// 获取用户权限范围
+	scopesInterface, _ := c.Get("scopes")
+	scopes, _ := scopesInterface.([]string)
+
+	// 读取任务信息获取 assignee
+	task, err := h.loadTaskInfo(projectID, taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": fmt.Sprintf("failed to load task info: %v", err),
+		})
+		return
+	}
+
+	// 权限校验：复用 UpdatePlanContent 的逻辑
+	if !services.HasEditPermission(username, task.Assignee, scopes) {
+		fmt.Printf("[ExecutionPlan] Permission denied - User: %s, Assignee: %s, Scopes: %v\n",
+			username, task.Assignee, scopes)
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "permission denied: only task assignee or users with execution_plan.edit/task.write scope can reset execution plan",
+		})
+		return
+	}
+
+	// 创建仓库
+	repo, err := NewFileRepository(h.projectsRoot, projectID, taskID)
+	if err != nil {
+		h.writeRepositoryError(c, err)
+		return
+	}
+
+	// 使用 TemplateGenerator 生成或覆盖模板
+	generator := NewTemplateGenerator()
+	opts := TemplateOptions{Force: req.Force}
+	if err := generator.Ensure(c.Request.Context(), repo, taskID, opts); err != nil {
+		if errors.Is(err, ErrPlanExists) {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "execution plan already exists, use force=true to overwrite",
+			})
+		} else {
+			fmt.Printf("[ExecutionPlan] Failed to generate template - ProjectID: %s, TaskID: %s, Error: %v\n",
+				projectID, taskID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": fmt.Sprintf("failed to generate template: %v", err),
+			})
+		}
+		return
+	}
+
+	// 加载最新计划
+	svc, err := h.newService(projectID, taskID)
+	if err != nil {
+		h.writeRepositoryError(c, err)
+		return
+	}
+
+	plan, err := svc.Load(c.Request.Context())
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+
+	// 记录 INFO 日志
+	fmt.Printf("[ExecutionPlan] Template reset successfully - ProjectID: %s, TaskID: %s, PlanID: %s, Force: %t, User: %s\n",
+		projectID, taskID, plan.PlanID, req.Force, username)
+
+	// 返回成功响应
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"plan_id":    plan.PlanID,
+			"status":     plan.Status,
+			"updated_at": plan.UpdatedAt,
+		},
+		"message": "execution plan reset successfully",
 	})
 }
 

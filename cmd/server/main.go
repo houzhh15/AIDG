@@ -35,6 +35,7 @@ import (
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/handlers"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/middleware"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/resource"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
 	"github.com/houzhh15-hub/AIDG/pkg/logger"
@@ -177,6 +178,13 @@ func main() {
 	}
 	appLogger.Info("role management services ready")
 
+	// Initialize ResourceManager
+	resourceManager := resource.NewResourceManager(baseDir)
+	if err := resourceManager.LoadAll(); err != nil {
+		appLogger.Warn("failed to load resources, starting fresh", "error", err)
+	}
+	appLogger.Info("resource manager ready")
+
 	// Initialize permission injector
 	meetingsRoot := cfg.Data.MeetingsDir
 	permissionInjector := services.NewPermissionInjector(baseDir, meetingsRoot)
@@ -218,7 +226,7 @@ func main() {
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot)
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -253,6 +261,9 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	<-quit
 	appLogger.Info("shutdown signal received, shutting down server...")
+
+	// Shutdown resource manager
+	resourceManager.Shutdown()
 
 	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -407,6 +418,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan/next-step":       {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan":                                  {users.ScopeTaskRead},
 		"PUT /api/v1/projects/:id/tasks/:task_id/execution-plan":                                  {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/submit":                          {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/approve":                         {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reject":                          {users.ScopeTaskWrite},
 		"GET /api/v1/sync/prepare":                                                                {users.ScopeUserManage}, "POST /api/v1/sync": {users.ScopeUserManage},
@@ -416,8 +428,10 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"PUT /api/v1/projects/:id/documents/nodes/:node_id/move": {users.ScopeProjectDocWrite}, "PATCH /api/v1/projects/:id/documents/nodes/:node_id": {users.ScopeProjectDocWrite},
 		"DELETE /api/v1/projects/:id/documents/nodes/:node_id": {users.ScopeProjectDocWrite},
 		"POST /api/v1/projects/:id/documents/relationships":    {users.ScopeProjectDocWrite}, "GET /api/v1/projects/:id/documents/relationships": {users.ScopeProjectDocRead},
-		"DELETE /api/v1/projects/:id/documents/relationships/:from_id/:to_id": {users.ScopeProjectDocWrite}, "POST /api/v1/projects/:id/documents/references": {users.ScopeProjectDocWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/references": {users.ScopeProjectDocRead}, "GET /api/v1/projects/:id/documents/:doc_id/references": {users.ScopeProjectDocRead},
+		"DELETE /api/v1/projects/:id/documents/relationships/:from_id/:to_id": {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/documents/references":                      {users.ScopeProjectDocWrite},
+		"DELETE /api/v1/projects/:id/documents/references/:ref_id":            {users.ScopeProjectDocWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/references":                  {users.ScopeProjectDocRead}, "GET /api/v1/projects/:id/documents/:doc_id/references": {users.ScopeProjectDocRead},
 		"PUT /api/v1/projects/:id/references/:id/status":     {users.ScopeProjectDocWrite},
 		"PUT /api/v1/projects/:id/documents/:doc_id/content": {users.ScopeProjectDocWrite}, "GET /api/v1/projects/:id/documents/:doc_id/content": {users.ScopeProjectDocRead},
 		"GET /api/v1/projects/:id/documents/:doc_id/versions": {users.ScopeProjectDocRead}, "GET /api/v1/projects/:id/documents/:doc_id/versions/:version": {users.ScopeProjectDocRead},
@@ -698,7 +712,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 	})
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager) {
 	// ========== Environment Check ==========
 	r.GET("/api/v1/environment/status", func(c *gin.Context) {
 		envHandler.GetStatus(c.Writer, c.Request)
@@ -748,7 +762,15 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 
 	// ========== User Task Management ==========
 	r.GET("/api/v1/user/current-task", api.HandleGetUserCurrentTask)
-	r.PUT("/api/v1/user/current-task", api.HandlePutUserCurrentTask(userRoleService))
+	r.PUT("/api/v1/user/current-task", api.HandlePutUserCurrentTask(userRoleService, resourceManager, docHandler))
+
+	// ========== Resource Management API ==========
+	resourceHandler := api.NewResourceHandler(resourceManager)
+	r.GET("/api/v1/users/:username/resources", resourceHandler.GetUserResources)
+	r.POST("/api/v1/users/:username/resources", resourceHandler.AddCustomResource)
+	r.PUT("/api/v1/users/:username/resources/:resource_id", resourceHandler.UpdateResource)
+	r.DELETE("/api/v1/users/:username/resources/:resource_id", resourceHandler.DeleteResource)
+	r.GET("/api/v1/users/:username/resources/:resource_id", resourceHandler.GetResourceByID)
 
 	// ========== Role Management ==========
 	// Role CRUD (query parameter style)
@@ -915,6 +937,9 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.GET("/api/v1/projects/:id/tech-design", api.HandleGetTechDesign(projectsReg))
 	r.PUT("/api/v1/projects/:id/tech-design", api.HandlePutProjectTechDesign(projectsReg))
 
+	// Legacy documents (for reference documents)
+	r.GET("/api/v1/projects/:id/legacy-documents/:doc_id", api.HandleGetLegacyDocument(projectsReg))
+
 	// Project document copy route
 	r.POST("/api/v1/projects/:id/copy-from-task", api.HandleCopyFromTask(projectsReg, meetingsReg))
 
@@ -1072,6 +1097,7 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.GET("/api/v1/projects/:id/documents/relationships", docHandler.GetRelationships)
 	r.DELETE("/api/v1/projects/:id/documents/relationships/:from_id/:to_id", docHandler.RemoveRelationship)
 	r.POST("/api/v1/projects/:id/documents/references", docHandler.CreateReference)
+	r.DELETE("/api/v1/projects/:id/documents/references/:ref_id", docHandler.DeleteReferenceHandler)
 	r.GET("/api/v1/projects/:id/tasks/:task_id/references", docHandler.GetTaskReferences)
 	r.GET("/api/v1/projects/:id/documents/:doc_id/references", docHandler.GetDocumentReferences)
 	r.PUT("/api/v1/projects/:id/references/:id/status", docHandler.UpdateReferenceStatus)

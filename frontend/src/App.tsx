@@ -9,6 +9,7 @@ import ProjectTaskSidebar from './components/ProjectTaskSidebar';
 import TaskDocuments from './components/TaskDocuments';
 import { RightPanel } from './components/RightPanel';
 import ProjectTaskSelector from './components/ProjectTaskSelector';
+import ContextManagerDropdown from './components/project/ContextManagerDropdown';
 import { AudioModeSelectModal, AudioMode } from './components/AudioModeSelectModal';
 import { UploadModal } from './components/UploadModal';
 import { useAudioService } from './services/audioService';
@@ -433,6 +434,11 @@ const App: React.FC = () => {
           {viewMode === 'project' && (
             <div style={{display:'flex',alignItems:'center',gap:12}}>
               <ProjectTaskSelector />
+              <ContextManagerDropdown
+                username={auth?.username || ''}
+                projectId={currentProject}
+                taskId={currentProjectTask}
+              />
             </div>
           )}
           {viewMode === 'meeting' && (

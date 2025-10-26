@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Layout, List, Button, Typography, Space, Modal, Form, Input, Popconfirm, message, Tag, Tooltip } from 'antd';
+import { Layout, List, Button, Typography, Space, Modal, Form, Input, Popconfirm, message, Tag, Tooltip, Dropdown, type MenuProps } from 'antd';
 import { PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, HistoryOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { ProjectSummary, listProjects, createProject, deleteProject, patchProject } from '../api/projects';
 
@@ -59,7 +59,47 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
     try { await deleteProject(id); message.success('已删除'); if(current===id) onSelect(''); refresh(); } catch(e:any){ message.error(e.message); }
   }
 
+  async function handleCopyProjectId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id);
+      message.success('项目ID已复制到剪贴板');
+    } catch (error) {
+      message.error('复制失败');
+    }
+  }
+
   const toggleCollapsed = () => setCollapsed((prev) => !prev);
+
+  const getContextMenuItems = (project: ProjectSummary): MenuProps['items'] => [
+    {
+      key: 'copy-id',
+      icon: <CopyOutlined />,
+      label: '拷贝项目ID',
+      onClick: () => handleCopyProjectId(project.id),
+    },
+    {
+      key: 'edit',
+      icon: <EditOutlined />,
+      label: '编辑项目',
+      onClick: () => openEdit(project),
+    },
+    {
+      key: 'delete',
+      icon: <DeleteOutlined />,
+      label: '删除项目',
+      danger: true,
+      onClick: () => handleDelete(project.id),
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'create',
+      icon: <PlusOutlined />,
+      label: '新建项目',
+      onClick: openCreate,
+    },
+  ];
 
   return (
     <Layout.Sider
@@ -113,14 +153,18 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
           dataSource={projects}
           loading={loading}
           renderItem={p => (
-            <List.Item
-              onClick={()=>onSelect(p.id)}
-              style={{
-                cursor: 'pointer',
-                background: p.id===current ? '#f0f5ff' : undefined,
-                padding: collapsed ? '8px 4px' : '8px 8px'
-              }}
+            <Dropdown
+              menu={{ items: getContextMenuItems(p) }}
+              trigger={['contextMenu']}
             >
+              <List.Item
+                onClick={()=>onSelect(p.id)}
+                style={{
+                  cursor: 'pointer',
+                  background: p.id===current ? '#f0f5ff' : undefined,
+                  padding: collapsed ? '8px 4px' : '8px 8px'
+                }}
+              >
               <div style={{ display:'flex', width:'100%', alignItems:'center' }}>
                 <div style={{ flex:1, minWidth:0 }}>
                   <Typography.Text
@@ -186,6 +230,7 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
                 )}
               </div>
             </List.Item>
+            </Dropdown>
           )}
         />
       </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import dayjs from 'dayjs';
 import { DocumentTreeDTO, MoveNodeRequest, Relationship as RelationshipDTO, RelationType, DependencyType, CreateRelationshipRequest, ImpactResult as ImpactAnalyzerResult } from '../api/documents';
+import { addCustomResource } from '../api/resourceApi';
 import { Space, Typography, Tabs, message, Spin, Modal, Button, Layout, Drawer, Tooltip, Form, Select, Input, Table, Tag, Popconfirm, Divider } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { FileTextOutlined, SearchOutlined, ShareAltOutlined, HistoryOutlined, ExclamationCircleOutlined, BarChartOutlined, FullscreenOutlined, CompressOutlined, PlusOutlined, CloseOutlined } from '@ant-design/icons';
@@ -371,6 +372,12 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
   const [relationshipModalVisible, setRelationshipModalVisible] = useState(false);
   const [relationshipForm] = Form.useForm<{ from_id: string; to_id: string; type: RelationType; dependency_type?: DependencyType; description?: string }>();
   const relationshipTypeValue = Form.useWatch('type', relationshipForm);
+
+  // 任务关联状态
+  const [linkTaskModalVisible, setLinkTaskModalVisible] = useState(false);
+  const [linkingDocumentId, setLinkingDocumentId] = useState<string | null>(null);
+  const [availableTasks, setAvailableTasks] = useState<Array<{ id: string; name: string; feature_name?: string; assignee?: string }>>([]);
+  const [linkTaskForm] = Form.useForm<{ task_id: string; anchor?: string; context?: string }>();
 
   const referenceLoaders = useMemo<Partial<Record<ReferenceSourceValue, ReferenceContentLoader>>>(() => {
     const loaders: Partial<Record<ReferenceSourceValue, ReferenceContentLoader>> = {};
@@ -932,7 +939,109 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
       await loadReferences({ documentId: referenceData.document_id, fallbackToTask: false });
     } catch (error) {
       console.error('添加引用失败:', error);
-      message.error('添加引用失败，请稍后重试');
+      message.error('添加引用失败,请稍后重试');
+    }
+  };
+
+  const handleDeleteReference = async (referenceId: string) => {
+    try {
+      const { documentsAPI } = await import('../api/documents');
+      await documentsAPI.deleteReference(projectId, referenceId);
+      
+      // 重新加载引用列表
+      if (relationshipFilterDocId) {
+        await loadReferences({ documentId: relationshipFilterDocId, fallbackToTask: false });
+      } else if (currentDocumentId) {
+        await loadReferences({ documentId: currentDocumentId, fallbackToTask: false });
+      }
+      
+      message.success('删除引用成功');
+    } catch (error) {
+      console.error('删除引用失败:', error);
+      message.error('删除引用失败,请稍后重试');
+    }
+  };
+
+  // 添加到MCP资源
+  const handleAddToResource = async (nodeId: string) => {
+    try {
+      const { documentsAPI } = await import('../api/documents');
+      const authModule = await import('../api/auth');
+      
+      // 获取当前用户信息
+      const auth = authModule.loadAuth();
+      if (!auth) {
+        message.error('请先登录');
+        return;
+      }
+
+      // 获取文档内容
+      const { meta, content } = await documentsAPI.getContent(projectId, nodeId);
+      
+      // 创建MCP资源
+      await addCustomResource(auth.username, {
+        name: meta.title || `文档资源 - ${nodeId}`,
+        description: `从项目文档 "${meta.title}" 创建的MCP资源`,
+        content: content,
+        visibility: 'private',
+        projectId: projectId,
+        taskId: taskId
+      });
+
+      message.success('成功添加到MCP资源');
+    } catch (error) {
+      console.error('添加到MCP资源失败:', error);
+      message.error('添加到MCP资源失败，请稍后重试');
+    }
+  };
+
+  // 关联任务
+  const handleLinkToTask = async (nodeId: string) => {
+    try {
+      setLinkingDocumentId(nodeId);
+      
+      // 加载项目下的任务列表
+      const projectsApi = await import('../api/projects');
+      const tasks = await projectsApi.getProjectTasks(projectId);
+      setAvailableTasks(tasks || []);
+      
+      // 打开任务选择Modal
+      setLinkTaskModalVisible(true);
+      linkTaskForm.resetFields();
+    } catch (error) {
+      console.error('加载任务列表失败:', error);
+      message.error('加载任务列表失败，请稍后重试');
+    }
+  };
+
+  // 提交任务关联
+  const handleLinkTaskSubmit = async () => {
+    if (!linkingDocumentId) {
+      message.error('文档ID缺失');
+      return;
+    }
+
+    try {
+      const values = await linkTaskForm.validateFields();
+      
+      // 创建引用关联
+      const { documentsAPI } = await import('../api/documents');
+      await documentsAPI.createReference(projectId, {
+        task_id: values.task_id,
+        document_id: linkingDocumentId,
+        ...(values.anchor && values.anchor.trim() ? { anchor: values.anchor.trim() } : {}),
+        ...(values.context && values.context.trim() ? { context: values.context.trim() } : {})
+      });
+
+      message.success('任务关联成功');
+      setLinkTaskModalVisible(false);
+      linkTaskForm.resetFields();
+      
+      // 刷新引用列表
+      await loadReferences({ documentId: linkingDocumentId, fallbackToTask: false });
+    } catch (error) {
+      console.error('关联任务失败:', error);
+      message.error('关联任务失败，请稍后重试');
     }
   };
 
@@ -2277,6 +2386,8 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
               onRename={handleRenameNode}
               onDelete={handleDeleteNode}
               onMove={handleMoveNode}
+              onLinkToTask={handleLinkToTask}
+              onAddToResource={handleAddToResource}
             />
           </div>
         );
@@ -2398,6 +2509,7 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
                   references={references}
                   loading={referencesLoading}
                   onAddReference={handleAddReferenceEntry}
+                  onDeleteReference={handleDeleteReference}
                   onReferenceClick={(documentId) => handleNodeSelect(documentId)}
                 />
               </div>
@@ -2701,6 +2813,74 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
               <Input.TextArea 
                 rows={3} 
                 placeholder="可选，描述该关系的背景或备注"
+                maxLength={500}
+                showCount
+              />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        {/* 任务关联模态框 */}
+        <Modal
+          title="关联任务"
+          open={linkTaskModalVisible}
+          onOk={handleLinkTaskSubmit}
+          onCancel={() => {
+            setLinkTaskModalVisible(false);
+            linkTaskForm.resetFields();
+          }}
+          okText="创建关联"
+          cancelText="取消"
+          width={600}
+        >
+          <Form
+            form={linkTaskForm}
+            layout="vertical"
+            requiredMark={false}
+          >
+            <Form.Item
+              label="选择任务"
+              name="task_id"
+              rules={[{ required: true, message: '请选择要关联的任务' }]}
+            >
+              <Select
+                showSearch
+                placeholder="选择任务"
+                options={availableTasks.map(task => ({
+                  value: task.id,
+                  label: task.name,
+                  description: [task.feature_name, task.assignee].filter(Boolean).join(' · ')
+                }))}
+                optionFilterProp="label"
+                optionRender={(option) => (
+                  <div>
+                    <div>{option.label}</div>
+                    {option.data.description && (
+                      <div style={{ fontSize: '12px', color: '#999' }}>
+                        {option.data.description}
+                      </div>
+                    )}
+                  </div>
+                )}
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="锚点"
+              name="anchor"
+              extra="可选，用于标识文档中的具体位置，如章节号"
+            >
+              <Input placeholder="例如：2.1.3" maxLength={50} />
+            </Form.Item>
+
+            <Form.Item
+              label="上下文说明"
+              name="context"
+              extra="可选，描述引用的上下文或用途"
+            >
+              <Input.TextArea
+                rows={3}
+                placeholder="例如：该文档的数据库设计部分被当前任务引用"
                 maxLength={500}
                 showCount
               />

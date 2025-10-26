@@ -3,6 +3,7 @@ package documents
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -554,6 +555,33 @@ func (h *Handler) UpdateReferenceStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// DeleteReferenceHandler 删除引用 DELETE /api/v1/projects/:id/documents/references/:ref_id
+func (h *Handler) DeleteReferenceHandler(c *gin.Context) {
+	projectID := c.Param("id")
+	refID := c.Param("ref_id")
+
+	h.mu.RLock()
+	refManager := h.refManagers[projectID]
+	h.mu.RUnlock()
+
+	if refManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Reference manager not initialized"})
+		return
+	}
+
+	err := refManager.DeleteReference(refID)
+	if err != nil {
+		if err.Error() == fmt.Sprintf("reference not found: %s", refID) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Reference not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete reference: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 // UpdateDocumentContent 更新文档内容 PUT /api/v1/projects/:id/documents/:doc_id/content
 func (h *Handler) UpdateDocumentContent(c *gin.Context) {
 	projectID := c.Param("id")
@@ -979,4 +1007,66 @@ func (h *Handler) cleanupTaskReferences(refManager *ReferenceManager, taskID str
 	}
 
 	return nil
+}
+
+// GetReferencesByTaskInternal 内部方法:获取任务的引用列表(用于资源管理)
+func (h *Handler) GetReferencesByTaskInternal(projectID, taskID string) ([]map[string]interface{}, error) {
+	h.mu.RLock()
+	refManager := h.refManagers[projectID]
+	h.mu.RUnlock()
+
+	if refManager == nil {
+		return nil, fmt.Errorf("reference manager not initialized for project: %s", projectID)
+	}
+
+	refs, err := refManager.GetReferencesByTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换为 map[string]interface{} 格式
+	result := make([]map[string]interface{}, 0, len(refs))
+	for _, ref := range refs {
+		result = append(result, map[string]interface{}{
+			"id":          ref.ID,
+			"task_id":     ref.TaskID,
+			"document_id": ref.DocumentID,
+			"anchor":      ref.Anchor,
+			"context":     ref.Context,
+			"status":      ref.Status,
+		})
+	}
+
+	return result, nil
+}
+
+// GetDocumentContentInternal 内部方法:获取文档内容(用于资源管理)
+func (h *Handler) GetDocumentContentInternal(projectID, docID string) (map[string]interface{}, error) {
+	// 使用 getOrCreateManager 确保管理器已初始化
+	manager, err := h.getOrCreateManager(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize document manager: %w", err)
+	}
+
+	// 从索引获取节点元数据
+	meta, err := manager.index.GetNode(docID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 读取文档内容
+	contentFile := filepath.Join(manager.projectDir, fmt.Sprintf("%s.md", docID))
+	contentBytes, err := os.ReadFile(contentFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read document content: %w", err)
+	}
+
+	return map[string]interface{}{
+		"content": string(contentBytes),
+		"meta": map[string]interface{}{
+			"title":   meta.Title,
+			"type":    meta.Type,
+			"version": meta.Version,
+		},
+	}, nil
 }

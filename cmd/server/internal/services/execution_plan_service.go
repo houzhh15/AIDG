@@ -732,12 +732,14 @@ func statusFromMarker(marker string) models.StepStatus {
 	switch strings.ToLower(marker) {
 	case "x":
 		return models.StepStatusSucceeded
-	case "-":
-		return models.StepStatusCancelled
-	case ">", "~":
+	case ">":
 		return models.StepStatusInProgress
 	case "!":
 		return models.StepStatusFailed
+	case "~":
+		return models.StepStatusCancelled
+	case "-":
+		return models.StepStatusCancelled
 	default:
 		return models.StepStatusPending
 	}
@@ -1155,8 +1157,8 @@ func HasEditPermission(userID string, taskAssignee string, userScopes []string) 
 // 不可编辑状态：Failed
 func IsEditableState(status models.PlanStatus) bool {
 	switch status {
-	case models.PlanStatusPendingApproval, models.PlanStatusRejected:
-		// 审批前和被拒绝后可以无条件编辑
+	case models.PlanStatusDraft, models.PlanStatusPendingApproval, models.PlanStatusRejected:
+		// 草稿、审批前和被拒绝后可以无条件编辑
 		return true
 	case models.PlanStatusApproved, models.PlanStatusExecuting, models.PlanStatusCompleted:
 		// 已批准、执行中或已完成可以有条件编辑（仅 pending 状态的步骤）

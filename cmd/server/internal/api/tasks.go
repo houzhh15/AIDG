@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/documents"
+	"github.com/houzhh15-hub/AIDG/cmd/server/internal/resource"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
 )
 
@@ -82,7 +84,7 @@ func HandleGetUserCurrentTask(c *gin.Context) {
 
 // HandlePutUserCurrentTask PUT /api/v1/user/current-task
 // 设置当前用户的当前任务
-func HandlePutUserCurrentTask(userRoleService services.UserRoleService) gin.HandlerFunc {
+func HandlePutUserCurrentTask(userRoleService services.UserRoleService, resourceManager *resource.ResourceManager, docHandler *documents.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		username := currentUser(c)
 
@@ -168,6 +170,18 @@ func HandlePutUserCurrentTask(userRoleService services.UserRoleService) gin.Hand
 		if err := setUserCurrentTask(username, request.ProjectID, request.TaskID); err != nil {
 			internalErrorResponse(c, fmt.Errorf("failed to set current task: %w", err))
 			return
+		}
+
+		// 集成自动资源管理
+		if resourceManager != nil {
+			// 1. 清除旧任务的自动资源
+			if err := resourceManager.ClearAutoAddedResources(username); err != nil {
+				// 记录日志但不阻塞主流程
+				fmt.Printf("[ERROR] HandlePutUserCurrentTask: failed to clear auto resources for user %s: %v\n", username, err)
+			}
+
+			// 2. 添加新任务的自动资源
+			addTaskResources(resourceManager, username, request.ProjectID, request.TaskID, docHandler)
 		}
 
 		successResponseWithMessage(c, "current task updated", nil)

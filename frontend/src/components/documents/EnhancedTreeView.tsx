@@ -24,7 +24,10 @@ import {
   FileOutlined,
   DragOutlined,
   FullscreenOutlined,
-  CompressOutlined
+  CompressOutlined,
+  ShareAltOutlined,
+  LinkOutlined,
+  DisconnectOutlined
 } from '@ant-design/icons';
 import { DocumentTreeNode, DocumentType } from '../../types/documents';
 
@@ -105,6 +108,9 @@ interface EnhancedTreeViewProps {
   onRename?: (nodeId: string, title: string) => Promise<void> | void;
   onDelete?: (nodeId: string) => void;
   onMove?: (dragNodeId: string, targetNodeId: string, position: 'before' | 'after' | 'inside') => void;
+  onAddToResource?: (nodeId: string) => void;
+  onLinkToTask?: (nodeId: string) => void;
+  onUnlinkTask?: (nodeId: string) => void;
   referenceOptions?: ReferenceOptionGroup[];
   referenceContextOptions?: ReferenceContextOptionsMap;
 }
@@ -135,6 +141,9 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
   onRename,
   onDelete,
   onMove,
+  onAddToResource,
+  onLinkToTask,
+  onUnlinkTask,
   referenceOptions,
   referenceContextOptions
 }) => {
@@ -338,13 +347,15 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
   };
 
   const getContextMenuProps = (node: DocumentTreeNode): MenuProps => {
-    const items: MenuProps['items'] = [
-      {
+    const items: MenuProps['items'] = [];
+
+    if (onAdd) {
+      items.push({
         key: 'add',
         icon: <PlusOutlined />,
         label: '添加子节点'
-      }
-    ];
+      });
+    }
 
     if (onRename) {
       items.push({
@@ -354,13 +365,40 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
       });
     }
 
-    items.push({ type: 'divider' });
-    items.push({
-      key: 'delete',
-      icon: <DeleteOutlined />,
-      label: '删除节点',
-      danger: true
-    });
+    if (onLinkToTask) {
+      if (items.length > 0) items.push({ type: 'divider' });
+      items.push({
+        key: 'link-to-task',
+        icon: <LinkOutlined />,
+        label: '关联任务'
+      });
+    }
+
+    if (onUnlinkTask) {
+      items.push({
+        key: 'unlink-task',
+        icon: <DisconnectOutlined />,
+        label: '解除关联'
+      });
+    }
+
+    if (onAddToResource) {
+      items.push({
+        key: 'add-to-resource',
+        icon: <ShareAltOutlined />,
+        label: '添加到MCP资源'
+      });
+    }
+
+    if (onDelete) {
+      if (items.length > 0) items.push({ type: 'divider' });
+      items.push({
+        key: 'delete',
+        icon: <DeleteOutlined />,
+        label: '删除节点',
+        danger: true
+      });
+    }
 
     return {
       items,
@@ -369,6 +407,12 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
           handleAddNode(node.id);
         } else if (key === 'rename' && onRename) {
           handleRenameStart(node);
+        } else if (key === 'link-to-task' && onLinkToTask) {
+          onLinkToTask(node.id);
+        } else if (key === 'unlink-task' && onUnlinkTask) {
+          onUnlinkTask(node.id);
+        } else if (key === 'add-to-resource' && onAddToResource) {
+          onAddToResource(node.id);
         } else if (key === 'delete') {
           handleDeleteNode(node.id);
         }
