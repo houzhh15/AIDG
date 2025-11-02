@@ -27,6 +27,41 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# NLP service specific
+nlp_service/__pycache__/
+nlp_service/venv/
+nlp_service/.venv/
+
 # Environment
 .env
 .env.local
@@ -65,3 +100,5 @@ scripts/test-build-local.sh
 # Playwright/Test artifacts
 .playwright-mcp/
 test-docker-build.sh
+
+docs/USER_MANUAL.md

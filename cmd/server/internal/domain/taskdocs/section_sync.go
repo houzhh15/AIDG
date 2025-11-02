@@ -50,13 +50,17 @@ func (sm *SyncManager) SyncFromCompiled() error {
 	}
 
 	// 5. 写入章节文件
+	remainingContent := string(content) // 剩余内容变量
 	for _, section := range meta.Sections {
 		// 提取章节内容（不含标题）
-		sectionContent := extractSectionContent(string(content), section)
+		sectionContent, endPos := extractSectionContent(remainingContent, section)
 
 		if err := WriteSectionFile(sectionsDir, section, sectionContent); err != nil {
 			return fmt.Errorf("write section %s: %w", section.ID, err)
 		}
+
+		// 从剩余内容中移除已处理的章节（包括标题和内容）
+		remainingContent = remainingContent[endPos:]
 	}
 
 	// 6. 保存 sections.json（完全覆盖）

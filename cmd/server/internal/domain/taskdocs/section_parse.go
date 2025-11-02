@@ -183,16 +183,21 @@ func buildHierarchy(sections []Section) {
 }
 
 // extractSectionContent 从完整文档中提取特定章节的内容（不含标题，不含子章节）
-func extractSectionContent(compiledContent string, section Section) string {
+// 返回：章节内容, 处理的末尾字节位置
+func extractSectionContent(compiledContent string, section Section) (string, int) {
 	lines := strings.Split(compiledContent, "\n")
 	var contentBuffer strings.Builder
 	inSection := false
-	inCodeBlock := false // 🔧 修复：添加代码块状态追踪
+	inCodeBlock := false
+	currentPos := 0 // 当前处理的字节位置
 
 	for _, line := range lines {
+		lineStartPos := currentPos
+		currentPos += len(line) + 1 // +1 for \n
+
 		trimmed := strings.TrimSpace(line)
 
-		// 🔧 修复：检测代码块边界
+		// 检测代码块边界
 		if strings.HasPrefix(trimmed, "```") {
 			if inSection {
 				contentBuffer.WriteString(line + "\n")
@@ -201,18 +206,16 @@ func extractSectionContent(compiledContent string, section Section) string {
 			continue
 		}
 
-		// 🔧 修复：只在代码块外检测标题
+		// 只在代码块外检测标题
 		if !inCodeBlock && isHeading(line) {
-			// 找到目标章节的开始
-			if line == section.Title {
+			if line == section.Title && !inSection {
 				inSection = true
 				continue // 跳过标题行
 			}
 
-			// 🔧 修复：遇到任何标题都停止提取（保证不包含子章节）
-			// 这样父章节的内容只包含到第一个子标题之前
+			// 遇到任何标题都停止提取（保证不包含子章节）
 			if inSection {
-				break
+				return strings.TrimSpace(contentBuffer.String()), lineStartPos
 			}
 		}
 
@@ -222,5 +225,11 @@ func extractSectionContent(compiledContent string, section Section) string {
 		}
 	}
 
-	return strings.TrimSpace(contentBuffer.String())
+	// 如果到文档末尾仍未找到下一个标题
+	if inSection {
+		return strings.TrimSpace(contentBuffer.String()), len(compiledContent)
+	}
+
+	// 未找到章节
+	return "", 0
 }

@@ -22,7 +22,8 @@ build:
 	@echo "Building for development..."
 	go build -o bin/server ./cmd/server
 	go build -o bin/mcp-server ./cmd/mcp-server
-	@echo "Build complete: bin/server, bin/mcp-server"
+	go build -o bin/merge-segments ./cmd/merge-segments
+	@echo "Build complete: bin/server, bin/mcp-server, bin/merge-segments"
 
 # 生产构建
 build-prod:

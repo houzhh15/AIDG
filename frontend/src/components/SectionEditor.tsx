@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Layout, Spin, message } from 'antd'
+import { Layout, Spin, message, Modal } from 'antd'
 import SectionTree, { FULL_DOCUMENT_ID } from './SectionTree'
 import SectionContentEditor from './SectionContentEditor'
 import { getTaskSections, getTaskSection, updateTaskSection, updateTaskSectionFull, getTaskDocument, saveTaskDocument } from '../api/tasks'
@@ -22,18 +22,19 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [isFullEditMode, setIsFullEditMode] = useState(false) // 新增：是否为全文编辑模式
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false) // 新增：跟踪是否有未保存的更改
 
   // 加载章节列表
   useEffect(() => {
     loadSections()
   }, [projectId, taskId, docType])
 
-  // 加载章节内容
+  // 加载章节内容（依赖任务参数，确保任务切换时重新加载）
   useEffect(() => {
     if (currentSectionId) {
       loadSectionContent(currentSectionId)
     }
-  }, [currentSectionId])
+  }, [currentSectionId, projectId, taskId, docType])
 
   const loadSections = async () => {
     setLoading(true)
@@ -99,6 +100,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
           setSectionContent(response)
         }
       }
+      
+      // 加载新章节内容时，重置未保存状态
+      setHasUnsavedChanges(false)
     } catch (error) {
       message.error('加载章节内容失败')
       console.error(error)
@@ -109,13 +113,35 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
 
   const handleSectionSelect = (sectionId: string) => {
     // 如果有未保存的更改，提示用户
-    // TODO: 实现未保存检测
-    setCurrentSectionId(sectionId)
+    if (hasUnsavedChanges) {
+      Modal.confirm({
+        title: '未保存的更改',
+        content: '当前章节有未保存的更改，切换章节将丢失这些更改。是否要保存？',
+        okText: '保存',
+        cancelText: '不保存',
+        onOk: async () => {
+          // 保存当前章节
+          await handleSave()
+          // 保存成功后切换章节
+          setCurrentSectionId(sectionId)
+          setHasUnsavedChanges(false)
+        },
+        onCancel: () => {
+          // 不保存，直接切换章节
+          setCurrentSectionId(sectionId)
+          setHasUnsavedChanges(false)
+        }
+      })
+    } else {
+      // 没有未保存的更改，直接切换
+      setCurrentSectionId(sectionId)
+    }
   }
 
   const handleContentChange = (content: string) => {
     if (sectionContent) {
       setSectionContent({ ...sectionContent, content })
+      setHasUnsavedChanges(true) // 标记有未保存的更改
     }
   }
 
@@ -178,6 +204,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
       if (onSaveCallback) {
         onSaveCallback()
       }
+      
+      // 重置未保存状态
+      setHasUnsavedChanges(false)
     } catch (error: any) {
       if (error.response?.status === 409) {
         message.error('版本冲突，请刷新后重试')
@@ -187,6 +216,13 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
       console.error(error)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleCancel = () => {
+    setHasUnsavedChanges(false) // 重置未保存状态
+    if (onCancel) {
+      onCancel()
     }
   }
 
@@ -200,6 +236,7 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
 
   return (
     <Layout style={{ height: '100%', overflow: 'hidden' }}>
+      {/* 左侧：章节树 */}
       <Sider 
         width={300} 
         theme="light" 
@@ -222,15 +259,16 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
         />
       </Sider>
 
-      <Content style={{ padding: '0 16px' }}>
+      {/* 主内容区：编辑器 */}
+      <Content style={{ padding: '0 16px', position: 'relative' }}>
         {sectionContent ? (
           <SectionContentEditor
             section={sectionContent}
             onContentChange={handleContentChange}
             onSave={handleSave}
-            onCancel={onCancel}
+            onCancel={handleCancel}
             saving={saving}
-            isFullEditMode={isFullEditMode}  // 传递全文编辑模式状态
+            isFullEditMode={isFullEditMode}
           />
         ) : (
           <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>

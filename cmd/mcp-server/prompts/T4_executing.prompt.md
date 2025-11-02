@@ -1,5 +1,5 @@
 ---
-name: executing
+name: t4_executing
 description: 用于生成代码实现提示词，驱动自动化编码的提示词模版。
 version: 1.1
 ---
@@ -95,4 +95,7 @@ Next:
 失败代码：NO_TASK / PLAN_EMPTY / PROMPT_RECORD_FAIL / EXEC_FAIL / TEST_FAIL
 
 ---
-请开始执行当前任务的代码实现提示生成。
+请开始执行当前任务的代码实现提示生成，要求：
+- 严格参考设计文档，从中提取描述及代码片段，如果非必要不要进行调整。
+- 如果有必要调整，请务必用mcp章节编辑工具同步更新设计文档。
+- 请在任务时mcp添加简短任务总结。

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +41,7 @@ import (
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
 	"github.com/houzhh15-hub/AIDG/pkg/logger"
+	"github.com/houzhh15-hub/AIDG/pkg/similarity"
 )
 
 // generateRandomPassword generates a cryptographically secure random password
@@ -48,6 +51,40 @@ func generateRandomPassword(length int) string {
 		panic(fmt.Sprintf("failed to generate random password: %v", err))
 	}
 	return base64.URLEncoding.EncodeToString(bytes)[:length]
+}
+
+// sectionServiceAdapter adapts taskdocs.SectionService to similarity.SectionServiceInterface
+type sectionServiceAdapter struct {
+	svc taskdocs.SectionService
+}
+
+func (a *sectionServiceAdapter) GetSections(projectID, taskID, docType string) (*similarity.SectionsResponse, error) {
+	meta, err := a.svc.GetSections(projectID, taskID, docType)
+	if err != nil {
+		return nil, err
+	}
+	resp := &similarity.SectionsResponse{
+		Sections: make([]similarity.SectionMeta, len(meta.Sections)),
+	}
+	for i, s := range meta.Sections {
+		resp.Sections[i] = similarity.SectionMeta{
+			ID:    s.ID,
+			Title: s.Title,
+		}
+	}
+	return resp, nil
+}
+
+func (a *sectionServiceAdapter) GetSection(projectID, taskID, docType, sectionID string, includeChildren bool) (*similarity.SectionResponse, error) {
+	content, err := a.svc.GetSection(projectID, taskID, docType, sectionID, includeChildren)
+	if err != nil {
+		return nil, err
+	}
+	return &similarity.SectionResponse{
+		ID:      content.ID,
+		Title:   content.Title,
+		Content: content.Content,
+	}, nil
 }
 
 func main() {
@@ -974,6 +1011,41 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.POST("/api/v1/projects/:id/tasks/:task_id/test/squash", api.HandleSquashTaskDoc(taskDocSvc, "test"))
 	r.GET("/api/v1/projects/:id/tasks/:task_id/test/export", api.HandleExportTaskDoc(taskDocSvc, "test"))
 
+	// ========== Similarity Service (Semantic Recommendations) ==========
+	// Initialize NLP client and similarity service before taskDocHandler
+	nlpServiceURL := os.Getenv("NLP_SERVICE_URL")
+	if nlpServiceURL == "" {
+		nlpServiceURL = "http://localhost:5001" // Default to localhost:5001
+	}
+	nlpClient := similarity.NewNLPClient(nlpServiceURL, 5*time.Second)
+	log.Printf("[INFO] NLP Service URL: %s", nlpServiceURL)
+
+	// Create adapter instance (using sectionService defined below)
+	var sectionAdapter *sectionServiceAdapter
+
+	// Create a factory function to get or create similarity service for a project
+	projectVectorManagers := make(map[string]*similarity.VectorIndexManager)
+	var vectorManagerMutex sync.RWMutex
+
+	getSimilarityService := func(projectID string) *similarity.SimilarityService {
+		vectorManagerMutex.Lock()
+		defer vectorManagerMutex.Unlock()
+
+		if _, ok := projectVectorManagers[projectID]; !ok {
+			// Pass data root directory, not projects root
+			// VectorIndexManager will append "projects/{projectID}" internally
+			dataRoot := "./data"
+			projectVectorManagers[projectID] = similarity.NewVectorIndexManager(projectID, dataRoot)
+			log.Printf("[INFO] Created VectorIndexManager for project: %s", projectID)
+		}
+
+		return similarity.NewSimilarityService(
+			projectVectorManagers[projectID],
+			nlpClient,
+			sectionAdapter,
+		)
+	}
+
 	// ========== Legacy Task Document Endpoints (Compatibility) ==========
 	// These endpoints provide backward compatibility for the frontend
 	// Task document handler (兼容 GET/PUT)
@@ -1026,7 +1098,28 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 				}
 				meta, _ := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
 				exists := len(b) > 0
-				c.JSON(http.StatusOK, gin.H{"exists": exists, "content": string(b), "version": meta.Version, "etag": meta.ETag})
+
+				response := gin.H{
+					"exists":  exists,
+					"content": string(b),
+					"version": meta.Version,
+					"etag":    meta.ETag,
+				}
+
+				// ⭐ New: Optional recommendations feature
+				includeRec := c.Query("include_recommendations") == "true"
+				if includeRec && exists {
+					simService := getSimilarityService(projectID)
+					recs, err := simService.GetRecommendations(c.Request.Context(), projectID, taskID, docType, 5)
+					if err != nil {
+						log.Printf("[WARN] Failed to get recommendations for %s/%s/%s: %v", projectID, taskID, docType, err)
+						// Recommendation failure doesn't affect main flow
+					} else {
+						response["recommendations"] = recs
+					}
+				}
+
+				c.JSON(http.StatusOK, response)
 				return
 			}
 
@@ -1052,6 +1145,14 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 					c.JSON(http.StatusInternalServerError, gin.H{"error": aErr.Error()})
 					return
 				}
+
+				// ⭐ Trigger async vectorization after successful save
+				simService := getSimilarityService(projectID)
+				if vErr := simService.VectorizeDocument(context.Background(), projectID, taskID, docType); vErr != nil {
+					log.Printf("[WARN] Failed to trigger vectorization for %s/%s/%s: %v", projectID, taskID, docType, vErr)
+					// Non-blocking: continue with success response even if vectorization fails
+				}
+
 				c.JSON(http.StatusOK, gin.H{"success": true, "version": meta.Version, "duplicate": duplicate, "etag": meta.ETag})
 				return
 			}
@@ -1070,6 +1171,9 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	// ========== Task Document Sections API (21 endpoints) ==========
 	// Section management for requirements, design, and test documents
 	sectionService := taskdocs.NewSectionService(projectsRoot)
+
+	// Initialize the adapter with sectionService
+	sectionAdapter = &sectionServiceAdapter{svc: sectionService}
 
 	// Requirements sections (7 endpoints)
 	requirementsGroup := r.Group("/api/v1/projects/:id/tasks/:task_id/requirements")

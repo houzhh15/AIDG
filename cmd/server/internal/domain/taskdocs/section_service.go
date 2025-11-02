@@ -261,56 +261,34 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 		}
 	}
 
-	// 5. 清空父章节的子章节列表
-	section.Children = []string{}
-	if err := UpdateSectionInMeta(meta, *section); err != nil {
-		return fmt.Errorf("update parent section: %w", err)
+	// 5. 删除父章节本身（因为我们要用新内容完全替换这个区域）
+	if err := DeleteSectionFile(sectionsDir, *section); err != nil {
+		fmt.Printf("Warning: delete parent section file %s: %v\n", section.ID, err)
 	}
-
-	// 6. 更新父章节的内容
-	// 提取新内容中的正文部分（去掉标题行）
-	lines := strings.Split(strings.TrimSpace(fullContent), "\n")
-	contentWithoutTitle := ""
-	if len(lines) > 0 {
-		// 跳过第一行（标题）
-		if len(lines) > 1 {
-			contentWithoutTitle = strings.Join(lines[1:], "\n")
-		}
-	}
-	contentWithoutTitle = strings.TrimSpace(contentWithoutTitle)
-
-	// 写入父章节文件
-	if err := WriteSectionFile(sectionsDir, *section, contentWithoutTitle); err != nil {
-		return fmt.Errorf("write parent section file: %w", err)
-	}
-
-	// 更新父章节哈希
-	section.Hash = hashContent(contentWithoutTitle)
-	if err := UpdateSectionInMeta(meta, *section); err != nil {
-		return fmt.Errorf("update parent section hash: %w", err)
+	if err := RemoveSectionFromMeta(meta, sectionID, false); err != nil {
+		return fmt.Errorf("remove parent section from meta: %w", err)
 	}
 
 	meta.UpdatedAt = time.Now()
 
-	// 7. 保存元数据
+	// 6. 保存元数据
 	if err := saveSectionMeta(metaPath, meta); err != nil {
 		return fmt.Errorf("save meta: %w", err)
 	}
 
-	// 8. 重新拼接成 compiled.md
-	sm := NewSyncManager(docPath, docType)
-	if err := sm.SyncToCompiled(); err != nil {
-		return fmt.Errorf("sync to compiled: %w", err)
-	}
-
-	// 9. 读取新的 compiled.md
+	// 7. 直接使用用户编辑的完整内容替换 compiled.md
+	// 注意：需要保留其他章节的内容，只替换被编辑的部分
 	compiledPath := filepath.Join(docPath, "compiled.md")
-	newCompiled, err := os.ReadFile(compiledPath)
-	if err != nil {
+	oldCompiled, err := os.ReadFile(compiledPath)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read compiled.md: %w", err)
 	}
 
-	// 10. 通过 DocService 保存（记录到 chunks.ndjson）
+	// 构建新的 compiled.md：保留其他章节，替换当前编辑的父章节区域
+	newCompiled := s.replaceSection(string(oldCompiled), section, fullContent)
+
+	// 8. 通过 DocService 保存（记录到 chunks.ndjson）
+	// 重要：使用 replace_full 操作，这会触发 SyncFromCompiled 重新解析章节
 	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
 	if err != nil {
 		return fmt.Errorf("load doc meta: %w", err)
@@ -318,20 +296,86 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		string(newCompiled),   // 新的完整文档内容
+		newCompiled,           // 新的完整文档内容
 		"section_edit",        // 用户标识
 		&docMeta.Version,      // 使用 doc meta 的版本号进行并发检查
-		"replace_full",        // 操作类型：全文替换
+		"replace_full",        // 操作类型：全文替换（会触发 SyncFromCompiled）
 		"update_section_full", // 来源：章节全文更新
 	)
 	if err != nil {
 		return fmt.Errorf("save through doc service: %w", err)
 	}
 
-	// 11. 基于新的 compiled.md 重新同步章节（确保一致性）
-	// DocService.Append 已经调用了 SyncFromCompiled，所以不需要再次调用
+	// 9. SyncFromCompiled 已经在 DocService.Append 中调用
+	// 新的章节结构已经从 compiled.md 重新解析出来
 
 	return nil
+}
+
+// replaceSection 在 compiled.md 中替换指定章节的内容
+// 保留其他章节不变，只替换被编辑的章节区域
+func (s *sectionServiceImpl) replaceSection(compiledContent string, section *Section, newContent string) string {
+	lines := strings.Split(compiledContent, "\n")
+
+	// 构建章节标题模式（根据 level）
+	prefix := strings.Repeat("#", section.Level)
+	sectionTitle := prefix + " " + section.Title
+
+	// 查找章节开始位置
+	startIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == strings.TrimSpace(sectionTitle) {
+			startIdx = i
+			break
+		}
+	}
+
+	if startIdx == -1 {
+		// 如果找不到原章节，直接返回新内容
+		// 这种情况可能发生在章节被删除或标题被修改时
+		return newContent
+	}
+
+	// 查找章节结束位置（下一个同级或更高级的标题）
+	endIdx := len(lines)
+	for i := startIdx + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "#") {
+			// 检查是否是同级或更高级的标题
+			level := 0
+			for _, ch := range line {
+				if ch == '#' {
+					level++
+				} else {
+					break
+				}
+			}
+			if level <= section.Level {
+				endIdx = i
+				break
+			}
+		}
+	}
+
+	// 构建新的 compiled.md
+	var result strings.Builder
+
+	// 保留章节之前的内容
+	if startIdx > 0 {
+		result.WriteString(strings.Join(lines[:startIdx], "\n"))
+		result.WriteString("\n")
+	}
+
+	// 插入新内容
+	result.WriteString(newContent)
+
+	// 保留章节之后的内容
+	if endIdx < len(lines) {
+		result.WriteString("\n")
+		result.WriteString(strings.Join(lines[endIdx:], "\n"))
+	}
+
+	return result.String()
 }
 
 // InsertSection 插入新章节

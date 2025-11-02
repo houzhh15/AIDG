@@ -159,9 +159,14 @@ func LoadTasks(reg *Registry) error {
 		// backfill SB defaults for legacy persisted tasks missing values
 		backfillSBDefaults(&pt.Cfg)
 
+		// Create orchestrator instance for the loaded task
+		// This ensures that API endpoints requiring dependency client work correctly
+		orch := orchestrator.New(pt.Cfg)
+
 		reg.m[pt.ID] = &Task{
 			ID:        pt.ID,
 			Cfg:       pt.Cfg,
+			Orch:      orch, // Initialize orchestrator
 			State:     st,
 			CreatedAt: pt.CreatedAt,
 		}

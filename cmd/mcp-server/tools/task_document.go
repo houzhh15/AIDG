@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+
 	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
 )
 
@@ -15,7 +16,8 @@ func (t *GetTaskDocumentTool) Name() string {
 }
 
 func (t *GetTaskDocumentTool) Description() string {
-	return "获取任务的指定槽位文档内容。支持的槽位：requirements（需求文档）、design（设计文档）、test（测试文档）"
+	return "获取任务的指定槽位文档内容。支持的槽位：requirements（需求文档）、design（设计文档）、test（测试文档）。" +
+		"可选参数 include_recommendations=true 将返回基于语义相似度的历史任务推荐（Top-5）。"
 }
 
 func (t *GetTaskDocumentTool) InputSchema() map[string]interface{} {
@@ -34,6 +36,11 @@ func (t *GetTaskDocumentTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "文档槽位键名",
 				"enum":        []string{"requirements", "design", "test"},
+			},
+			"include_recommendations": map[string]interface{}{
+				"type":        "boolean",
+				"description": "是否包含语义相似推荐（可选，默认false）",
+				"default":     false,
 			},
 		},
 		"required": []string{"project_id", "task_id", "slot_key"},
@@ -70,7 +77,13 @@ func (t *GetTaskDocumentTool) Execute(
 		return "", fmt.Errorf("get_task_document: %w", err)
 	}
 
-	// 4. 调用 API
+	// 4. 可选：添加推荐参数
+	includeRec, _ := args["include_recommendations"].(bool)
+	if includeRec {
+		path += "?include_recommendations=true"
+	}
+
+	// 5. 调用 API
 	return shared.CallAPI(apiClient, "GET", path, nil, clientToken)
 }
 

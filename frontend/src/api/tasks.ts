@@ -17,6 +17,14 @@ export interface ProjectTask {
 export interface TaskDocument {
   exists: boolean;
   content: string;
+  recommendations?: Array<{
+    task_id: string;
+    doc_type: string;
+    section_id: string;
+    title: string;
+    similarity: number;
+    snippet: string;
+  }>;
 }
 
 export interface CreateTaskRequest {
@@ -94,10 +102,19 @@ export async function deleteProjectTask(projectId: string, taskId: string): Prom
 }
 
 // 获取任务文档
-export async function getTaskDocument(projectId: string, taskId: string, docType: 'requirements' | 'design' | 'test'): Promise<TaskDocument> {
+export async function getTaskDocument(
+  projectId: string, 
+  taskId: string, 
+  docType: 'requirements' | 'design' | 'test',
+  includeRecommendations: boolean = false
+): Promise<TaskDocument> {
   // 添加时间戳参数防止缓存
   const timestamp = new Date().getTime();
-  const response = await authedApi.get<TaskDocument>(`${BASE_URL}/${projectId}/tasks/${taskId}/${docType}?_t=${timestamp}`);
+  let url = `${BASE_URL}/${projectId}/tasks/${taskId}/${docType}?_t=${timestamp}`;
+  if (includeRecommendations) {
+    url += '&include_recommendations=true';
+  }
+  const response = await authedApi.get<TaskDocument>(url);
   return response.data;
 }
 

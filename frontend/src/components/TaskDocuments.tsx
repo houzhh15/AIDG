@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card } from 'antd';
+import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card, Drawer, Badge } from 'antd';
 import {
   FileTextOutlined,
   EditOutlined,
@@ -11,8 +11,10 @@ import {
   UserOutlined,
   AppstoreOutlined,
   ClockCircleOutlined,
+  ReloadOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
-import { getTaskDocument, saveTaskDocument, getProjectTask, getTaskPrompts, getExecutionPlan, ProjectTask, TaskPrompt } from '../api/tasks';
+import { getTaskDocument, saveTaskDocument, getProjectTask, getTaskPrompts, getExecutionPlan, getTaskSection, ProjectTask, TaskPrompt } from '../api/tasks';
 import MarkdownViewer from './MarkdownViewer';
 import ExecutionPlanView from './ExecutionPlanView';
 import TaskDocIncremental from './TaskDocIncremental';
@@ -20,6 +22,9 @@ import TaskLinkedDocuments from './TaskLinkedDocuments';
 import SectionEditor from './SectionEditor';
 import DocumentTOC from './DocumentTOC';
 import TaskSummaryPanel from './TaskSummaryPanel';
+import RecommendationPanel from './RecommendationPanel';
+
+const { Text } = Typography;
 
 interface Props {
   projectId: string;
@@ -28,7 +33,18 @@ interface Props {
 
 const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   const [activeTab, setActiveTab] = useState<'info' | 'requirements' | 'design' | 'test' | 'prompts' | 'incremental' | 'documents' | 'execution-plan'>('info');
-  const [documents, setDocuments] = useState<Record<string, { content: string; exists: boolean }>>({
+  const [documents, setDocuments] = useState<Record<string, { 
+    content: string; 
+    exists: boolean;
+    recommendations?: Array<{
+      task_id: string;
+      doc_type: string;
+      section_id: string;
+      title: string;
+      similarity: number;
+      snippet: string;
+    }>;
+  }>>({
     requirements: { content: '', exists: false },
     design: { content: '', exists: false },
     test: { content: '', exists: false },
@@ -45,6 +61,42 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     design: false,
     test: false,
   });
+
+  // 推荐抽屉状态
+  const [recommendationDrawerOpen, setRecommendationDrawerOpen] = useState(false);
+  const [currentRecommendations, setCurrentRecommendations] = useState<Array<{
+    task_id: string;
+    doc_type: string;
+    section_id: string;
+    title: string;
+    similarity: number;
+    snippet: string;
+    source_section_id?: string;  // 源章节ID
+    source_title?: string;        // 源章节标题
+  }>>([]);
+  
+  // 选中的推荐文档详情(包含源章节和目标章节,便于对比)
+  const [selectedRecommendation, setSelectedRecommendation] = useState<{
+    // 源章节(当前任务中匹配的章节)
+    sourceSection: {
+      taskId: string;
+      taskName: string;
+      sectionId: string;
+      title: string;
+      content: string;
+    };
+    // 目标章节(推荐的相似章节)
+    targetSection: {
+      taskId: string;
+      taskName: string;
+      docType: string;
+      sectionId: string;
+      title: string;
+      content: string;
+    };
+    similarity: number;
+    loading: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (projectId && taskId) {
@@ -121,7 +173,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     const docTypes: Array<'requirements' | 'design' | 'test'> = ['requirements', 'design', 'test'];
     const promises = docTypes.map(async (docType) => {
       try {
-        const doc = await getTaskDocument(projectId, taskId, docType);
+        const doc = await getTaskDocument(projectId, taskId, docType, true); // 启用推荐功能
         return { docType, doc };
       } catch (error) {
         return { docType, doc: { content: '', exists: false } };
@@ -133,9 +185,9 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     
     results.forEach(({ docType, doc }) => {
       newDocuments[docType] = {
-        ...newDocuments[docType],
         content: doc.content,
         exists: doc.exists,
+        recommendations: doc.recommendations, // 保存推荐数据
       };
     });
     
@@ -184,6 +236,77 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     }
   };
 
+  // 加载推荐文档的内容(加载源章节和目标章节,便于对比)
+  const loadRecommendationContent = async (
+    recommendedTaskId: string, 
+    docType: string, 
+    sectionId: string,
+    similarity: number,
+    sourceSectionId?: string,
+    sourceTitle?: string
+  ) => {
+    setSelectedRecommendation({
+      sourceSection: {
+        taskId: taskId,
+        taskName: '',
+        sectionId: sourceSectionId || '',
+        title: sourceTitle || '',
+        content: ''
+      },
+      targetSection: {
+        taskId: recommendedTaskId,
+        taskName: '',
+        docType,
+        sectionId,
+        title: '',
+        content: ''
+      },
+      similarity,
+      loading: true
+    });
+
+    try {
+      // 并行加载所有需要的数据
+      const promises: Promise<any>[] = [
+        getProjectTask(projectId, taskId),  // 当前任务信息
+        getProjectTask(projectId, recommendedTaskId),  // 推荐任务信息
+        getTaskSection(projectId, recommendedTaskId, docType as 'requirements' | 'design' | 'test', sectionId, false)  // 目标章节
+      ];
+
+      // 如果有源章节ID,也加载源章节内容
+      if (sourceSectionId) {
+        promises.push(getTaskSection(projectId, taskId, docType as 'requirements' | 'design' | 'test', sourceSectionId, false));
+      }
+
+      const results = await Promise.all(promises);
+      const [currentTaskResult, targetTaskResult, targetSectionResult, sourceSectionResult] = results;
+
+      setSelectedRecommendation({
+        sourceSection: {
+          taskId: taskId,
+          taskName: currentTaskResult.data?.name || taskId,
+          sectionId: sourceSectionId || '',
+          title: sourceTitle || '',
+          content: sourceSectionResult?.content || ''
+        },
+        targetSection: {
+          taskId: recommendedTaskId,
+          taskName: targetTaskResult.data?.name || recommendedTaskId,
+          docType,
+          sectionId,
+          title: targetSectionResult.title || '',
+          content: targetSectionResult.content || ''
+        },
+        similarity,
+        loading: false
+      });
+    } catch (error) {
+      message.error('加载推荐文档失败');
+      console.error('加载推荐文档失败:', error);
+      setSelectedRecommendation(null);
+    }
+  };
+
   // 重新加载单个文档
   const reloadDocument = async (docType: 'requirements' | 'design' | 'test') => {
     try {
@@ -200,6 +323,71 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     }
   };
 
+  // 刷新整个页面数据
+  const refreshPage = async () => {
+    if (!projectId || !taskId) return;
+
+    setLoading(true);
+    setPromptsLoading(true);
+
+    try {
+      // 并行请求所有数据
+      const [documentsResult, taskInfoResult, promptsResult, executionPlanResult] = await Promise.allSettled([
+        // 1. 加载三个文档（requirements, design, test）
+        loadDocumentsData(),
+        // 2. 加载任务信息
+        getProjectTask(projectId, taskId),
+        // 3. 加载提示词
+        getTaskPrompts(projectId, taskId),
+        // 4. 加载执行计划状态
+        getExecutionPlan(projectId, taskId),
+      ]);
+
+      // 处理文档数据
+      if (documentsResult.status === 'fulfilled') {
+        setDocuments(documentsResult.value);
+      } else {
+        message.error('加载文档失败');
+        console.error(documentsResult.reason);
+      }
+
+      // 处理任务信息
+      if (taskInfoResult.status === 'fulfilled') {
+        setTaskInfo(taskInfoResult.value.data || null);
+      } else {
+        message.error('加载任务信息失败');
+        console.error(taskInfoResult.reason);
+        setTaskInfo(null);
+      }
+
+      // 处理提示词
+      if (promptsResult.status === 'fulfilled') {
+        setPrompts(promptsResult.value.data || []);
+      } else {
+        message.error('加载提示词失败');
+        console.error(promptsResult.reason);
+        setPrompts([]);
+      }
+
+      // 处理执行计划状态
+      if (executionPlanResult.status === 'fulfilled') {
+        const executionPlan = executionPlanResult.value.data;
+        // 如果执行计划存在且状态不是 Draft，则认为存在
+        setExecutionPlanExists(!!executionPlan && executionPlan.status !== 'Draft');
+      } else {
+        setExecutionPlanExists(false);
+      }
+
+      message.success('页面数据已刷新');
+    } catch (error) {
+      message.error('刷新页面数据失败');
+      console.error(error);
+    } finally {
+      setLoading(false);
+      setPromptsLoading(false);
+    }
+  };
+
   const renderDocument = (docType: 'requirements' | 'design' | 'test') => {
     const doc = documents[docType];
     const isEditMode = editMode[docType];
@@ -209,6 +397,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <SectionEditor
+            key={`${taskId}-${docType}`}
             projectId={projectId}
             taskId={taskId}
             docType={docType}
@@ -245,7 +434,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     // 预览模式 - 显示全文预览
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ marginBottom: 12, flexShrink: 0 }}>
+        <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Button
             type="primary"
             icon={<EditOutlined />}
@@ -254,6 +443,24 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           >
             编辑
           </Button>
+          
+          {/* 推荐按钮（仅在有推荐时显示） */}
+          {doc.recommendations && doc.recommendations.length > 0 && (
+            <Badge count={doc.recommendations.length} offset={[-5, 5]} color="#52c41a">
+              <Button
+                type="default"
+                icon={<BulbOutlined style={{ color: '#faad14' }} />}
+                onClick={() => {
+                  setCurrentRecommendations(doc.recommendations || []);
+                  setRecommendationDrawerOpen(true);
+                }}
+                size="small"
+                style={{ borderColor: '#faad14', color: '#faad14' }}
+              >
+                查看相似推荐
+              </Button>
+            </Badge>
+          )}
         </div>
         <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 12 }}>
             {/* 固定左侧目录导航 */}
@@ -308,7 +515,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 overflowX: 'hidden',
                 padding: '16px'
               }}>
-                <MarkdownViewer>{doc.content}</MarkdownViewer>
+                <MarkdownViewer showFullscreenButton={docType === 'requirements' || docType === 'design'}>{doc.content}</MarkdownViewer>
               </div>
             </div>
         </div>
@@ -616,8 +823,194 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           items={tabItems}
           style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
           tabBarStyle={{ margin: 0, paddingLeft: 16 }}
+          tabBarExtraContent={{
+            right: (
+              <Button
+                type="primary"
+                icon={<ReloadOutlined />}
+                onClick={refreshPage}
+                loading={loading}
+                size="small"
+              >
+                刷新页面
+              </Button>
+            )
+          }}
         />
       </div>
+
+      {/* 推荐抽屉 */}
+      <Drawer
+        title={
+          selectedRecommendation ? (
+            <Space>
+              <Button 
+                type="text" 
+                icon={<BulbOutlined />} 
+                size="small"
+                onClick={() => setSelectedRecommendation(null)}
+              >
+                返回推荐列表
+              </Button>
+            </Space>
+          ) : (
+            <Space>
+              <BulbOutlined style={{ color: '#1890ff' }} />
+              <span>相似历史参考（基于语义检索）</span>
+              <Tag color="blue">{currentRecommendations.length}条推荐</Tag>
+            </Space>
+          )
+        }
+        placement="right"
+        width={650}
+        open={recommendationDrawerOpen}
+        onClose={() => {
+          setRecommendationDrawerOpen(false);
+          setSelectedRecommendation(null);
+        }}
+        styles={{
+          body: { padding: selectedRecommendation ? '0' : '16px' }
+        }}
+        extra={
+          <Button size="small" onClick={() => {
+            setRecommendationDrawerOpen(false);
+            setSelectedRecommendation(null);
+          }}>
+            关闭
+          </Button>
+        }
+      >
+        {selectedRecommendation ? (
+          // 显示选中的推荐文档内容(源章节 vs 目标章节对比)
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {/* 相似度信息 */}
+            <div style={{ 
+              padding: '12px 16px', 
+              background: '#e6f7ff',
+              borderBottom: '1px solid #91d5ff',
+              textAlign: 'center'
+            }}>
+              <Text strong style={{ fontSize: 14, color: '#1890ff' }}>
+                相似度: {(selectedRecommendation.similarity * 100).toFixed(1)}%
+              </Text>
+            </div>
+
+            {selectedRecommendation.loading ? (
+              <div style={{ textAlign: 'center', padding: '40px' }}>
+                <Spin tip="加载文档内容..." />
+              </div>
+            ) : (
+              <div style={{ 
+                flex: 1, 
+                overflow: 'auto',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '1px',
+                background: '#f0f0f0'
+              }}>
+                {/* 源章节(当前任务) */}
+                <div style={{ background: '#fff', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                  <div style={{ 
+                    padding: '12px 16px', 
+                    borderBottom: '1px solid #f0f0f0',
+                    background: '#fafafa',
+                    flexShrink: 0
+                  }}>
+                    <div style={{ marginBottom: 6 }}>
+                      <Tag color="blue">当前任务</Tag>
+                      <Text strong style={{ fontSize: 14 }}>
+                        {selectedRecommendation.sourceSection.taskName}
+                      </Text>
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {selectedRecommendation.sourceSection.title}
+                      </Text>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+                    {selectedRecommendation.sourceSection.content ? (
+                      <MarkdownViewer>{selectedRecommendation.sourceSection.content}</MarkdownViewer>
+                    ) : (
+                      <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                        暂无源章节内容
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 目标章节(推荐任务) */}
+                <div style={{ background: '#fff', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                  <div style={{ 
+                    padding: '12px 16px', 
+                    borderBottom: '1px solid #f0f0f0',
+                    background: '#fafafa',
+                    flexShrink: 0
+                  }}>
+                    <div style={{ marginBottom: 6 }}>
+                      <Tag color="green">推荐任务</Tag>
+                      <Text strong style={{ fontSize: 14 }}>
+                        {selectedRecommendation.targetSection.taskName}
+                      </Text>
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {selectedRecommendation.targetSection.title}
+                      </Text>
+                    </div>
+                    <div style={{ marginTop: 4 }}>
+                      <Tag color="orange" style={{ fontSize: 11 }}>
+                        {selectedRecommendation.targetSection.docType === 'requirements' ? '需求文档' : 
+                         selectedRecommendation.targetSection.docType === 'design' ? '设计文档' : '测试文档'}
+                      </Tag>
+                      <Tag color="purple" style={{ fontSize: 11 }}>
+                        {selectedRecommendation.targetSection.sectionId}
+                      </Tag>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+                    <MarkdownViewer>{selectedRecommendation.targetSection.content}</MarkdownViewer>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          // 显示推荐列表
+          currentRecommendations.length > 0 ? (
+            <>
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f0f7ff', borderRadius: 4, fontSize: 12, color: '#666' }}>
+                💡 点击标题可查看推荐文档的详细内容
+              </div>
+              <RecommendationPanel
+                recommendations={currentRecommendations}
+                projectId={projectId}
+                inDrawer={true}
+                onRecommendationClick={(recommendedTaskId, sectionId) => {
+                  const recommendation = currentRecommendations.find(
+                    r => r.task_id === recommendedTaskId && r.section_id === sectionId
+                  );
+                  if (recommendation) {
+                    loadRecommendationContent(
+                      recommendedTaskId, 
+                      recommendation.doc_type, 
+                      sectionId,
+                      recommendation.similarity,
+                      recommendation.source_section_id,
+                      recommendation.source_title
+                    );
+                  }
+                }}
+              />
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#999' }}>
+              <BulbOutlined style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }} />
+              <div>暂无相似推荐</div>
+            </div>
+          )
+        )}
+      </Drawer>
     </Spin>
   );
 };

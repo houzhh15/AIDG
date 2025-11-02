@@ -1,5 +1,5 @@
 ---
-name: planning
+name: t3_planning
 description: 用于生成可执行开发分解提示的提示词模版，确保任务分解清晰且可操作。
 version: 1.1
 ---

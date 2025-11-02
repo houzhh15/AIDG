@@ -371,7 +371,7 @@ func DefaultConfig() Config {
 	dependencySharedVolume := strings.TrimSpace(os.Getenv("DEPENDENCY_SHARED_VOLUME"))
 
 	// 从环境变量读取离线模式配置
-	enableOffline := false // 默认禁用离线模式，允许下载模型
+	enableOffline := true // 默认启用离线模式，禁止下载模型
 	if offlineEnv := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OFFLINE"))); offlineEnv != "" {
 		enableOffline = offlineEnv == "true" || offlineEnv == "1"
 	}
@@ -1641,7 +1641,14 @@ func (o *Orchestrator) mergeWorker(ctx context.Context) {
 			// Note: No dedicated PathManager method for merged.txt, using custom path
 			meetingID := filepath.Base(o.cfg.OutputDir)
 			mergedTxt := filepath.Join(o.pathManager.GetMeetingDir(meetingID), fmt.Sprintf("chunk_%04d_merged.txt", item.Chunk.ID))
-			args := []string{"merge-segments", "--segments-file", item.SegJSON, "--speaker-file", mapped}
+
+			// Determine merge-segments binary path: prefer local bin/merge-segments for development
+			mergeCmd := "merge-segments"
+			if _, err := os.Stat("./bin/merge-segments"); err == nil {
+				mergeCmd = "./bin/merge-segments"
+			}
+
+			args := []string{mergeCmd, "--segments-file", item.SegJSON, "--speaker-file", mapped}
 			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			outFile, _ := os.Create(mergedTxt)
@@ -2475,7 +2482,14 @@ func (o *Orchestrator) MergeOnly() (string, error) {
 			continue
 		}
 		outName := fmt.Sprintf("chunk_%04d_merged.txt", id)
-		args := []string{"go-whisper/merge-segments", "--segments-file", filepath.Join(o.cfg.OutputDir, seg), "--speaker-file", filepath.Join(o.cfg.OutputDir, spk)}
+
+		// Determine merge-segments binary path: prefer local bin/merge-segments for development
+		mergeCmd := "merge-segments"
+		if _, err := os.Stat("./bin/merge-segments"); err == nil {
+			mergeCmd = "./bin/merge-segments"
+		}
+
+		args := []string{mergeCmd, "--segments-file", filepath.Join(o.cfg.OutputDir, seg), "--speaker-file", filepath.Join(o.cfg.OutputDir, spk)}
 		cmd := exec.Command(args[0], args[1:]...)
 		mf, _ := os.Create(filepath.Join(o.cfg.OutputDir, outName))
 		cmd.Stdout = mf

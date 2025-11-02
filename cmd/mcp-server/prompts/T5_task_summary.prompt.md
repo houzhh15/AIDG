@@ -1,5 +1,5 @@
 ---
-name: task_summary
+name: t5_task_summary
 description: 用于生成任务完成总结的提示词模版，确保总结结构化且有价值。
 version: 1.1
 ---

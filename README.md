@@ -213,29 +213,6 @@ AIDG 的工作流与 MCP（Model Context Protocol）内置的提示词模板紧�
 
 **提示词模板位置**：`cmd/mcp-server/prompts/*.prompt.md`
 
-#### 📋 典型工作流
-
-AIDG 的工作流与 MCP（Model Context Protocol）内置的提示词模板紧密集成，以实现引导式的、结构化的开发流程。用户可以基于这些模板进行补充、编辑或创建新的提示词。
-
-1.  **需求文档生成**
-    *   在 Web 界面创建任务后，可使用以下提示词模板引导 AI 生成需求文档。
-    *   `mcp/requirements/generate`: 基于项目特性列表和任务描述，生成初步的需求文档。
-    *   `mcp/requirements/refine`: 对已有的需求文档进行优化、补充或调整。
-
-2.  **设计文档生成**
-    *   基于已确定的需求文档，引导 AI 生成技术设计。
-    *   `mcp/design/generate`: 根据需求文档，创建技术设计，包括模块划分、接口定义等。
-    *   `mcp/design/refine`: 迭代和完善现有的设计文档。
-
-3.  **执行计划提交**
-    *   AI 根据设计文档，生成一份详细的、可分步执行的计划。
-    *   `mcp/plan/generate`: 从设计文档生成编码或操作步骤的执行计划。
-    *   人工在 Web 界面对该计划进行审批，确保执行方向的正确性。
-
-4.  **自主执行与追踪**
-    *   计划经审批后，AI 通过调用 `get_next_executable_step` 获取下一步操作。
-    *   完成每一步后，通过 `update_plan_step_status` 回写执行状态和结果。
-    *   整个过程在 Web 界面上可被实时追踪，确保过程可控。
 
 ## 📚 详细部署方案
 

@@ -1,5 +1,5 @@
 ---
-name: requirements
+name: t1_requirements
 description: 用于生成需求文档的提示词模版，确保需求清晰且可执行。
 version: 1.1
 ---
