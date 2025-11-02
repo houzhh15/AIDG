@@ -24,6 +24,7 @@ COPY cmd/mcp-server/ ./cmd/mcp-server/
 COPY cmd/merge-segments/ ./cmd/merge-segments/
 COPY pkg/logger/ ./pkg/logger/
 COPY pkg/metrics/ ./pkg/metrics/
+COPY pkg/similarity/ ./pkg/similarity/
 
 # Build all binaries with maximum compression
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
