@@ -125,7 +125,7 @@ func (c *NLPClient) checkHealth() {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.isHealthy = false
-		log.Printf("[WARN] NLP service is NOT healthy: %v", err)
+		//log.Printf("[WARN] NLP service is NOT healthy: %v", err)
 		return
 	}
 	defer resp.Body.Close()

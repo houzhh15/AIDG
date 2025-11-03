@@ -32,11 +32,11 @@ ENV PATH=/root/.local/bin:$PATH
 COPY app.py .
 
 # Expose port
-EXPOSE 5000
+EXPOSE 5001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:5000/health')" || exit 1
+    CMD python -c "import requests; requests.get('http://localhost:5001/health')" || exit 1
 
 # Run application
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "info"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5001", "--log-level", "info"]
