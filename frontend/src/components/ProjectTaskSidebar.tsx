@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined } from '@ant-design/icons';
 import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask } from '../api/tasks';
 import { getUsers, User } from '../api/users';
 import { useTaskRefresh } from '../contexts/TaskRefreshContext';
@@ -339,6 +339,15 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                                 )}
                               </div>
                             </div>
+                            <Dropdown menu={menu} trigger={['click']} placement="bottomRight">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<MoreOutlined />}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ color: '#666' }}
+                              />
+                            </Dropdown>
                           </div>
                         </List.Item>
                       </Dropdown>
