@@ -452,3 +452,10 @@ func extractTitleFromMarkdown(content string) string {
 	}
 	return ""
 }
+
+// RefreshTaskResources 刷新任务相关的 MCP 资源
+// 这是 addTaskResources 的公共包装函数，供其他包调用
+// 用于在文档更新后刷新 MCP Resources
+func RefreshTaskResources(resourceManager *resource.ResourceManager, username, projectID, taskID string, docHandler *documents.Handler) {
+	addTaskResources(resourceManager, username, projectID, taskID, docHandler)
+}

@@ -257,3 +257,8 @@ func projectDir(projectID string) (string, error) {
 	}
 	return dir, nil
 }
+
+// GetUserCurrentTask 获取用户当前任务（公共函数，供其他包调用）
+func GetUserCurrentTask(username string) (*UserCurrentTask, error) {
+	return getUserCurrentTask(username)
+}

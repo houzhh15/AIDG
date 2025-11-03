@@ -1053,6 +1053,7 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 		return func(c *gin.Context) {
 			projectID := c.Param("id")
 			taskID := c.Param("task_id")
+			username := c.GetString("username") // Get username from auth middleware
 
 			// Get project directory
 			if projectsReg.Get(projectID) == nil {
@@ -1151,6 +1152,24 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 				if vErr := simService.VectorizeDocument(context.Background(), projectID, taskID, docType); vErr != nil {
 					log.Printf("[WARN] Failed to trigger vectorization for %s/%s/%s: %v", projectID, taskID, docType, vErr)
 					// Non-blocking: continue with success response even if vectorization fails
+				}
+
+				// ⭐ Refresh MCP resources after document update
+				// This ensures AI tools always have the latest version of the document
+				if username != "" && resourceManager != nil {
+					// Get current task to verify this is the active task
+					currentTask, err := api.GetUserCurrentTask(username)
+					if err == nil && currentTask != nil && currentTask.ProjectID == projectID && currentTask.TaskID == taskID {
+						log.Printf("[INFO] Refreshing MCP resources after document update - user=%s, project=%s, task=%s, docType=%s", username, projectID, taskID, docType)
+						
+						// Clear old auto-added resources
+						if clearErr := resourceManager.ClearAutoAddedResources(username); clearErr != nil {
+							log.Printf("[WARN] Failed to clear auto resources: %v", clearErr)
+						}
+						
+						// Re-add resources with updated content
+						api.RefreshTaskResources(resourceManager, username, projectID, taskID, docHandler)
+					}
 				}
 
 				c.JSON(http.StatusOK, gin.H{"success": true, "version": meta.Version, "duplicate": duplicate, "etag": meta.ETag})
