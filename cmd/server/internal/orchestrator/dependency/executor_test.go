@@ -177,7 +177,10 @@ func TestDependencyClient_RunDiarization_Success(t *testing.T) {
 	}
 
 	// Act: Run diarization
-	err := client.RunDiarization(context.Background(), "/data/meetings/123/audio.wav", "/data/meetings/123/diarization.json", 2)
+	opts := &DiarizationOptions{
+		NumSpeakers: 2,
+	}
+	err := client.RunDiarization(context.Background(), "/data/meetings/123/audio.wav", "/data/meetings/123/diarization.json", opts)
 
 	// Assert: No error and correct command was executed
 	assert.NoError(t, err)

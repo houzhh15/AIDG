@@ -1,6 +1,12 @@
 import { authedApi } from '../api/auth';
 import { AudioUploadResponse, AudioFileUploadResponse, AudioErrorCode } from '../types/audio';
 import { createAudioError } from './audioUtils';
+import { AxiosError } from 'axios';
+
+interface ErrorResponse {
+  message?: string;
+  hint?: string;
+}
 
 /**
  * 上传音频分片
@@ -44,9 +50,10 @@ export async function uploadAudioChunk(
     );
 
     return response.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // 处理网络错误
-    if (error.message === 'Network Error' || !error.response) {
+    const axiosError = error as AxiosError<ErrorResponse>;
+    if (axiosError.message === 'Network Error' || !axiosError.response) {
       throw createAudioError(
         '网络连接失败，请检查网络后重试',
         AudioErrorCode.NETWORK_ERROR,
@@ -55,8 +62,8 @@ export async function uploadAudioChunk(
     }
 
     // 处理服务器错误
-    const status = error.response?.status;
-    const message = error.response?.data?.message || '上传失败';
+    const status = axiosError.response?.status;
+    const message = axiosError.response?.data?.message || '上传失败';
 
     if (status === 401) {
       throw createAudioError('未授权，请重新登录', AudioErrorCode.UNAUTHORIZED, error);
@@ -69,7 +76,7 @@ export async function uploadAudioChunk(
     }
     if (status === 503) {
       // 服务不可用，通常是因为缺少依赖（如FFmpeg）
-      const hint = error.response?.data?.hint || '';
+      const hint = axiosError.response?.data?.hint || '';
       const fullMessage = hint ? `${message}\n\n${hint}` : message;
       throw createAudioError(fullMessage, AudioErrorCode.SERVICE_UNAVAILABLE, error);
     }
@@ -119,9 +126,10 @@ export async function uploadAudioFile(
     );
 
     return response.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // 处理网络错误
-    if (error.message === 'Network Error' || !error.response) {
+    const axiosError = error as AxiosError<ErrorResponse>;
+    if (axiosError.message === 'Network Error' || !axiosError.response) {
       throw createAudioError(
         '网络连接失败，请检查网络后重试',
         AudioErrorCode.NETWORK_ERROR,
@@ -130,8 +138,8 @@ export async function uploadAudioFile(
     }
 
     // 处理服务器错误
-    const status = error.response?.status;
-    const message = error.response?.data?.message || '上传失败';
+    const status = axiosError.response?.status;
+    const message = axiosError.response?.data?.message || '上传失败';
 
     if (status === 401) {
       throw createAudioError('未授权，请重新登录', AudioErrorCode.UNAUTHORIZED, error);
@@ -144,7 +152,7 @@ export async function uploadAudioFile(
     }
     if (status === 503) {
       // 服务不可用，通常是因为缺少依赖（如FFmpeg）
-      const hint = error.response?.data?.hint || '';
+      const hint = axiosError.response?.data?.hint || '';
       const fullMessage = hint ? `${message}\n\n${hint}` : message;
       throw createAudioError(fullMessage, AudioErrorCode.SERVICE_UNAVAILABLE, error);
     }
