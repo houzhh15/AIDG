@@ -23,6 +23,7 @@ import SectionEditor from './SectionEditor';
 import DocumentTOC from './DocumentTOC';
 import TaskSummaryPanel from './TaskSummaryPanel';
 import RecommendationPanel from './RecommendationPanel';
+import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 
 const { Text } = Typography;
 
@@ -98,12 +99,14 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     loading: boolean;
   } | null>(null);
 
+  const { refreshTrigger } = useTaskRefresh();
+
   useEffect(() => {
     if (projectId && taskId) {
       // 并行加载所有数据，提升页面加载速度
       loadAllData();
     }
-  }, [projectId, taskId]);
+  }, [projectId, taskId, refreshTrigger]);
 
   // 优化：并行加载所有数据
   const loadAllData = async () => {
@@ -724,7 +727,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           {documents.requirements.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
         </span>
       ),
-      children: renderDocument('requirements'),
+      children: <div key={`requirements-${refreshTrigger}`}>{renderDocument('requirements')}</div>,
     },
     {
       key: 'design',
@@ -735,7 +738,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           {documents.design.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
         </span>
       ),
-      children: renderDocument('design'),
+      children: <div key={`design-${refreshTrigger}`}>{renderDocument('design')}</div>,
     },
     {
       key: 'execution-plan',
@@ -764,7 +767,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           {documents.test.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
         </span>
       ),
-      children: renderDocument('test'),
+      children: <div key={`test-${refreshTrigger}`}>{renderDocument('test')}</div>,
     },
     {
       key: 'prompts',

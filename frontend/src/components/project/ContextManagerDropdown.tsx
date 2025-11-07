@@ -18,9 +18,10 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  DownOutlined
+  DownOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
-import { getUserResources, deleteResource } from '../../api/resourceApi';
+import { getUserResources, deleteResource, refreshUserResources } from '../../api/resourceApi';
 import { Resource } from '../../api/resourceApi';
 import ResourceEditorModal from '../resources/ResourceEditorModal';
 
@@ -120,6 +121,25 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
   };
 
   /**
+   * 点击刷新资源
+   */
+  const handleRefreshClick = async () => {
+    setLoading(true);
+    setMenuOpen(false); // 关闭下拉菜单
+    try {
+      const result = await refreshUserResources();
+      message.success('MCP 资源已刷新');
+      // 刷新资源列表
+      await loadResources();
+    } catch (error: any) {
+      console.error('刷新 MCP 资源失败:', error);
+      message.error(error.response?.data?.error || '刷新失败，请稍后重试');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
    * 点击编辑资源
    */
   const handleEditClick = (resource: Resource) => {
@@ -190,6 +210,20 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
           style={{ width: '100%', textAlign: 'left', minHeight: 40 }}
         >
           新增资源
+        </Button>
+      )
+    },
+    // 刷新资源按钮
+    {
+      key: 'refresh',
+      label: (
+        <Button
+          type="text"
+          icon={<ReloadOutlined />}
+          onClick={handleRefreshClick}
+          style={{ width: '100%', textAlign: 'left', minHeight: 40 }}
+        >
+          刷新资源
         </Button>
       )
     },

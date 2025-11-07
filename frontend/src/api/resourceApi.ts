@@ -155,3 +155,21 @@ export async function deleteResource(
 ): Promise<void> {
   await authedApi.delete(`/users/${username}/resources/${resourceId}`);
 }
+
+/**
+ * 手动刷新当前用户的 MCP Resources
+ * 根据当前任务重新加载资源
+ * 
+ * @returns 刷新结果
+ */
+export async function refreshUserResources(): Promise<{
+  success: boolean;
+  message: string;
+  data?: {
+    project_id: string;
+    task_id: string;
+  };
+}> {
+  const response = await authedApi.post('/user/resources/refresh');
+  return response.data;
+}

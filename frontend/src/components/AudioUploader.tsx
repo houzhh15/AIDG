@@ -45,8 +45,12 @@ export const AudioUploader: React.FC<AudioUploaderProps> = ({
       );
       setCurrentUploadingUid(null);
       message.success('文件上传成功');
-      if (response.data?.file_id) {
+      // 上传成功后调用回调（response 已经是 response.data）
+      if (response?.data?.file_id) {
         onUploadSuccess?.(response.data.file_id);
+      } else {
+        // 即使没有 file_id 也调用成功回调，关闭上传窗口
+        onUploadSuccess?.('');
       }
     },
     onError: (err) => {

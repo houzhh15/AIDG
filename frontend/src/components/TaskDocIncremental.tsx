@@ -7,6 +7,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { appendDoc, deleteDocChunk, exportDoc, listDocChunks, replaceFull, DocChunk, DocType, AppendResponse, toggleDocChunk, squashDoc } from '../api/taskDocs';
 import { MermaidChart } from './MermaidChart';
+import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 
 const { TextArea } = Input;
 const { Paragraph } = Typography;
@@ -38,6 +39,8 @@ export const TaskDocIncremental: React.FC<Props> = ({ projectId, taskId, default
   const [states, setStates] = useState<Record<DocType, DocState>>({ requirements: {...emptyState}, design:{...emptyState}, test:{...emptyState} });
   const [appendContent, setAppendContent] = useState('');
   const [appendVisible, setAppendVisible] = useState(false);
+
+  const { triggerRefresh } = useTaskRefresh();
 
   const current = states[active];
 
@@ -86,7 +89,7 @@ export const TaskDocIncremental: React.FC<Props> = ({ projectId, taskId, default
 
   const doToggle = async (seq:number) => {
     setStates(s=> ({...s, [active]: { ...s[active], deleteLoadingSeq: seq }}));
-    try { await toggleDocChunk(projectId, taskId, active, seq); await load(active); message.success('已切换状态'); }
+    try { await toggleDocChunk(projectId, taskId, active, seq); await load(active); message.success('已切换状态'); triggerRefresh(); }
     catch(e:any){ message.error(`切换失败: ${e.message||e}`); }
     finally { setStates(s=> ({...s, [active]: { ...s[active], deleteLoadingSeq: undefined }})); }
   };
@@ -104,10 +107,7 @@ export const TaskDocIncremental: React.FC<Props> = ({ projectId, taskId, default
 
   const columns = useMemo(()=>[
     { title:'Seq', dataIndex:'sequence', width:70 },
-    { title:'操作类型', dataIndex:'op', width:90, render:(v:string)=> <Tag color={v==='replace_full'?'volcano':'blue'}>{v==='replace_full'?'全文替换':'追加'}</Tag> },
-    { title:'用户', dataIndex:'user', width:110 },
-    { title:'时间', dataIndex:'timestamp', width:170, render:(t:string)=> new Date(t).toLocaleString() },
-    { title:'长度', dataIndex:'content', width:80, render:(c:string)=> c.length },
+    { title:'操作类型', dataIndex:'op', width:90, render:(v:string)=> <Tag color={v==='replace_full'||v==='section_full_no_parse'?'volcano':'blue'}>{v==='replace_full'||v==='section_full_no_parse'?'全文替换':'追加'}</Tag> },
     { title:'激活', dataIndex:'active', width:110, fixed:'right' as const, render:(_:any, row:DocChunk)=> (
         <Switch
           checked={row.active}
