@@ -144,7 +144,7 @@ func TestValidateRequest(t *testing.T) {
 				WorkingDir: "/tmp/unsafe",
 			},
 			wantErr: true,
-			errMsg:  "within shared volume",
+			errMsg:  "within allowed directories",
 		},
 		{
 			name: "unauthorized environment variable",
@@ -315,7 +315,7 @@ func TestValidatePath(t *testing.T) {
 			name:    "path outside shared volume",
 			path:    "/tmp/data",
 			wantErr: true,
-			errMsg:  "within shared volume",
+			errMsg:  "within allowed directories",
 		},
 		{
 			name:    "shared volume root",

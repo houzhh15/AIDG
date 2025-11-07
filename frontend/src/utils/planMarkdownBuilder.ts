@@ -97,12 +97,12 @@ export function buildMarkdown(
 /**
  * 重新编号步骤并更新依赖引用
  * @param steps - 原始步骤数组
- * @param insertIndex - 可选的插入位置（在该位置之前插入会导致后续编号变化）
+ * @param _insertIndex - 可选的插入位置（在该位置之前插入会导致后续编号变化）
  * @returns 重新编号后的步骤数组
  */
 export function renumberSteps(
   steps: ExecutionPlanStep[],
-  insertIndex?: number
+  _insertIndex?: number
 ): ExecutionPlanStep[] {
   // 创建旧ID到新ID的映射
   const idMapping: Record<string, string> = {};

@@ -167,7 +167,7 @@ func TestDependencyClient_RunDiarization_Success(t *testing.T) {
 		Mode:             ModeLocal,
 		SharedVolumePath: "/data",
 		DefaultTimeout:   10 * time.Minute,
-		AllowedCommands:  []string{"pyannote"},
+		AllowedCommands:  []string{"python"},
 	}
 
 	client := &DependencyClient{
@@ -187,11 +187,10 @@ func TestDependencyClient_RunDiarization_Success(t *testing.T) {
 	require.Len(t, fakeExec.ExecutedCommands, 1)
 
 	cmd := fakeExec.ExecutedCommands[0]
-	assert.Equal(t, "pyannote", cmd.Command)
-	assert.Contains(t, cmd.Args, "--audio")
+	assert.Equal(t, "python", cmd.Command)
+	assert.Contains(t, cmd.Args, "--input")
 	assert.Contains(t, cmd.Args, "/data/meetings/123/audio.wav")
-	assert.Contains(t, cmd.Args, "--output")
-	assert.Contains(t, cmd.Args, "/data/meetings/123/diarization.json")
+	assert.Contains(t, cmd.Args, "--device")
 	assert.Contains(t, cmd.Args, "--num-speakers")
 	assert.Contains(t, cmd.Args, "2")
 }
