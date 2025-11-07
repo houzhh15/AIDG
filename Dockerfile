@@ -45,7 +45,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
 #     upx --best --lzma /app/bin/server /app/bin/mcp-server /app/bin/merge-segments
 
 # Stage 2: Build frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
