@@ -126,7 +126,8 @@ func (c *DependencyClient) GetAudioDuration(ctx context.Context, audioPath strin
 
 	// Check execution result
 	if !resp.Success || resp.ExitCode != 0 {
-		return 0, fmt.Errorf("ffprobe failed (exit code %d): %s", resp.ExitCode, resp.Stderr)
+		// Enhanced error message with more details
+		return 0, fmt.Errorf("ffprobe failed (exit code %d): stderr=%s, stdout=%s", resp.ExitCode, resp.Stderr, resp.Stdout)
 	}
 
 	// Parse JSON output to extract duration
@@ -137,13 +138,13 @@ func (c *DependencyClient) GetAudioDuration(ctx context.Context, audioPath strin
 	}
 
 	if err := json.Unmarshal([]byte(resp.Stdout), &result); err != nil {
-		return 0, fmt.Errorf("failed to parse ffprobe output: %w", err)
+		return 0, fmt.Errorf("failed to parse ffprobe output: %w, stdout=%s", err, resp.Stdout)
 	}
 
 	// Convert duration string to float64
 	duration := 0.0
 	if _, err := fmt.Sscanf(result.Format.Duration, "%f", &duration); err != nil {
-		return 0, fmt.Errorf("failed to parse duration value: %w", err)
+		return 0, fmt.Errorf("failed to parse duration value: %w, duration_string=%s", err, result.Format.Duration)
 	}
 
 	return duration, nil
@@ -548,6 +549,11 @@ func (c *DependencyClient) HealthCheck(ctx context.Context) error {
 // Orchestrator can use this to construct standardized file paths.
 func (c *DependencyClient) PathManager() *PathManager {
 	return c.pathManager
+}
+
+// GetMode returns the current execution mode
+func (c *DependencyClient) GetMode() ExecutionMode {
+	return ExecutionMode(c.config.Mode)
 }
 
 // Config returns the executor configuration (read-only access).

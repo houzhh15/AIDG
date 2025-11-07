@@ -161,24 +161,23 @@ func buildHierarchy(sections []Section) {
 		sections[i].ParentID = nil
 	}
 
-	stack := []*Section{}
+	// 🔧 关键修复：使用索引而非指针，确保正确更新原始切片
+	stack := []int{} // 存储章节索引而不是指针
 
 	for i := range sections {
-		sec := &sections[i]
-
 		// 弹出比当前等级高或相等的章节
-		for len(stack) > 0 && stack[len(stack)-1].Level >= sec.Level {
+		for len(stack) > 0 && sections[stack[len(stack)-1]].Level >= sections[i].Level {
 			stack = stack[:len(stack)-1]
 		}
 
 		// 设置父子关系
 		if len(stack) > 0 {
-			parent := stack[len(stack)-1]
-			sec.ParentID = &parent.ID
-			parent.Children = append(parent.Children, sec.ID)
+			parentIdx := stack[len(stack)-1]
+			sections[i].ParentID = &sections[parentIdx].ID
+			sections[parentIdx].Children = append(sections[parentIdx].Children, sections[i].ID)
 		}
 
-		stack = append(stack, sec)
+		stack = append(stack, i)
 	}
 }
 

@@ -382,18 +382,43 @@ func HandleAudioFileUpload(reg *meetings.Registry) gin.HandlerFunc {
 			orch = newOrch
 
 			// 启动 orchestrator（不启动录音，只初始化处理队列）
+			log.Printf("[AudioUpload] Starting orchestrator...")
 			if err := orch.Start(); err != nil {
+				log.Printf("[AudioUpload] ERROR: Failed to start orchestrator: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{
 					"success": false,
 					"message": fmt.Sprintf("启动 orchestrator 失败: %v", err),
 				})
 				return
 			}
+			log.Printf("[AudioUpload] Orchestrator started successfully")
 
 			// 更新任务状态
 			task.State = orchestrator.StateRunning
 			meetings.SaveTasks(reg)
 			log.Printf("[AudioUpload] Orchestrator created and started for task %s", meetingID)
+		} else {
+			// Orchestrator 已存在，检查状态
+			currentState := orch.GetState()
+			log.Printf("[AudioUpload] Using existing orchestrator for task %s (state=%s)", meetingID, currentState)
+
+			// 如果 orchestrator 未运行，需要启动它
+			if currentState != orchestrator.StateRunning {
+				log.Printf("[AudioUpload] Orchestrator is not running, starting it now...")
+				if err := orch.Start(); err != nil {
+					log.Printf("[AudioUpload] ERROR: Failed to start orchestrator: %v", err)
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"success": false,
+						"message": fmt.Sprintf("启动 orchestrator 失败: %v", err),
+					})
+					return
+				}
+				log.Printf("[AudioUpload] Orchestrator started successfully")
+
+				// 更新任务状态
+				task.State = orchestrator.StateRunning
+				meetings.SaveTasks(reg)
+			}
 		}
 
 		depClient := orch.GetDependencyClient()
@@ -405,16 +430,63 @@ func HandleAudioFileUpload(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
-		// 转换路径：宿主机路径 -> 容器内路径
-		// deps-service 容器内挂载的是 /app/data
-		containerPath := strings.Replace(savePath, task.Cfg.OutputDir, "/app/data/meetings/"+meetingID, 1)
-		log.Printf("[AudioUpload] Path conversion: host=%s, container=%s", savePath, containerPath)
+		// 根据执行模式选择正确的路径
+		// 本地模式：使用宿主机路径（直接访问文件系统）
+		// 远程模式：使用容器路径（deps-service 容器内的路径）
+		var audioPath string
+		execMode := depClient.GetMode()
+
+		log.Printf("[AudioUpload] Execution mode: %s", execMode)
+
+		if execMode == "local" || execMode == "fallback" {
+			// 本地模式：使用宿主机路径
+			audioPath = savePath
+		} else {
+			// 远程模式：转换为容器路径
+			// deps-service 容器内挂载的是 ./data:/app/data
+			// 宿主机路径格式：data/meetings/{meetingID}/...
+			// 容器内路径格式：/app/data/meetings/{meetingID}/...
+
+			if strings.HasPrefix(savePath, "data/") {
+				// 如果是相对路径，直接转换
+				relPath := strings.TrimPrefix(savePath, "data/")
+				audioPath = filepath.Join("/app/data", relPath)
+			} else if strings.Contains(savePath, "/data/") {
+				// 如果是绝对路径，提取 data/ 之后的部分
+				parts := strings.Split(savePath, "/data/")
+				if len(parts) >= 2 {
+					audioPath = filepath.Join("/app/data", parts[len(parts)-1])
+				} else {
+					// 回退到原有逻辑
+					audioPath = strings.Replace(savePath, task.Cfg.OutputDir, "/app/data/meetings/"+meetingID, 1)
+				}
+			} else {
+				// 回退到原有逻辑
+				audioPath = strings.Replace(savePath, task.Cfg.OutputDir, "/app/data/meetings/"+meetingID, 1)
+			}
+		}
+
+		log.Printf("[AudioUpload] Path selection: mode=%s, host=%s, audio=%s", execMode, savePath, audioPath)
+
+		// 先检查宿主机上文件是否存在并获取文件信息
+		hostFileInfo, statErr := os.Stat(savePath)
+		if statErr != nil {
+			log.Printf("[AudioUpload] ERROR: File does not exist on host: %s, error: %v", savePath, statErr)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": fmt.Sprintf("音频文件不存在: %v", statErr),
+			})
+			return
+		}
+
+		// 输出文件信息用于调试
+		log.Printf("[AudioUpload] File info: size=%d bytes, mode=%v", hostFileInfo.Size(), hostFileInfo.Mode())
 
 		// 使用 ffprobe 检测音频时长
 		ctx := c.Request.Context()
-		duration, err := depClient.GetAudioDuration(ctx, containerPath)
+		duration, err := depClient.GetAudioDuration(ctx, audioPath)
 		if err != nil {
-			log.Printf("[AudioUpload] Failed to get audio duration: %v", err)
+			log.Printf("[AudioUpload] ERROR: Failed to get audio duration: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
 				"message": fmt.Sprintf("检测音频时长失败: %v", err),
@@ -427,10 +499,18 @@ func HandleAudioFileUpload(reg *meetings.Registry) gin.HandlerFunc {
 
 		// 按 5 分钟拆分音频文件
 		chunkDurationSec := 300 // 5 minutes
-		// 容器内的输出路径模式
-		containerOutputPattern := "/app/data/meetings/" + meetingID + "/chunk_%04d.wav"
 
-		numChunks, err := depClient.SplitAudioIntoChunks(ctx, containerPath, containerOutputPattern, chunkDurationSec)
+		// 根据执行模式构建输出路径模式
+		var outputPattern string
+		if execMode == "local" || execMode == "fallback" {
+			// 本地模式：使用宿主机路径
+			outputPattern = filepath.Join(task.Cfg.OutputDir, "chunk_%04d.wav")
+		} else {
+			// 远程模式：使用容器路径
+			outputPattern = "/app/data/meetings/" + meetingID + "/chunk_%04d.wav"
+		}
+
+		numChunks, err := depClient.SplitAudioIntoChunks(ctx, audioPath, outputPattern, chunkDurationSec)
 		if err != nil {
 			log.Printf("[AudioUpload] Failed to split audio: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{

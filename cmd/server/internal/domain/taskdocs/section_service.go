@@ -185,7 +185,8 @@ func (s *sectionServiceImpl) UpdateSection(
 		return fmt.Errorf("sync to compiled: %w", err)
 	}
 
-	// 7. 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
+	// 7. 🔧 修复：使用特殊操作类型避免重复解析
+	// 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
 	compiledPath := filepath.Join(docPath, "compiled.md")
 	newCompiled, err := os.ReadFile(compiledPath)
 	if err != nil {
@@ -200,17 +201,15 @@ func (s *sectionServiceImpl) UpdateSection(
 
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		string(newCompiled), // 完整文档内容
-		"section_edit",      // 用户标识
-		&docMeta.Version,    // 版本号
-		"replace_full",      // 全文替换
-		"update_section",    // 来源：单章节更新
+		string(newCompiled),       // 完整文档内容
+		"section_edit",            // 用户标识
+		&docMeta.Version,          // 版本号
+		"section_update_no_parse", // 🔧 特殊操作：不触发 SyncFromCompiled
+		"update_section",          // 来源：单章节更新
 	)
 	if err != nil {
 		return fmt.Errorf("save through doc service: %w", err)
 	}
-
-	// DocService.Append 会再次调用 SyncFromCompiled，但内容相同不会有问题
 
 	return nil
 }
@@ -296,18 +295,21 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		newCompiled,           // 新的完整文档内容
-		"section_edit",        // 用户标识
-		&docMeta.Version,      // 使用 doc meta 的版本号进行并发检查
-		"replace_full",        // 操作类型：全文替换（会触发 SyncFromCompiled）
-		"update_section_full", // 来源：章节全文更新
+		newCompiled,             // 新的完整文档内容
+		"section_edit",          // 用户标识
+		&docMeta.Version,        // 使用 doc meta 的版本号进行并发检查
+		"section_full_no_parse", // 🔧 特殊操作：不触发 SyncFromCompiled，避免重复解析
+		"update_section_full",   // 来源：章节全文更新
 	)
 	if err != nil {
 		return fmt.Errorf("save through doc service: %w", err)
 	}
 
-	// 9. SyncFromCompiled 已经在 DocService.Append 中调用
-	// 新的章节结构已经从 compiled.md 重新解析出来
+	// 🔧 手动触发 SyncFromCompiled 来重建章节结构
+	sm := NewSyncManager(docPath, docType)
+	if err := sm.SyncFromCompiled(); err != nil {
+		return fmt.Errorf("sync from compiled after update: %w", err)
+	}
 
 	return nil
 }
@@ -317,9 +319,8 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 func (s *sectionServiceImpl) replaceSection(compiledContent string, section *Section, newContent string) string {
 	lines := strings.Split(compiledContent, "\n")
 
-	// 构建章节标题模式（根据 level）
-	prefix := strings.Repeat("#", section.Level)
-	sectionTitle := prefix + " " + section.Title
+	// 🔧 修复：section.Title 已经包含完整的标题标记，直接使用
+	sectionTitle := section.Title
 
 	// 查找章节开始位置
 	startIdx := -1
@@ -421,26 +422,28 @@ func (s *sectionServiceImpl) InsertSection(
 		return nil, fmt.Errorf("sync to compiled: %w", err)
 	}
 
-	// 6. 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
+	// 6. 🔧 修复：直接更新 doc meta 的版本号，不触发 SyncFromCompiled
+	// 读取新的 compiled.md
 	compiledPath := filepath.Join(docPath, "compiled.md")
 	newCompiled, err := os.ReadFile(compiledPath)
 	if err != nil {
 		return nil, fmt.Errorf("read compiled.md: %w", err)
 	}
 
-	// 通过 DocService 记录变更历史
+	// 加载 doc meta
 	docMeta, err := LoadOrInitMeta(projectID, taskID, docType)
 	if err != nil {
 		return nil, fmt.Errorf("load doc meta: %w", err)
 	}
 
+	// 使用特殊的操作类型 "section_insert_no_parse" 避免重新解析
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		string(newCompiled), // 完整文档内容
-		"section_edit",      // 用户标识
-		&docMeta.Version,    // 版本号
-		"replace_full",      // 全文替换
-		"insert_section",    // 来源：插入章节
+		string(newCompiled),       // 完整文档内容
+		"section_edit",            // 用户标识
+		&docMeta.Version,          // 版本号
+		"section_insert_no_parse", // 🔧 特殊操作：不触发 SyncFromCompiled
+		"insert_section",          // 来源：插入章节
 	)
 	if err != nil {
 		return nil, fmt.Errorf("save through doc service: %w", err)
@@ -506,7 +509,8 @@ func (s *sectionServiceImpl) DeleteSection(
 		return fmt.Errorf("sync to compiled: %w", err)
 	}
 
-	// 8. 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
+	// 8. 🔧 修复：使用特殊操作类型避免重复解析
+	// 读取新的 compiled.md 并通过 DocService 保存（记录到 chunks.ndjson）
 	compiledPath := filepath.Join(docPath, "compiled.md")
 	newCompiled, err := os.ReadFile(compiledPath)
 	if err != nil {
@@ -521,11 +525,11 @@ func (s *sectionServiceImpl) DeleteSection(
 
 	_, _, _, err = s.docService.Append(
 		projectID, taskID, docType,
-		string(newCompiled), // 完整文档内容
-		"section_edit",      // 用户标识
-		&docMeta.Version,    // 版本号
-		"replace_full",      // 全文替换
-		"delete_section",    // 来源：删除章节
+		string(newCompiled),       // 完整文档内容
+		"section_edit",            // 用户标识
+		&docMeta.Version,          // 版本号
+		"section_delete_no_parse", // 🔧 特殊操作：不触发 SyncFromCompiled
+		"delete_section",          // 来源：删除章节
 	)
 	if err != nil {
 		return fmt.Errorf("save through doc service: %w", err)

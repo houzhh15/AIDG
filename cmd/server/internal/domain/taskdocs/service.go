@@ -86,6 +86,10 @@ func appendChunkInternal(projectID, taskID, docType, content, op, user, source s
 	if op == "replace_full" {
 		_ = os.WriteFile(compiledPath, []byte(content), 0644)
 		needSectionSync = true // 全文替换后需要重新解析章节
+	} else if strings.HasPrefix(op, "section_") && strings.HasSuffix(op, "_no_parse") {
+		// 🔧 特殊操作：章节级操作已经在 SectionService 中处理了同步，不需要再次解析
+		_ = os.WriteFile(compiledPath, []byte(content), 0644)
+		needSectionSync = false
 	} else {
 		// append 模式
 		if _, statErr := os.Stat(compiledPath); statErr == nil {
@@ -158,8 +162,8 @@ func rebuildCompiled(projectID, taskID, docType string) (DocMeta, error) {
 		if ck.Active {
 			activeCount++
 			if ck.Content != "" {
-				// 如果是 replace_full，清空之前的内容，从这个 chunk 开始重新构建
-				if ck.Op == "replace_full" {
+				// 如果是 replace_full 或 section_full_no_parse，清空之前的内容，从这个 chunk 开始重新构建
+				if ck.Op == "replace_full" || ck.Op == "section_full_no_parse" {
 					bldr = []string{ck.Content}
 				} else {
 					// 其他操作类型（add_full 等）都是追加

@@ -2262,6 +2262,13 @@ func (o *Orchestrator) GetDependencyClient() *dependency.DependencyClient {
 	return o.dependencyClient
 }
 
+// GetState returns the current state of the orchestrator
+func (o *Orchestrator) GetState() State {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	return o.state
+}
+
 // EnqueueExistingChunks 扫描并推送指定范围的 chunk 文件到 ASR 队列
 // 用于音频文件上传后的批量处理
 func (o *Orchestrator) EnqueueExistingChunks(startChunkID, endChunkID int) error {
