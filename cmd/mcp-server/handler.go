@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/tools"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/tools"
 )
 
 // NewMCPHandler 创建新的 MCP Handler 实例并注册所有工具

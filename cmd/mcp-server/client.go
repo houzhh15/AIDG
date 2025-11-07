@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // client.go - API 客户端

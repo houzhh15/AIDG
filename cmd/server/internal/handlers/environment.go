@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 )
 
 // EnvironmentHandler 处理环境检查相关的 HTTP 请求

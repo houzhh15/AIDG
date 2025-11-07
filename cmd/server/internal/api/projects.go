@@ -13,10 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/executionplan"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/simhash"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/executionplan"
+	"github.com/houzhh15/AIDG/cmd/server/internal/simhash"
+	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
 
 // projectsRoot resolves to the configured projects directory

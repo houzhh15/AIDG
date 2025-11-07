@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/documents"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/resource"
+	"github.com/houzhh15/AIDG/cmd/server/internal/documents"
+	"github.com/houzhh15/AIDG/cmd/server/internal/resource"
 )
 
 // addTaskResources 自动添加任务相关资源

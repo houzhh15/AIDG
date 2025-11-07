@@ -17,7 +17,7 @@
 services:
   # Unified AIDG Service (Production)
   aidg:
-    image: ghcr.io/houzhh15-hub/aidg:${IMAGE_TAG:-latest}
+    image: ghcr.io/houzhh15/aidg:${IMAGE_TAG:-latest}
     container_name: aidg-prod
     ports:
       - "8000:8000"  # Web Server

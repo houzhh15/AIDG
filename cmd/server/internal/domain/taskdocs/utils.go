@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 )
 
 // docBaseDir returns the base directory for a document type (internal helper)

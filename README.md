@@ -108,7 +108,7 @@ graph TD
 
 ```bash
 # 1. 下载配置文件
-curl -O https://raw.githubusercontent.com/houzhh15-hub/AIDG/main/docker-compose.ghcr.yml
+curl -O https://raw.githubusercontent.com/houzhh15/AIDG/main/docker-compose.ghcr.yml
 
 # 2. 启动服务（基础版，100MB）
 docker compose -f docker-compose.ghcr.yml up -d
@@ -305,7 +305,7 @@ AIDG 采用统一容器架构，提供三个 Docker 镜像：
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/houzhh15-hub/AIDG.git
+git clone https://github.com/houzhh15/AIDG.git
 cd AIDG
 
 # 2. 安装依赖

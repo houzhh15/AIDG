@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/users"
+	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
 
 // HandleGetMyToken GET /api/v1/me/token

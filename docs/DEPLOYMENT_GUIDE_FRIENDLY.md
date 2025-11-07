@@ -92,12 +92,12 @@ docker --version
 
 **方式 A：使用 Git（推荐）**
 ```bash
-git clone https://github.com/houzhh15-hub/AIDG.git
+git clone https://github.com/houzhh15/AIDG.git
 cd AIDG
 ```
 
 **方式 B：直接下载 ZIP**
-1. 访问 https://github.com/houzhh15-hub/AIDG
+1. 访问 https://github.com/houzhh15/AIDG
 2. 点击绿色的 "Code" 按钮
 3. 选择 "Download ZIP"
 4. 解压到你喜欢的位置
@@ -807,7 +807,7 @@ docker-compose logs --tail=0
 
 ### 社区支持
 
-- 💬 **GitHub Issues**: https://github.com/houzhh15-hub/AIDG/issues
+- 💬 **GitHub Issues**: https://github.com/houzhh15/AIDG/issues
 - 📧 **邮件支持**: houzhh15@mails.tsinghua.edu.cn
 
 ### 日志分析

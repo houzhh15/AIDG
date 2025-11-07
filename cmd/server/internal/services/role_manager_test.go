@@ -1,8 +1,8 @@
 package services
 
 import (
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/audit"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/constants"
+	"github.com/houzhh15/AIDG/cmd/server/internal/audit"
+	"github.com/houzhh15/AIDG/cmd/server/internal/constants"
 	"testing"
 )
 

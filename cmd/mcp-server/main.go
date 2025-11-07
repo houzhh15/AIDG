@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/config"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/config"
 )
 
 var startTime = time.Now()

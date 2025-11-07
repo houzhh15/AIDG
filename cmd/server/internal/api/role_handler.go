@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/constants"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
+	"github.com/houzhh15/AIDG/cmd/server/internal/constants"
+	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 
 	"github.com/gin-gonic/gin"
 )

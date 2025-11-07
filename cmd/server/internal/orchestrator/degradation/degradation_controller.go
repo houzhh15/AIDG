@@ -6,8 +6,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/health"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/whisper"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/health"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/whisper"
 )
 
 // DegradationController manages the lifecycle of transcriber implementations based on health status.

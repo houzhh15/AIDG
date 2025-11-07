@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/meetings"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 )
 
 const (

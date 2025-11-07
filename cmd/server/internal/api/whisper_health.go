@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/degradation"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/health"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/degradation"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/health"
 )
 
 // HandleWhisperHealthCheck 创建Whisper健康检查的HTTP处理函数

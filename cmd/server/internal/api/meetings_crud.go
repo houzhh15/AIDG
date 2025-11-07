@@ -15,8 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/meetings"
-	orchestrator "github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
+	orchestrator "github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 )
 
 func tasksRoot() string {

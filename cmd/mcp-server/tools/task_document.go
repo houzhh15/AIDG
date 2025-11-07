@@ -3,7 +3,7 @@ package tools
 import (
 	"fmt"
 
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // GetTaskDocumentTool 获取任务文档通用工具

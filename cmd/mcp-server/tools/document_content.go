@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // ReadDocumentContentTool 读取文档内容工具

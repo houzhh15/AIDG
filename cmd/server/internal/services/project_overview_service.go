@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 )
 
 // ProjectOverviewService 项目概述服务接口

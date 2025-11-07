@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/health"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/whisper"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/health"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/whisper"
 )
 
 // MockTranscriberForDegradation is a thread-safe mock transcriber for degradation testing.

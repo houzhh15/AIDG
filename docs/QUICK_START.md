@@ -20,7 +20,7 @@ docker --version
 
 ```bash
 # 克隆项目
-git clone https://github.com/houzhh15-hub/AIDG.git
+git clone https://github.com/houzhh15/AIDG.git
 cd AIDG
 
 # 创建数据目录
@@ -82,7 +82,7 @@ docker-compose down
 ## 📚 更多信息
 
 - 📖 **完整部署指南**: [DEPLOYMENT_GUIDE_FRIENDLY.md](DEPLOYMENT_GUIDE_FRIENDLY.md)
-- 💬 **遇到问题**: [GitHub Issues](https://github.com/houzhh15-hub/AIDG/issues)
+- 💬 **遇到问题**: [GitHub Issues](https://github.com/houzhh15/AIDG/issues)
 
 ---
 

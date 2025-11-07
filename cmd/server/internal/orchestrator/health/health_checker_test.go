@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/whisper"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/whisper"
 )
 
 // MockTranscriberForHealth is a simple mock transcriber for health testing.

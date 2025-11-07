@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/meetings"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
 
 	"github.com/gin-gonic/gin"
 )

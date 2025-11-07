@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/pkg/metrics"
+	"github.com/houzhh15/AIDG/pkg/metrics"
 )
 
 // FallbackExecutor tries remote execution first, then falls back to local on failure.

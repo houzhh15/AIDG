@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/models"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/util"
+	"github.com/houzhh15/AIDG/cmd/server/internal/models"
+	"github.com/houzhh15/AIDG/cmd/server/internal/util"
 )
 
 // 错误定义

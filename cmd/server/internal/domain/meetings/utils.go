@@ -1,7 +1,7 @@
 package meetings
 
 import (
-	orchestrator "github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
+	orchestrator "github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 )
 
 // BackfillSBDefaults backfills default values for SpeechBrain parameters

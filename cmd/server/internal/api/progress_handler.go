@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 )
 
 // HandleGetWeekProgress GET /api/v1/projects/:project_id/progress/week/:week_number

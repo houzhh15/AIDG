@@ -2,7 +2,7 @@ package tools
 
 import (
 	"fmt"
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // GetUserCurrentTaskTool 实现获取当前用户任务信息的工具

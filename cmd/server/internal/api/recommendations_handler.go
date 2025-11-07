@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/houzhh15-hub/AIDG/pkg/similarity"
+	"github.com/houzhh15/AIDG/pkg/similarity"
 )
 
 // PreviewRecommendationsRequest 写作前推荐请求参数

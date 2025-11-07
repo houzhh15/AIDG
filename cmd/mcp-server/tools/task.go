@@ -3,7 +3,7 @@ package tools
 import (
 	"fmt"
 
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // ListProjectTasksTool 获取指定项目的任务列表

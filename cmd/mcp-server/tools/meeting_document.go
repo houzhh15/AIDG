@@ -2,7 +2,7 @@ package tools
 
 import (
 	"fmt"
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // GetMeetingDocumentTool 获取会议文档通用工具

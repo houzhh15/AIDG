@@ -3,8 +3,8 @@ package services
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/constants"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/models"
+	"github.com/houzhh15/AIDG/cmd/server/internal/constants"
+	"github.com/houzhh15/AIDG/cmd/server/internal/models"
 	"os"
 	"path/filepath"
 )

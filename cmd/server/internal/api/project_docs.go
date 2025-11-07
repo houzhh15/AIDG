@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/meetings"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 )
 
 // HandlePutProjectFeatureList PUT /api/v1/projects/:id/feature-list

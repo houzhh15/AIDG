@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/projects"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/services"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 )
 
 // HandleUpdateProjectMetadata PATCH /api/v1/projects/:project_id/metadata

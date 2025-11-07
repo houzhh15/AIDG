@@ -2,7 +2,7 @@ package meetings
 
 import (
 	"fmt"
-	orchestrator "github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator"
+	orchestrator "github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 	"sync"
 	"time"
 )

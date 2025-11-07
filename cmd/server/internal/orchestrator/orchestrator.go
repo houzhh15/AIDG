@@ -24,12 +24,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/metrics"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/degradation"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/dependency"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/health"
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/whisper"
-	"github.com/houzhh15-hub/AIDG/pkg/logger"
+	"github.com/houzhh15/AIDG/cmd/server/internal/metrics"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/degradation"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/dependency"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/health"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/whisper"
+	"github.com/houzhh15/AIDG/pkg/logger"
 )
 
 // init logging configuration if needed

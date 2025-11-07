@@ -617,4 +617,4 @@ docker-compose config --services
 ---
 
 *最后更新：2025-01-14*
-*有任何问题？查看 [GitHub Issues](https://github.com/houzhh15-hub/AIDG/issues)*
+*有任何问题？查看 [GitHub Issues](https://github.com/houzhh15/AIDG/issues)*

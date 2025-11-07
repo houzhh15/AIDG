@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // tools/registry.go - 工具注册表

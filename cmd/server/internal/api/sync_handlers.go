@@ -15,7 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/domain/sync"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/sync"
 )
 
 // SyncConfig 封装 sync 相关配置

@@ -2,7 +2,7 @@ package tools
 
 import (
 	"fmt"
-	"github.com/houzhh15-hub/AIDG/cmd/mcp-server/shared"
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // UpdateProgressTool 进展更新工具（批量更新季度/月/周总结）

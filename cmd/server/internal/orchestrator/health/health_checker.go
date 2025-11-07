@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/houzhh15-hub/AIDG/cmd/server/internal/orchestrator/whisper"
+	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator/whisper"
 )
 
 // ServiceStatus represents the current health state of a Whisper transcription service.
