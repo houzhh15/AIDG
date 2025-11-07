@@ -1,15 +1,31 @@
 import React from 'react';
-import { Drawer, Form, Input, Button, Divider, message, Select, Table, Progress, Space } from 'antd';
+import { Drawer, Form, Input, Button, Divider, message, Select, Table } from 'antd';
 import { authedApi } from '../api/auth';
 
 // 模块加载时立即执行的日志 - 用于验证新代码是否被加载
 console.log('[DEBUG] ========== TaskDetailSettings.tsx MODULE LOADED - BUILD TIME: 2025-10-19 13:32 ==========');
 
+interface TaskInitial {
+  name?: string;
+  description?: string;
+  whisper_model?: string;
+  meeting_time?: string | number | Date;
+  [key: string]: unknown;
+}
+
+interface WhisperModel {
+  id: string;
+  path?: string;
+  exists?: boolean;
+  size_mb?: number;
+  [key: string]: unknown;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
   taskId: string;
-  initial: any;
+  initial: TaskInitial;
   refresh: () => void;
   onAfterRename?: () => void; // 重命名后的回调
 }
@@ -37,7 +53,7 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
           console.log('[DEBUG] Response data:', data);
           
           if (data.success && data.data.models) {
-            const modelIds = data.data.models.map((m: any) => m.id);
+            const modelIds = data.data.models.map((m: WhisperModel) => m.id);
             console.log('[DEBUG] Extracted model IDs:', modelIds);
             setWhisperModels(modelIds);
           }
@@ -139,8 +155,9 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
             refresh();
             onClose();
           }
-        } catch (e: any) {
-          message.error('重命名失败: ' + e.message);
+        } catch (e: unknown) {
+          const error = e as Error;
+          message.error('重命名失败: ' + error.message);
           // 即使重命名失败，配置也已保存成功
           refresh();
         }
@@ -148,9 +165,10 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
         refresh();
         onClose();
       }
-    } catch (e: any) {
-      if (e?.errorFields) return;
-      message.error(e.message);
+    } catch (e: unknown) {
+      const error = e as { errorFields?: unknown; message?: string };
+      if (error.errorFields) return;
+      message.error(error.message || '保存失败');
     } finally {
       setLoading(false);
     }
@@ -231,7 +249,7 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
               if (response.ok) {
                 const data = await response.json();
                 if (data.success && data.data.models) {
-                  const modelIds = data.data.models.map((m: any) => m.id);
+                  const modelIds = data.data.models.map((m: WhisperModel) => m.id);
                   setWhisperModels(modelIds);
                 }
               }
@@ -258,7 +276,7 @@ interface ModelDownloadDrawerProps {
 }
 
 const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose, onModelDownloaded }) => {
-  const [models, setModels] = React.useState<any[]>([]);
+  const [models, setModels] = React.useState<WhisperModel[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [downloadingModels, setDownloadingModels] = React.useState<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = React.useState<Map<string, { status: string; total?: number; completed?: number }>>(new Map());
@@ -323,6 +341,7 @@ const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose
       const decoder = new TextDecoder();
       let buffer = '';
 
+      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -382,10 +401,10 @@ const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose
     {
       title: 'Download',
       key: 'download',
-      render: (_: any, record: any) => {
-        const isDownloading = downloadingModels.has(record.path);
+      render: (_: unknown, record: WhisperModel) => {
+        const isDownloading = downloadingModels.has(record.path || '');
         const isDownloaded = record.exists;
-        const progress = downloadProgress.get(record.path);
+        const _progress = downloadProgress.get(record.path || '');
 
         if (isDownloaded) {
           return <span style={{ color: 'green' }}>已下载</span>;
@@ -400,8 +419,8 @@ const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose
             type="primary"
             size="small"
             loading={isDownloading}
-            onClick={() => downloadModel(record.path)}
-            disabled={isDownloading}
+            onClick={() => record.path && downloadModel(record.path)}
+            disabled={isDownloading || !record.path}
           >
             {isDownloading ? '下载中...' : '下载'}
           </Button>
