@@ -153,6 +153,11 @@ func TestDependencyClient_ConvertAudio_ExecutorError(t *testing.T) {
 }
 
 func TestDependencyClient_RunDiarization_Success(t *testing.T) {
+	// Arrange: Create temporary directory for test output
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "diarization.json")
+	audioPath := filepath.Join(tmpDir, "audio.wav")
+
 	// Arrange: Create a fake executor with successful response
 	fakeExec := &FakeExecutor{
 		ResponseToReturn: CommandResponse{
@@ -165,7 +170,7 @@ func TestDependencyClient_RunDiarization_Success(t *testing.T) {
 
 	config := ExecutorConfig{
 		Mode:             ModeLocal,
-		SharedVolumePath: "/data",
+		SharedVolumePath: tmpDir,
 		DefaultTimeout:   10 * time.Minute,
 		AllowedCommands:  []string{"python"},
 	}
@@ -173,14 +178,14 @@ func TestDependencyClient_RunDiarization_Success(t *testing.T) {
 	client := &DependencyClient{
 		executor:    fakeExec,
 		config:      config,
-		pathManager: NewPathManager("/data"),
+		pathManager: NewPathManager(tmpDir),
 	}
 
 	// Act: Run diarization
 	opts := &DiarizationOptions{
 		NumSpeakers: 2,
 	}
-	err := client.RunDiarization(context.Background(), "/data/meetings/123/audio.wav", "/data/meetings/123/diarization.json", opts)
+	err := client.RunDiarization(context.Background(), audioPath, outputPath, opts)
 
 	// Assert: No error and correct command was executed
 	assert.NoError(t, err)
@@ -189,10 +194,15 @@ func TestDependencyClient_RunDiarization_Success(t *testing.T) {
 	cmd := fakeExec.ExecutedCommands[0]
 	assert.Equal(t, "python", cmd.Command)
 	assert.Contains(t, cmd.Args, "--input")
-	assert.Contains(t, cmd.Args, "/data/meetings/123/audio.wav")
+	assert.Contains(t, cmd.Args, audioPath)
 	assert.Contains(t, cmd.Args, "--device")
 	assert.Contains(t, cmd.Args, "--num-speakers")
 	assert.Contains(t, cmd.Args, "2")
+
+	// Verify output file was created
+	data, err := os.ReadFile(outputPath)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), "SPEAKER_00")
 }
 
 func TestDependencyClient_HealthCheck(t *testing.T) {
