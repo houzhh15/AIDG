@@ -33,10 +33,12 @@ import {
   KeyOutlined,
   CheckCircleOutlined,
   DatabaseOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { getUserProfile, changePassword, type UserProfileData } from '../api/permissions';
 import { getScopeLabel } from '../constants/permissions';
 import ResourcesManagement from './ResourcesManagement';
+import PromptsManagement from './PromptsManagement';
 import { loadAuth } from '../api/auth';
 
 const { Title, Text } = Typography;
@@ -50,6 +52,7 @@ export const UserProfile: React.FC = () => {
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [passwordForm] = Form.useForm();
   const [changingPassword, setChangingPassword] = useState(false);
+  const [promptsScope, setPromptsScope] = useState<'global' | 'personal'>('personal');
 
   // 加载用户档案
   useEffect(() => {
@@ -305,6 +308,55 @@ export const UserProfile: React.FC = () => {
           bodyStyle={{ padding: 0 }}
         >
           <ResourcesManagement username={currentUsername} />
+        </Card>
+      ),
+    },
+    {
+      key: 'prompts',
+      label: (
+        <span>
+          <FileTextOutlined />
+          Prompts
+        </span>
+      ),
+      children: (
+        <Card
+          title={
+            <Space>
+              <FileTextOutlined />
+              <span>自定义 Prompts</span>
+            </Space>
+          }
+          bodyStyle={{ padding: 0 }}
+        >
+          <div style={{ padding: '16px 16px 0' }}>
+            <Tabs
+              activeKey={promptsScope}
+              onChange={(key) => setPromptsScope(key as 'global' | 'personal')}
+              items={[
+                {
+                  key: 'personal',
+                  label: 'Personal Prompts',
+                  children: (
+                    <PromptsManagement
+                      scope="personal"
+                      username={currentUsername}
+                    />
+                  ),
+                },
+                {
+                  key: 'global',
+                  label: 'Global Prompts',
+                  children: (
+                    <PromptsManagement
+                      scope="global"
+                      username={currentUsername}
+                    />
+                  ),
+                },
+              ]}
+            />
+          </div>
         </Card>
       ),
     },

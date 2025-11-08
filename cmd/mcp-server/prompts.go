@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +25,8 @@ type PromptMetadata struct {
 	Name        string           `json:"name"`                  // 模版名称
 	Description string           `json:"description,omitempty"` // 模版描述
 	Arguments   []PromptArgument `json:"arguments,omitempty"`   // 参数列表
+	Scope       string           `json:"scope,omitempty"`       // 作用域：global/project/personal
+	ProjectID   string           `json:"project_id,omitempty"`  // 项目ID（仅 scope=project 时有值）
 }
 
 // PromptTemplate 定义完整的提示词模版对象
@@ -33,6 +36,8 @@ type PromptTemplate struct {
 	Arguments   []PromptArgument `json:"arguments"`   // 参数定义
 	Content     string           `json:"content"`     // 模版内容（Markdown）
 	FilePath    string           `json:"file_path"`   // 文件路径（用于日志和调试）
+	Scope       string           `json:"scope"`       // 作用域：global/project/personal
+	ProjectID   string           `json:"project_id"`  // 项目ID（仅 scope=project 时有值）
 }
 
 // MessageContent 定义 MCP 消息内容
@@ -421,19 +426,29 @@ func (pc *PromptCache) list() []PromptMetadata {
 
 // PromptManager 提示词模版管理器
 type PromptManager struct {
-	cache      *PromptCache
-	promptsDir string
-	mu         sync.RWMutex
+	cache               *PromptCache
+	promptsDir          string
+	projectsRoot        string                     // 项目根目录（用于加载项目 Prompts）
+	dynamicPromptsCache map[string]*PromptTemplate // 动态 Prompts 缓存
+	cacheTTL            time.Duration              // 缓存有效期
+	lastCacheUpdate     time.Time                  // 上次缓存更新时间
+	triggerFilePath     string                     // MCP 通知触发文件路径（step-06）
+	mu                  sync.RWMutex
 }
 
 // NewPromptManager 创建模版管理器实例
 func NewPromptManager() *PromptManager {
 	promptsDir := getPromptsDir()
 	cacheTTL := getPromptsCacheTTL()
+	projectsRoot := getProjectsRoot()
 
 	pm := &PromptManager{
-		cache:      newPromptCache(cacheTTL),
-		promptsDir: promptsDir,
+		cache:               newPromptCache(cacheTTL),
+		promptsDir:          promptsDir,
+		projectsRoot:        projectsRoot,
+		dynamicPromptsCache: make(map[string]*PromptTemplate),
+		cacheTTL:            cacheTTL,
+		triggerFilePath:     filepath.Join(projectsRoot, ".prompts_changed"), // step-06
 	}
 
 	// 验证目录
@@ -448,6 +463,14 @@ func NewPromptManager() *PromptManager {
 
 // ensureCacheValid 确保缓存有效（Double-Checked Locking 模式）
 func (pm *PromptManager) ensureCacheValid() error {
+	// step-06: 检查触发文件是否存在（优先级最高）
+	if pm.checkAndConsumeTriggerFile() {
+		log.Printf("📢 [PROMPTS] 检测到外部通知触发文件，强制刷新缓存")
+		pm.mu.Lock()
+		defer pm.mu.Unlock()
+		return pm.reloadPrompts()
+	}
+
 	// 第一次检查（读锁，快速路径）
 	if pm.cache.isValid(pm.promptsDir) {
 		return nil
@@ -465,6 +488,28 @@ func (pm *PromptManager) ensureCacheValid() error {
 	// 执行刷新
 	log.Printf("🔄 [PROMPTS] 检测到模版变更或缓存失效，重新加载缓存")
 	return pm.reloadPrompts()
+}
+
+// checkAndConsumeTriggerFile 检查并消费触发文件（step-06）
+// 如果触发文件存在，删除它并返回 true
+func (pm *PromptManager) checkAndConsumeTriggerFile() bool {
+	if pm.triggerFilePath == "" {
+		return false
+	}
+
+	// 检查文件是否存在
+	if _, err := os.Stat(pm.triggerFilePath); os.IsNotExist(err) {
+		return false
+	}
+
+	// 删除触发文件（消费通知）
+	if err := os.Remove(pm.triggerFilePath); err != nil {
+		log.Printf("⚠️  [PROMPTS] 删除触发文件失败: %v", err)
+		return false
+	}
+
+	log.Printf("✅ [PROMPTS] 已消费外部通知触发文件: %s", pm.triggerFilePath)
+	return true
 }
 
 // reloadPrompts 重新加载所有模版（需要调用者持有写锁）
@@ -552,8 +597,16 @@ func (pm *PromptManager) GetPrompt(name string, args map[string]string) (*Prompt
 		return nil, err
 	}
 
-	// 查找模版
+	// 先从静态缓存查找
 	template, exists := pm.cache.get(name)
+
+	// 如果静态缓存没有，尝试从动态缓存查找
+	if !exists {
+		pm.mu.RLock()
+		template, exists = pm.dynamicPromptsCache[name]
+		pm.mu.RUnlock()
+	}
+
 	if !exists {
 		return nil, fmt.Errorf("模版不存在: %s", name)
 	}
@@ -681,6 +734,15 @@ func getPromptsCacheTTL() time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
+// getProjectsRoot 读取项目根目录路径
+func getProjectsRoot() string {
+	root := os.Getenv("PROJECTS_ROOT")
+	if root == "" {
+		root = "./data" // 默认值：数据根目录（不是 ./data/projects）
+	}
+	return filepath.Clean(root)
+}
+
 // resolvePromptsDir 解析模版目录路径
 // 支持相对路径和绝对路径
 func resolvePromptsDir(dir string) string {
@@ -747,4 +809,215 @@ func validateTemplatePath(basePath, filePath string) error {
 	}
 
 	return nil
+}
+
+// ===== 动态 Prompts 加载（三层架构）=====
+
+// LoadDynamicPrompts 加载三层 Prompts（全局、项目、个人）
+// 参数：username（用户名）、projectID（项目ID）、taskID（任务ID，预留）
+func (pm *PromptManager) LoadDynamicPrompts(username, projectID, taskID string) ([]*PromptTemplate, error) {
+	var allPrompts []*PromptTemplate
+
+	// 1. 加载全局 Prompts（{projectsRoot}/prompts/global/）
+	globalDir := filepath.Join(pm.projectsRoot, "prompts", "global")
+	if globalPrompts, err := pm.loadPromptsFromJSONDir(globalDir); err == nil {
+		allPrompts = append(allPrompts, globalPrompts...)
+		log.Printf("📁 [PROMPTS] 全局 Prompts: %d 个 (目录: %s)", len(globalPrompts), globalDir)
+	} else {
+		log.Printf("⚠️  [PROMPTS] 加载全局 Prompts 失败: %v (目录: %s)", err, globalDir)
+	}
+
+	// 2. 加载个人 Prompts（{projectsRoot}/users/{username}/prompts/）
+	if username != "" {
+		userDir := filepath.Join(pm.projectsRoot, "users", username, "prompts")
+		if userPrompts, err := pm.loadPromptsFromJSONDir(userDir); err == nil {
+			allPrompts = append(allPrompts, userPrompts...)
+			log.Printf("📁 [PROMPTS] 用户 %s Prompts: %d 个 (目录: %s)", username, len(userPrompts), userDir)
+		} else {
+			log.Printf("⚠️  [PROMPTS] 加载用户 %s 的 Prompts 失败: %v (目录: %s)", username, err, userDir)
+		}
+	}
+
+	// 3. 加载项目 Prompts（{projectsRoot}/projects/{projectID}/prompts/）
+	if projectID != "" {
+		projectDir := filepath.Join(pm.projectsRoot, "projects", projectID, "prompts")
+		if projectPrompts, err := pm.loadPromptsFromJSONDir(projectDir); err == nil {
+			allPrompts = append(allPrompts, projectPrompts...)
+			log.Printf("📁 [PROMPTS] 项目 %s Prompts: %d 个 (目录: %s)", projectID, len(projectPrompts), projectDir)
+		} else {
+			log.Printf("⚠️  [PROMPTS] 加载项目 %s 的 Prompts 失败: %v (目录: %s)", projectID, err, projectDir)
+		}
+	}
+
+	log.Printf("✅ [PROMPTS] 动态加载完成: 全局+用户+项目 共 %d 个 Prompts (username=%s, projectID=%s)",
+		len(allPrompts), username, projectID)
+	return allPrompts, nil
+}
+
+// loadPromptsFromJSONDir 从指定目录加载所有 JSON 格式的 Prompts
+func (pm *PromptManager) loadPromptsFromJSONDir(dirPath string) ([]*PromptTemplate, error) {
+	// 检查目录是否存在
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		return []*PromptTemplate{}, nil // 目录不存在不报错，返回空列表
+	}
+
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取目录失败: %w", err)
+	}
+
+	var prompts []*PromptTemplate
+	for _, entry := range entries {
+		// 只处理 .json 文件
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(dirPath, entry.Name())
+
+		// 读取 JSON 文件并解析为 Prompt 结构
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			log.Printf("⚠️  [PROMPTS] 读取文件失败: %s (%v)", filePath, err)
+			continue
+		}
+
+		// 简单的 JSON 解析（复用现有的 Prompt 结构）
+		var prompt struct {
+			PromptID    string `json:"prompt_id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Content     string `json:"content"`
+			Scope       string `json:"scope"`      // 新增：scope 字段
+			ProjectID   string `json:"project_id"` // 新增：project_id 字段
+			Arguments   []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Required    bool   `json:"required"`
+			} `json:"arguments"`
+		}
+
+		// 解析 JSON
+		if err := json.Unmarshal(content, &prompt); err != nil {
+			log.Printf("⚠️  [PROMPTS] JSON 解析失败: %s (%v)", filePath, err)
+			continue
+		}
+
+		// 转换为 PromptTemplate 结构
+		template := &PromptTemplate{
+			Name:        prompt.Name,
+			Description: prompt.Description,
+			Content:     prompt.Content,
+			FilePath:    filePath,
+			Scope:       prompt.Scope,     // 新增：设置 scope
+			ProjectID:   prompt.ProjectID, // 新增：设置 project_id
+		}
+
+		for _, arg := range prompt.Arguments {
+			template.Arguments = append(template.Arguments, PromptArgument{
+				Name:        arg.Name,
+				Description: arg.Description,
+				Required:    arg.Required,
+			})
+		}
+
+		prompts = append(prompts, template)
+	}
+
+	return prompts, nil
+}
+
+// InvalidateCache 缓存失效（被变更通知调用时清空缓存）
+func (pm *PromptManager) InvalidateCache() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	pm.dynamicPromptsCache = make(map[string]*PromptTemplate)
+	pm.lastCacheUpdate = time.Time{} // 重置为零值
+	log.Printf("🔄 [PROMPTS] 动态缓存已失效，下次查询将重新加载")
+}
+
+// GetUserPrompts 获取用户可见的 Prompts 列表（合并静态+动态）
+func (pm *PromptManager) GetUserPrompts(username, projectID, taskID string) ([]PromptMetadata, error) {
+	// step-06: 优先检查触发文件（外部通知）
+	triggerFileExists := false
+	if pm.triggerFilePath != "" {
+		if _, err := os.Stat(pm.triggerFilePath); err == nil {
+			triggerFileExists = true
+			// 删除触发文件（消费通知）
+			if err := os.Remove(pm.triggerFilePath); err != nil {
+				log.Printf("⚠️  [PROMPTS] 删除触发文件失败: %v", err)
+			} else {
+				log.Printf("✅ [PROMPTS] 检测到外部通知触发文件，强制刷新动态 Prompts 缓存")
+			}
+		}
+	}
+
+	// 检查缓存是否有效
+	pm.mu.RLock()
+	cacheValid := !triggerFileExists && pm.cacheTTL > 0 && !pm.lastCacheUpdate.IsZero() && time.Since(pm.lastCacheUpdate) < pm.cacheTTL
+	pm.mu.RUnlock()
+
+	// 缓存失效或触发文件存在，重新加载
+	if !cacheValid {
+		pm.mu.Lock()
+		// 双重检查
+		if triggerFileExists || pm.cacheTTL == 0 || pm.lastCacheUpdate.IsZero() || time.Since(pm.lastCacheUpdate) >= pm.cacheTTL {
+			dynamicPrompts, err := pm.LoadDynamicPrompts(username, projectID, taskID)
+			if err != nil {
+				pm.mu.Unlock()
+				return nil, fmt.Errorf("加载动态 Prompts 失败: %w", err)
+			}
+
+			// 更新缓存
+			pm.dynamicPromptsCache = make(map[string]*PromptTemplate)
+			for _, p := range dynamicPrompts {
+				pm.dynamicPromptsCache[p.Name] = p
+			}
+			pm.lastCacheUpdate = time.Now()
+
+			if triggerFileExists {
+				log.Printf("📢 [PROMPTS] 动态 Prompts 缓存已刷新（触发器驱动）")
+			}
+		}
+		pm.mu.Unlock()
+	}
+
+	// 合并静态模板（预置 Prompts）
+	staticList, err := pm.ListPrompts()
+	if err != nil {
+		return nil, fmt.Errorf("获取静态 Prompts 失败: %w", err)
+	}
+
+	// 合并动态 Prompts
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var result []PromptMetadata
+
+	// 先添加静态 Prompts
+	for _, meta := range staticList {
+		result = append(result, meta)
+		seen[meta.Name] = true
+	}
+
+	// 再添加动态 Prompts（去重）
+	for _, template := range pm.dynamicPromptsCache {
+		if !seen[template.Name] {
+			result = append(result, PromptMetadata{
+				Name:        template.Name,
+				Description: template.Description,
+				Arguments:   template.Arguments,
+				Scope:       template.Scope,     // 新增：传递 scope
+				ProjectID:   template.ProjectID, // 新增：传递 project_id
+			})
+			seen[template.Name] = true
+		}
+	}
+
+	// 排序
+	sortPromptMetadata(result)
+
+	return result, nil
 }

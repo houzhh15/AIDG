@@ -65,9 +65,10 @@ type UpdateProjectContentRequest struct {
 
 // HTTP处理器结构
 type MCPHandler struct {
-	apiClient     *shared.APIClient
-	registry      *ToolRegistry
-	promptManager *PromptManager // Prompts 模版管理器
+	apiClient       *shared.APIClient
+	registry        *ToolRegistry
+	PromptManager   *PromptManager   // Prompts 模版管理器（公共访问）
+	NotificationHub *NotificationHub // 通知中心（公共访问）
 }
 
 // MCP请求结构

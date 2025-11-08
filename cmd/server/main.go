@@ -37,6 +37,7 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/handlers"
 	"github.com/houzhh15/AIDG/cmd/server/internal/middleware"
 	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
+	"github.com/houzhh15/AIDG/cmd/server/internal/prompt"
 	"github.com/houzhh15/AIDG/cmd/server/internal/resource"
 	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
@@ -133,6 +134,10 @@ func main() {
 		projectsRoot = "./projects"
 	}
 
+	// Data root directory for prompts and other data storage
+	// Note: Prompts use a separate data root that includes users/, projects/, and prompts/
+	dataRoot := "./data"
+
 	// Initialize multi-level document handler
 	docHandler := documents.NewHandler(projectsRoot)
 	appLogger.Info("multi-level document handler ready", "baseDir", projectsRoot)
@@ -147,6 +152,14 @@ func main() {
 		appLogger.Error("user manager init failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Initialize prompt system (step-04)
+	promptStorage := prompt.NewPromptStorage(dataRoot)
+	promptPermChecker := prompt.NewPromptPermissionChecker(userManager)
+	// 触发文件路径：MCP Server 会监听此文件变化来重新加载 Prompts
+	promptsTriggerPath := filepath.Join(dataRoot, ".prompts_changed")
+	promptsHandler := api.NewPromptsHandler(promptStorage, promptPermChecker, userManager, promptsTriggerPath)
+	appLogger.Info("prompt system ready", "baseDir", dataRoot, "triggerPath", promptsTriggerPath)
 
 	// Ensure default admin with config-based password
 	adminPassword := cfg.Security.AdminDefaultPassword
@@ -263,7 +276,7 @@ func main() {
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager)
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -415,10 +428,21 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"PATCH /api/v1/projects/:id/tasks/:task_id/test/sections/reorder":        {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/test/sections/sync":            {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/prompts":                        {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/prompts": {users.ScopeTaskWrite},
-		"GET /api/v1/user/current-task":       {users.ScopeTaskRead},
-		"PUT /api/v1/user/current-task":       {users.ScopeTaskWrite},
-		"POST /api/v1/user/resources/refresh": {users.ScopeMeetingRead}, // Manual refresh MCP resources, only requires basic access
-		"GET /api/v1/tasks":                   {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
+		// Prompts Management API - 使用 meeting.read 作为基础权限（更宽松）
+		"POST /api/v1/prompts":                           {users.ScopeMeetingWrite},
+		"GET /api/v1/prompts":                            {users.ScopeMeetingRead},
+		"GET /api/v1/prompts/:prompt_id":                 {users.ScopeMeetingRead},
+		"PUT /api/v1/prompts/:prompt_id":                 {users.ScopeMeetingWrite},
+		"DELETE /api/v1/prompts/:prompt_id":              {users.ScopeMeetingWrite},
+		"POST /api/v1/projects/:id/prompts":              {users.ScopeMeetingWrite},
+		"GET /api/v1/projects/:id/prompts":               {users.ScopeMeetingRead},
+		"GET /api/v1/projects/:id/prompts/:prompt_id":    {users.ScopeMeetingRead},
+		"PUT /api/v1/projects/:id/prompts/:prompt_id":    {users.ScopeMeetingWrite},
+		"DELETE /api/v1/projects/:id/prompts/:prompt_id": {users.ScopeMeetingWrite},
+		"GET /api/v1/user/current-task":                  {users.ScopeTaskRead},
+		"PUT /api/v1/user/current-task":                  {users.ScopeTaskWrite},
+		"POST /api/v1/user/resources/refresh":            {users.ScopeMeetingRead}, // Manual refresh MCP resources, only requires basic access
+		"GET /api/v1/tasks":                              {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id": {users.ScopeMeetingRead}, "DELETE /api/v1/tasks/:id": {users.ScopeMeetingWrite},
 		"POST /api/v1/tasks/:id/start": {users.ScopeMeetingWrite}, "POST /api/v1/tasks/:id/stop": {users.ScopeMeetingWrite},
 		"POST /api/v1/tasks/:id/reprocess": {users.ScopeMeetingWrite}, "GET /api/v1/tasks/:id/reprocess": {users.ScopeMeetingWrite},
@@ -750,7 +774,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 	})
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler) {
 	// ========== Environment Check ==========
 	r.GET("/api/v1/environment/status", func(c *gin.Context) {
 		envHandler.GetStatus(c.Writer, c.Request)
@@ -797,6 +821,19 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.PATCH("/api/v1/users/:username", api.HandleUpdateUser(userManager))
 	r.DELETE("/api/v1/users/:username", api.HandleDeleteUser(userManager))
 	r.POST("/api/v1/users/:username/password", api.HandleChangePassword(userManager))
+
+	// ========== Prompts Management (step-04) ==========
+	r.POST("/api/v1/prompts", promptsHandler.CreatePrompt)
+	r.GET("/api/v1/prompts", promptsHandler.ListPrompts)
+	r.GET("/api/v1/prompts/:prompt_id", promptsHandler.GetPrompt)
+	r.PUT("/api/v1/prompts/:prompt_id", promptsHandler.UpdatePrompt)
+	r.DELETE("/api/v1/prompts/:prompt_id", promptsHandler.DeletePrompt)
+	// Project-scoped prompts routes
+	r.POST("/api/v1/projects/:id/prompts", promptsHandler.CreatePrompt)
+	r.GET("/api/v1/projects/:id/prompts", promptsHandler.ListPrompts)
+	r.GET("/api/v1/projects/:id/prompts/:prompt_id", promptsHandler.GetPrompt)
+	r.PUT("/api/v1/projects/:id/prompts/:prompt_id", promptsHandler.UpdatePrompt)
+	r.DELETE("/api/v1/projects/:id/prompts/:prompt_id", promptsHandler.DeletePrompt)
 
 	// ========== User Task Management ==========
 	r.GET("/api/v1/user/current-task", api.HandleGetUserCurrentTask)

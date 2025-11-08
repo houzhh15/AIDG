@@ -83,10 +83,14 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	// 初始化 Prompts 管理器
 	promptManager := NewPromptManager()
 
+	// 初始化通知中心
+	notificationHub := NewNotificationHub()
+
 	return &MCPHandler{
-		apiClient:     apiClient,
-		registry:      registry,
-		promptManager: promptManager,
+		apiClient:       apiClient,
+		registry:        registry,
+		PromptManager:   promptManager,
+		NotificationHub: notificationHub,
 	}
 }
 
@@ -466,11 +470,11 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case "prompts/list":
-		h.handlePromptsList(w, mcpReq)
+		h.handlePromptsList(w, mcpReq, r)
 		return
 
 	case "prompts/get":
-		h.handlePromptsGet(w, mcpReq)
+		h.handlePromptsGet(w, mcpReq, r)
 		return
 
 	case "resources/list":
@@ -499,8 +503,10 @@ func (h *MCPHandler) handleInitialize(w http.ResponseWriter, req struct {
 		"result": map[string]interface{}{
 			"protocolVersion": "2025-06-18",
 			"capabilities": map[string]interface{}{
-				"tools":   map[string]interface{}{},
-				"prompts": map[string]interface{}{},
+				"tools": map[string]interface{}{},
+				"prompts": map[string]interface{}{
+					"listChanged": true, // 支持 prompts list_changed 通知
+				},
 				"resources": map[string]interface{}{
 					"subscribe":   false,
 					"listChanged": false,
@@ -687,13 +693,59 @@ func (h *MCPHandler) handleDebugClientInfo(r *http.Request) string {
 // ===== Prompts 协议方法 =====
 
 // handlePromptsList 处理 prompts/list 请求
-func (h *MCPHandler) handlePromptsList(w http.ResponseWriter, req MCPRequest) {
-	// 调用 PromptManager 获取模版列表
-	prompts, err := h.promptManager.ListPrompts()
+func (h *MCPHandler) handlePromptsList(w http.ResponseWriter, req MCPRequest, r *http.Request) {
+	// 1. 提取 token
+	clientToken := h.extractTokenFromRequest(r)
+
+	// 2. 解析 username
+	username := ""
+	if clientToken != "" {
+		if parsedUsername, err := h.getUsernameFromToken(clientToken); err == nil {
+			username = parsedUsername
+		}
+	}
+
+	// 3. 获取当前任务信息（projectID 和 taskID）
+	projectID := ""
+	taskID := ""
+	if username != "" {
+		// 调用后端 API 获取用户当前任务（不需要 username 路径参数）
+		url := "/api/v1/user/current-task"
+		resultStr, err := shared.CallAPI(h.apiClient, "GET", url, nil, clientToken)
+		if err == nil {
+			var result map[string]interface{}
+			if err := json.Unmarshal([]byte(resultStr), &result); err == nil {
+				if data, ok := result["data"].(map[string]interface{}); ok {
+					if pid, ok := data["project_id"].(string); ok {
+						projectID = pid
+					}
+					if tid, ok := data["task_id"].(string); ok {
+						taskID = tid
+					}
+				}
+			}
+		}
+	}
+
+	// 4. 调用 PromptManager 获取模版列表（包含动态 Prompts）
+	var prompts []PromptMetadata
+	var err error
+
+	if username != "" {
+		// 使用 GetUserPrompts 合并静态+动态 Prompts
+		prompts, err = h.PromptManager.GetUserPrompts(username, projectID, taskID)
+	} else {
+		// 未登录用户只显示静态 Prompts
+		prompts, err = h.PromptManager.ListPrompts()
+	}
+
 	if err != nil {
 		h.sendErrorResponse(w, req.ID, -32603, fmt.Sprintf("加载模版失败: %v", err), nil)
 		return
 	}
+
+	log.Printf("📋 [PROMPTS] 返回 %d 个 Prompts (username=%s, project=%s, task=%s)",
+		len(prompts), username, projectID, taskID)
 
 	// 构造 MCP 响应
 	response := map[string]interface{}{
@@ -708,7 +760,7 @@ func (h *MCPHandler) handlePromptsList(w http.ResponseWriter, req MCPRequest) {
 }
 
 // handlePromptsGet 处理 prompts/get 请求
-func (h *MCPHandler) handlePromptsGet(w http.ResponseWriter, req MCPRequest) {
+func (h *MCPHandler) handlePromptsGet(w http.ResponseWriter, req MCPRequest, r *http.Request) {
 	// 提取 name 参数
 	name, ok := req.Params["name"].(string)
 	if !ok || name == "" {
@@ -727,7 +779,7 @@ func (h *MCPHandler) handlePromptsGet(w http.ResponseWriter, req MCPRequest) {
 	}
 
 	// 调用 PromptManager 获取模版
-	result, err := h.promptManager.GetPrompt(name, args)
+	result, err := h.PromptManager.GetPrompt(name, args)
 	if err != nil {
 		// 根据错误类型返回不同的错误码
 		errMsg := err.Error()

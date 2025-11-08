@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'antd';
-import { FileSearchOutlined, SettingOutlined, FolderOutlined, DashboardOutlined } from '@ant-design/icons';
+import { FileSearchOutlined, SettingOutlined, FolderOutlined, DashboardOutlined, FileTextOutlined } from '@ant-design/icons';
 import { FeatureList } from './FeatureList';
 import { ArchitectureDesign } from './ArchitectureDesign';
 import { TechDesign } from './TechDesign';
@@ -9,6 +9,8 @@ import { ProjectArchitectureDesign } from './project/ProjectArchitectureDesign';
 import { ProjectTechDesign } from './project/ProjectTechDesign';
 import DocumentManagementSystem from './DocumentManagementSystem';
 import ProjectStatusPage from './ProjectStatusPage';
+import PromptsManagement from './PromptsManagement';
+import { loadAuth } from '../api/auth';
 
 type DeliverableMode = 'task' | 'project';
 
@@ -45,6 +47,20 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
         <DocumentManagementSystem 
           projectId={effectiveProjectId}
           taskId="project-level" // 项目级别文档管理，使用特殊标识
+        />
+      </div>
+    ) : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
+  };
+  
+  const renderPrompts = () => {
+    if(mode==='task') return <div style={{ padding:12, color:'#999' }}>任务模式下暂不支持 Prompts 管理</div>;
+    const currentUsername = loadAuth()?.username || '';
+    return effectiveProjectId ? (
+      <div style={{ height: '100%', padding: '16px 0' }}>
+        <PromptsManagement 
+          scope="project"
+          projectId={effectiveProjectId}
+          username={currentUsername}
         />
       </div>
     ) : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
@@ -120,6 +136,21 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
         </div>
       ),
     },
+    // 项目模式下显示 Prompts 管理标签页
+    ...(mode === 'project' && effectiveProjectId ? [{
+      key: 'prompts',
+      label: (
+        <span>
+          <FileTextOutlined />
+          Prompts
+        </span>
+      ),
+      children: (
+        <div style={{ height: '100%', overflow: 'hidden' }}>
+          {renderPrompts()}
+        </div>
+      ),
+    }] : []),
   ];
 
   return (

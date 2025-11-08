@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,26 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/resource"
 	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 )
+
+// triggerPromptsReload 触发 MCP Server 重新加载 Prompts
+// 通过创建触发文件的方式通知独立进程的MCP Server
+func triggerPromptsReload() {
+	// 获取 data root 目录（与 PromptsHandler 保持一致）
+	dataRoot := os.Getenv("DATA_ROOT")
+	if dataRoot == "" {
+		dataRoot = "./data"
+	}
+
+	triggerPath := filepath.Join(dataRoot, ".prompts_changed")
+
+	// 创建或更新触发文件
+	if err := os.WriteFile(triggerPath, []byte(time.Now().Format(time.RFC3339)), 0644); err != nil {
+		log.Printf("⚠️  [TASKS] 触发MCP Prompts重新加载失败: %v", err)
+		return
+	}
+
+	log.Printf("📢 [TASKS] 切换任务，已触发MCP Server重新加载Prompts: %s", triggerPath)
+}
 
 // HandleGetUserCurrentTask GET /api/v1/user/current-task
 // 获取当前用户的当前任务信息
@@ -171,6 +192,9 @@ func HandlePutUserCurrentTask(userRoleService services.UserRoleService, resource
 			internalErrorResponse(c, fmt.Errorf("failed to set current task: %w", err))
 			return
 		}
+
+		// 触发 MCP Server 重新加载 Prompts（因为项目切换了，需要加载新项目的 Prompts）
+		triggerPromptsReload()
 
 		// 集成自动资源管理
 		if resourceManager != nil {

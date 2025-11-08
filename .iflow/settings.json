@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "aidg": {
+      "type": "http",
+      "version": "0.0.4",
+      "description": "Meeting Recorder MCP Server",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImhvdXpoaCIsInNjb3BlcyI6WyJtZWV0aW5nLnJlYWQiLCJtZWV0aW5nLndyaXRlIiwidXNlci5tYW5hZ2UiLCJwcm9qZWN0LmFkbWluIl0sImlhdCI6MTc2MjE2Njk2NH0.833f2N8vQnmoSHSuMkd0oqJ_8f4SwtP6X3TZ20rDXOc"
+      },
+      "httpUrl": "http://127.0.0.1:8081/mcp"
+    }
+  }
+}
