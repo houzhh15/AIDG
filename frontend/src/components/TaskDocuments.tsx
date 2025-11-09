@@ -24,6 +24,8 @@ import DocumentTOC from './DocumentTOC';
 import TaskSummaryPanel from './TaskSummaryPanel';
 import RecommendationPanel from './RecommendationPanel';
 import { useTaskRefresh } from '../contexts/TaskRefreshContext';
+import { TagButton, TagVersionSelect, TagConfirmModal } from './TagManagement';
+import { tagService } from '../services/tagService';
 
 const { Text } = Typography;
 
@@ -63,6 +65,24 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     test: false,
   });
 
+  // Tag版本管理状态
+  const [selectedTag, setSelectedTag] = useState<Record<string, string>>({
+    requirements: '当前版本',
+    design: '当前版本',
+    test: '当前版本',
+  });
+  const [tagRefreshKey, setTagRefreshKey] = useState<Record<string, number>>({
+    requirements: 0,
+    design: 0,
+    test: 0,
+  });
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingSwitchTag, setPendingSwitchTag] = useState<{
+    docType: 'requirements' | 'design' | 'test';
+    tagName: string;
+    currentMd5?: string;
+  } | null>(null);
+
   // 推荐抽屉状态
   const [recommendationDrawerOpen, setRecommendationDrawerOpen] = useState(false);
   const [currentRecommendations, setCurrentRecommendations] = useState<Array<{
@@ -100,6 +120,20 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   } | null>(null);
 
   const { refreshTrigger } = useTaskRefresh();
+
+  // 当切换任务时，重置tag选择状态
+  useEffect(() => {
+    setSelectedTag({
+      requirements: '当前版本',
+      design: '当前版本',
+      test: '当前版本',
+    });
+    setTagRefreshKey({
+      requirements: 0,
+      design: 0,
+      test: 0,
+    });
+  }, [projectId, taskId]);
 
   useEffect(() => {
     if (projectId && taskId) {
@@ -391,6 +425,73 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     }
   };
 
+  // Tag相关回调函数
+  const handleCreateTag = async (docType: 'requirements' | 'design' | 'test', tagName: string) => {
+    try {
+      await tagService.createTag(projectId, taskId, docType, tagName);
+      message.success(`标签 "${tagName}" 创建成功`);
+      setTagRefreshKey(prev => ({ ...prev, [docType]: prev[docType] + 1 })); // 增加刷新键
+      // 刷新文档内容
+      await reloadDocument(docType);
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || error.message || '创建标签失败');
+    }
+  };
+
+  const handleSwitchTag = async (docType: 'requirements' | 'design' | 'test', tagName: string) => {
+    try {
+      const response = await tagService.switchTag(projectId, taskId, docType, tagName, false);
+      
+      if (response.needConfirm) {
+        // 需要用户确认
+        setPendingSwitchTag({
+          docType,
+          tagName,
+          currentMd5: response.currentMd5,
+        });
+        setShowConfirmModal(true);
+      } else {
+        // 直接切换成功
+        setSelectedTag(prev => ({ ...prev, [docType]: tagName }));
+        setTagRefreshKey(prev => ({ ...prev, [docType]: prev[docType] + 1 })); // 增加刷新键
+        await reloadDocument(docType);
+        message.success(`已切换到标签版本: ${tagName}`);
+      }
+    } catch (error: any) {
+      message.error(`切换标签失败: ${error.response?.data?.error || error.message || '未知错误'}`);
+    }
+  };
+
+  const handleConfirmSwitch = async (action: 'create' | 'discard') => {
+    if (!pendingSwitchTag) return;
+
+    const { docType, tagName } = pendingSwitchTag;
+
+    try {
+      if (action === 'discard') {
+        // 放弃修改，强制切换
+        const response = await tagService.switchTag(projectId, taskId, docType, tagName, true);
+        setSelectedTag(prev => ({ ...prev, [docType]: tagName }));
+        setTagRefreshKey(prev => ({ ...prev, [docType]: prev[docType] + 1 })); // 增加刷新键
+        await reloadDocument(docType);
+        message.success(`已切换到标签版本: ${tagName}`);
+      } else if (action === 'create') {
+        // 用户选择创建新Tag，关闭确认对话框，让用户通过TagButton创建
+        message.info('请使用"创建标签"按钮为当前版本创建新标签');
+      }
+      
+      setShowConfirmModal(false);
+      setPendingSwitchTag(null);
+    } catch (error: any) {
+      message.error(`操作失败: ${error.response?.data?.error || error.message || '未知错误'}`);
+    }
+  };
+
+  const handleCancelSwitch = () => {
+    setShowConfirmModal(false);
+    setPendingSwitchTag(null);
+  };
+
   const renderDocument = (docType: 'requirements' | 'design' | 'test') => {
     const doc = documents[docType];
     const isEditMode = editMode[docType];
@@ -416,14 +517,31 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ marginBottom: 12 }}>
-            <Button
-              type="primary"
-              icon={<EditOutlined />}
-              onClick={() => setEditMode(prev => ({ ...prev, [docType]: true }))}
-              size="small"
-            >
-              编辑
-            </Button>
+            <Space size="middle">
+              <Button
+                type="primary"
+                icon={<EditOutlined />}
+                onClick={() => setEditMode(prev => ({ ...prev, [docType]: true }))}
+                size="small"
+              >
+                编辑
+              </Button>
+              <TagButton
+                onCreateTag={(tagName) => handleCreateTag(docType, tagName)}
+                docType={docType}
+                size="small"
+              />
+              <TagVersionSelect
+                key={`tag-select-empty-${projectId}-${taskId}-${docType}`}
+                projectId={projectId}
+                taskId={taskId}
+                docType={docType}
+                currentVersion={selectedTag[docType]}
+                onSwitchTag={(tagName) => handleSwitchTag(docType, tagName)}
+                refreshKey={tagRefreshKey[docType]}
+                size="small"
+              />
+            </Space>
           </div>
           <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
             <FileTextOutlined style={{ fontSize: 48, marginBottom: 16, color: '#d9d9d9' }} />
@@ -438,14 +556,31 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ marginBottom: 12, flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Button
-            type="primary"
-            icon={<EditOutlined />}
-            onClick={() => setEditMode(prev => ({ ...prev, [docType]: true }))}
-            size="small"
-          >
-            编辑
-          </Button>
+          <Space size="middle">
+            <Button
+              type="primary"
+              icon={<EditOutlined />}
+              onClick={() => setEditMode(prev => ({ ...prev, [docType]: true }))}
+              size="small"
+            >
+              编辑
+            </Button>
+            <TagButton
+              onCreateTag={(tagName) => handleCreateTag(docType, tagName)}
+              docType={docType}
+              size="small"
+            />
+            <TagVersionSelect
+              key={`tag-select-${projectId}-${taskId}-${docType}`}
+              projectId={projectId}
+              taskId={taskId}
+              docType={docType}
+              currentVersion={selectedTag[docType]}
+              onSwitchTag={(tagName) => handleSwitchTag(docType, tagName)}
+              refreshKey={tagRefreshKey[docType]}
+              size="small"
+            />
+          </Space>
           
           {/* 推荐按钮（仅在有推荐时显示） */}
           {doc.recommendations && doc.recommendations.length > 0 && (
@@ -825,7 +960,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           onChange={(key) => setActiveTab(key as any)}
           items={tabItems}
           style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
-          tabBarStyle={{ margin: 0, paddingLeft: 16 }}
+          tabBarStyle={{ margin: 0, paddingLeft: 16, marginBottom: 5 }}
           tabBarExtraContent={{
             right: (
               <Button
@@ -1014,6 +1149,15 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           )
         )}
       </Drawer>
+
+      {/* Tag切换确认对话框 */}
+      <TagConfirmModal
+        visible={showConfirmModal}
+        currentMd5={pendingSwitchTag?.currentMd5}
+        targetTag={pendingSwitchTag?.tagName}
+        onConfirm={handleConfirmSwitch}
+        onCancel={handleCancelSwitch}
+      />
     </Spin>
   );
 };

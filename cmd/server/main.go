@@ -274,9 +274,12 @@ func main() {
 	// Debug endpoint (no authentication required for testing)
 	r.POST("/api/v1/debug/tasks/:id/enqueue/:chunk_id", api.HandleDebugEnqueueChunk(meetingsReg))
 
+	// Tag Handler for document version management
+	tagHandler := api.NewTagHandler(projectsRoot)
+
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler)
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler, tagHandler)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -774,7 +777,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 	})
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler) {
 	// ========== Environment Check ==========
 	r.GET("/api/v1/environment/status", func(c *gin.Context) {
 		envHandler.GetStatus(c.Writer, c.Request)
@@ -1051,6 +1054,26 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.PATCH("/api/v1/projects/:id/tasks/:task_id/test/chunks/:seq/toggle", api.HandleToggleTaskDocChunk(taskDocSvc, "test"))
 	r.POST("/api/v1/projects/:id/tasks/:task_id/test/squash", api.HandleSquashTaskDoc(taskDocSvc, "test"))
 	r.GET("/api/v1/projects/:id/tasks/:task_id/test/export", api.HandleExportTaskDoc(taskDocSvc, "test"))
+
+	// ========== Tag Version Management API (7 endpoints) ==========
+	// Document tags (4 endpoints for requirements/design/test)
+	r.POST("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags", tagHandler.CreateTag)
+	r.GET("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags", tagHandler.ListTags)
+	r.POST("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName/switch", tagHandler.SwitchTag)
+	r.GET("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName", tagHandler.GetTagInfo)
+	// Execution plan tags (3 endpoints)
+	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags", func(c *gin.Context) {
+		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
+		tagHandler.CreateTag(c)
+	})
+	r.GET("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags", func(c *gin.Context) {
+		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
+		tagHandler.ListTags(c)
+	})
+	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName/switch", func(c *gin.Context) {
+		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
+		tagHandler.SwitchTag(c)
+	})
 
 	// ========== Similarity Service (Semantic Recommendations) ==========
 	// Initialize NLP client and similarity service before taskDocHandler
