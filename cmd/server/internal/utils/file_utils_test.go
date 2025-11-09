@@ -1,5 +1,4 @@
 package utils
-package utils
 
 import (
 	"os"
