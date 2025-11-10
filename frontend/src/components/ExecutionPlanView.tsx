@@ -38,6 +38,8 @@ import {
   ExecutionPlanFrontmatter,
   ExecutionPlanStep as BuilderStep
 } from '../utils/planMarkdownBuilder';
+import { TagButton, TagVersionSelect, TagConfirmModal } from './TagManagement';
+import { tagService } from '../services/tagService';
 
 interface Props {
   projectId: string;
@@ -66,6 +68,15 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   const [editingStep, setEditingStep] = useState<ExecutionPlanStep | null>(null);
   const [insertPosition, setInsertPosition] = useState<number | undefined>(undefined);
   const [resetting, setResetting] = useState(false);
+
+  // Tag版本管理状态
+  const [selectedTag, setSelectedTag] = useState<string>('当前版本');
+  const [tagRefreshKey, setTagRefreshKey] = useState<number>(0);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingSwitchTag, setPendingSwitchTag] = useState<{
+    tagName: string;
+    currentMd5?: string;
+  } | null>(null);
 
   // 辅助函数: 将字面量转义字符转换为实际字符
   const unescapeText = (text: string): string => {
@@ -236,6 +247,70 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   const isEditableState = (status: string): boolean => {
     // 允许编辑已完成的计划（如需要存档管理，请移除 'Completed'）
     return ['Draft', 'Pending Approval', 'Rejected', 'Approved', 'Executing', 'Completed'].includes(status);
+  };
+
+  // ========== Tag版本管理功能 ==========
+  
+  // 创建Tag
+  const handleCreateTag = async (tagName: string) => {
+    try {
+      await tagService.createExecutionPlanTag(projectId, taskId, tagName);
+      message.success(`标签 "${tagName}" 创建成功`);
+      // 刷新tag列表
+      setTagRefreshKey(prev => prev + 1);
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error || error.message || '创建标签失败';
+      message.error(errorMsg);
+      throw error;
+    }
+  };
+
+  // 切换Tag
+  const handleSwitchTag = async (tagName: string) => {
+    try {
+      const result = await tagService.switchExecutionPlanTag(projectId, taskId, tagName, false);
+      
+      if (result.needConfirm) {
+        // 需要用户确认
+        setPendingSwitchTag({
+          tagName,
+          currentMd5: result.currentMd5
+        });
+        setShowConfirmModal(true);
+      } else {
+        // 直接切换成功
+        setSelectedTag(tagName);
+        message.success(`已切换到标签: ${tagName}`);
+        await loadExecutionPlan();
+      }
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error || error.message || '切换标签失败';
+      message.error(errorMsg);
+    }
+  };
+
+  // 确认强制切换Tag
+  const handleConfirmSwitch = async () => {
+    if (!pendingSwitchTag) return;
+    
+    try {
+      await tagService.switchExecutionPlanTag(projectId, taskId, pendingSwitchTag.tagName, true);
+      setSelectedTag(pendingSwitchTag.tagName);
+      message.success(`已切换到标签: ${pendingSwitchTag.tagName}`);
+      await loadExecutionPlan();
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error || error.message || '切换标签失败';
+      message.error(errorMsg);
+    } finally {
+      setShowConfirmModal(false);
+      setPendingSwitchTag(null);
+    }
+  };
+
+  // 取消切换Tag
+  const handleCancelSwitch = () => {
+    setShowConfirmModal(false);
+    setPendingSwitchTag(null);
   };
 
   // 检查是否可以进行步骤级别的编辑（添加、插入、删除步骤）
@@ -623,6 +698,21 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
                     编辑
                   </Button>
                 )}
+                <TagButton
+                  onCreateTag={handleCreateTag}
+                  docType="execution_plan"
+                  size="small"
+                />
+                <TagVersionSelect
+                  key={`tag-select-execution-plan-${projectId}-${taskId}`}
+                  projectId={projectId}
+                  taskId={taskId}
+                  docType="execution-plan"
+                  currentVersion={selectedTag}
+                  onSwitchTag={handleSwitchTag}
+                  refreshKey={tagRefreshKey}
+                  size="small"
+                />
                 {showSubmitToolbar && (
                   <Button
                     type="primary"
@@ -873,6 +963,15 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
         planStatus={plan?.status}
         onSubmit={handleStepSubmit}
         onCancel={() => setStepModalVisible(false)}
+      />
+
+      {/* Tag切换确认对话框 */}
+      <TagConfirmModal
+        visible={showConfirmModal}
+        currentMd5={pendingSwitchTag?.currentMd5}
+        targetTag={pendingSwitchTag?.tagName}
+        onConfirm={handleConfirmSwitch}
+        onCancel={handleCancelSwitch}
       />
         </>
       )}

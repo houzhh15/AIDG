@@ -8,7 +8,7 @@ const { Option } = Select;
 interface TagVersionSelectProps {
   projectId: string;
   taskId: string;
-  docType: 'requirements' | 'design' | 'test';
+  docType: 'requirements' | 'design' | 'test' | 'execution-plan';
   currentVersion?: string;
   onSwitchTag: (tagName: string) => Promise<void>;
   disabled?: boolean;
@@ -54,7 +54,12 @@ export const TagVersionSelect: React.FC<TagVersionSelectProps> = ({
     const loadTags = async () => {
       try {
         setLoading(true);
-        const response = await tagService.listTags(projectId, taskId, docType);
+        let response;
+        if (docType === 'execution-plan') {
+          response = await tagService.listExecutionPlanTags(projectId, taskId);
+        } else {
+          response = await tagService.listTags(projectId, taskId, docType);
+        }
         
         // 直接替换，不要任何合并逻辑
         const newTags = response.tags || [];
