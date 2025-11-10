@@ -518,6 +518,15 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"PUT /api/v1/projects/:id/tasks/:task_id/summaries/:summary_id":    {users.ScopeTaskWrite},
 		"DELETE /api/v1/projects/:id/tasks/:task_id/summaries/:summary_id": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/summaries/by-week":                       {users.ScopeTaskRead},
+		// Tag版本管理API - 文档标签
+		"POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags":              {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags":               {users.ScopeTaskRead},
+		"POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName/switch": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName":      {users.ScopeTaskRead},
+		// Tag版本管理API - 执行计划标签
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/tags":              {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan/tags":               {users.ScopeTaskRead},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName/switch": {users.ScopeTaskWrite},
 	}
 
 	matchRouteKey := func(method, path string) (scopes []string, ok bool) {
