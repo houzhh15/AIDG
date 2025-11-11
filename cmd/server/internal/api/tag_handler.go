@@ -56,9 +56,16 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 
 	// 构造文档路径
 	docPath := h.getDocPath(projectID, taskID, docType)
-	compiledPath := filepath.Join(docPath, "compiled.md")
 
-	// 检查compiled.md是否存在
+	// 根据文档类型选择文件名
+	var compiledPath string
+	if docType == "execution-plan" {
+		compiledPath = filepath.Join(docPath, "execution_plan.md")
+	} else {
+		compiledPath = filepath.Join(docPath, "compiled.md")
+	}
+
+	// 检查文档是否存在
 	if _, err := os.Stat(compiledPath); os.IsNotExist(err) {
 		notFoundResponse(c, "document not found")
 		return
@@ -92,11 +99,17 @@ func (h *TagHandler) CreateTag(c *gin.Context) {
 		return
 	}
 
-	// 复制compiled.md
-	tagCompiledPath := filepath.Join(tagDir, "compiled.md")
+	// 复制文档文件（根据类型选择目标文件名）
+	var targetFileName string
+	if docType == "execution-plan" {
+		targetFileName = "execution_plan.md"
+	} else {
+		targetFileName = "compiled.md"
+	}
+	tagCompiledPath := filepath.Join(tagDir, targetFileName)
 	if err := copyFile(compiledPath, tagCompiledPath); err != nil {
 		os.RemoveAll(tagDir) // 清理
-		internalErrorResponse(c, fmt.Errorf("failed to copy compiled.md: %w", err))
+		internalErrorResponse(c, fmt.Errorf("failed to copy document: %w", err))
 		return
 	}
 
@@ -197,9 +210,16 @@ func (h *TagHandler) SwitchTag(c *gin.Context) {
 	_ = c.ShouldBindJSON(&req)
 
 	docPath := h.getDocPath(projectID, taskID, docType)
-	compiledPath := filepath.Join(docPath, "compiled.md")
 
-	// 检查当前compiled.md是否存在
+	// 根据文档类型选择文件名
+	var compiledPath string
+	if docType == "execution-plan" {
+		compiledPath = filepath.Join(docPath, "execution_plan.md")
+	} else {
+		compiledPath = filepath.Join(docPath, "compiled.md")
+	}
+
+	// 检查当前文档是否存在
 	if _, err := os.Stat(compiledPath); os.IsNotExist(err) {
 		notFoundResponse(c, "document not found")
 		return
@@ -250,7 +270,15 @@ func (h *TagHandler) SwitchTag(c *gin.Context) {
 		return
 	}
 
-	tagCompiledPath := filepath.Join(tagDir, "compiled.md")
+	// 根据文档类型选择文件名
+	var targetFileName string
+	if docType == "execution-plan" {
+		targetFileName = "execution_plan.md"
+	} else {
+		targetFileName = "compiled.md"
+	}
+
+	tagCompiledPath := filepath.Join(tagDir, targetFileName)
 	tagSectionsPath := filepath.Join(tagDir, "sections")
 
 	// 创建临时备份目录
@@ -262,9 +290,9 @@ func (h *TagHandler) SwitchTag(c *gin.Context) {
 	defer os.RemoveAll(tmpDir) // 确保清理临时目录
 
 	// 复制tag版本到临时目录
-	tmpCompiledPath := filepath.Join(tmpDir, "compiled.md")
+	tmpCompiledPath := filepath.Join(tmpDir, targetFileName)
 	if err := copyFile(tagCompiledPath, tmpCompiledPath); err != nil {
-		internalErrorResponse(c, fmt.Errorf("failed to copy tag compiled.md: %w", err))
+		internalErrorResponse(c, fmt.Errorf("failed to copy tag document: %w", err))
 		return
 	}
 
@@ -329,6 +357,35 @@ func (h *TagHandler) GetTagInfo(c *gin.Context) {
 	successResponse(c, gin.H{
 		"success": true,
 		"data":    metadata,
+	})
+}
+
+// DeleteTag 删除指定tag
+func (h *TagHandler) DeleteTag(c *gin.Context) {
+	projectID := c.Param("id")
+	taskID := c.Param("task_id")
+	docType := c.Param("docType")
+	tagName := c.Param("tagName")
+
+	// 构造tag目录路径
+	docPath := h.getDocPath(projectID, taskID, docType)
+	tagDir := filepath.Join(docPath, "tags", tagName)
+
+	// 检查tag是否存在
+	if _, err := os.Stat(tagDir); os.IsNotExist(err) {
+		notFoundResponse(c, "tag not found")
+		return
+	}
+
+	// 删除tag目录及其内容
+	if err := os.RemoveAll(tagDir); err != nil {
+		internalErrorResponse(c, fmt.Errorf("failed to delete tag: %w", err))
+		return
+	}
+
+	successResponse(c, gin.H{
+		"success": true,
+		"message": fmt.Sprintf("tag '%s' deleted successfully", tagName),
 	})
 }
 

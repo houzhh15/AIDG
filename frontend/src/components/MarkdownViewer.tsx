@@ -218,7 +218,9 @@ const MarkdownViewer: React.FC<Props> = ({ children, className, allowMermaid = t
         footer={null}
         width="90vw"
         style={{ top: 20 }}
-        bodyStyle={{ height: '80vh', overflow: 'auto', padding: '20px' }}
+        styles={{
+          body: { height: '80vh', overflow: 'auto', padding: '20px' }
+        }}
         centered
       >
         <MarkdownViewer

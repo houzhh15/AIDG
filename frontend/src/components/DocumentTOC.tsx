@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Dropdown, Modal, Form, Input, message } from 'antd';
 import type { MenuProps } from 'antd';
 import { CopyOutlined, PlusOutlined } from '@ant-design/icons';
@@ -28,11 +28,25 @@ function baseSlug(text: string) {
     .replace(/\s+/g, '-');
 }
 
+// 全局版本计数器，不会因组件重新挂载而重置
+let globalVersionCounter = 0;
+
 export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel = 4, projectId, taskId, docType }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [contextMenuItem, setContextMenuItem] = useState<TOCItem | null>(null);
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const [contentVersion, setContentVersion] = useState(() => ++globalVersionCounter);
+  const contentVersionRef = useRef(contentVersion);
+  const pendingTimersRef = useRef<Set<NodeJS.Timeout>>(new Set());
+
+  // 组件卸载时的清理
+  useEffect(() => {
+    return () => {
+      pendingTimersRef.current.forEach(timer => clearTimeout(timer));
+      pendingTimersRef.current.clear();
+    };
+  }, [docType]);
 
   const items: TOCItem[] = useMemo(() => {
     // 先移除代码块内容,避免识别代码块中的标题
@@ -68,11 +82,59 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
     return result;
   }, [content, minLevel, maxLevel]);
 
+  // 每次content或docType变化时递增版本号并清理旧的定时器
+  useEffect(() => {
+    // 清理所有pending的定时器
+    pendingTimersRef.current.forEach(timer => clearTimeout(timer));
+    pendingTimersRef.current.clear();
+    
+    const newVersion = ++globalVersionCounter;
+    setContentVersion(newVersion);
+    contentVersionRef.current = newVersion;
+    
+    // 组件卸载时清理所有定时器
+    return () => {
+      pendingTimersRef.current.forEach(timer => clearTimeout(timer));
+      pendingTimersRef.current.clear();
+    };
+  }, [content, docType]);
+
   const handleClick = (id: string) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    const clickVersion = contentVersionRef.current;
+    
+    const scrollToElement = (retryCount = 0) => {
+      if (clickVersion !== contentVersionRef.current) {
+        return false;
+      }
+      
+      const el = document.getElementById(id);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return true;
+      }
+      
+      // 使用指数退避策略，最多重试20次
+      // 延迟: 100, 150, 200, 250, 300, 350, 400, 450, 500, 500...
+      if (retryCount < 20) {
+        const delay = Math.min(100 + retryCount * 50, 500);
+        const timer = setTimeout(() => {
+          pendingTimersRef.current.delete(timer);
+          scrollToElement(retryCount + 1);
+        }, delay);
+        pendingTimersRef.current.add(timer);
+        return false;
+      }
+      
+      return false;
+    };
+    
+    // 首次尝试前等待更长时间，确保tab切换和渲染完成
+    // Tab切换的click handler需要150-200ms，所以至少等待250ms
+    const initialTimer = setTimeout(() => {
+      pendingTimersRef.current.delete(initialTimer);
+      scrollToElement();
+    }, 250);
+    pendingTimersRef.current.add(initialTimer);
   };
 
   // 从 content 中提取章节及其子章节的内容

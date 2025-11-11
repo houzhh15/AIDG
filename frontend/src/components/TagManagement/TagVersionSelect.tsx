@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Select, Spin, message } from 'antd';
-import { ClockCircleOutlined } from '@ant-design/icons';
+import { Select, Spin, message, Button, Popconfirm } from 'antd';
+import { ClockCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { tagService, TagInfo } from '../../services/tagService';
 
 const { Option } = Select;
@@ -11,6 +11,7 @@ interface TagVersionSelectProps {
   docType: 'requirements' | 'design' | 'test' | 'execution-plan';
   currentVersion?: string;
   onSwitchTag: (tagName: string) => Promise<void>;
+  onTagDeleted?: () => void; // 删除tag后的回调
   disabled?: boolean;
   style?: React.CSSProperties;
   refreshKey?: number;
@@ -23,6 +24,7 @@ export const TagVersionSelect: React.FC<TagVersionSelectProps> = ({
   docType,
   currentVersion = '当前版本',
   onSwitchTag,
+  onTagDeleted,
   disabled = false,
   style,
   refreshKey = 0,
@@ -94,6 +96,39 @@ export const TagVersionSelect: React.FC<TagVersionSelectProps> = ({
     }
   };
 
+  const handleDeleteTag = async (tagName: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation(); // 阻止触发下拉选择
+    }
+    
+    try {
+      setLoading(true);
+      if (docType === 'execution-plan') {
+        await tagService.deleteExecutionPlanTag(projectId, taskId, tagName);
+      } else {
+        await tagService.deleteTag(projectId, taskId, docType, tagName);
+      }
+      message.success(`标签 "${tagName}" 删除成功`);
+      
+      // 从列表中移除已删除的tag
+      setTags(prevTags => prevTags.filter(t => t.tag_name !== tagName));
+      
+      // 如果删除的是当前选中的tag，切换回当前版本
+      if (selectedTag === tagName) {
+        setSelectedTag(currentVersion);
+      }
+      
+      // 调用回调通知父组件
+      if (onTagDeleted) {
+        onTagDeleted();
+      }
+    } catch (error: any) {
+      message.error(`删除标签失败: ${error.message || '未知错误'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatDate = (dateStr: string) => {
     try {
       const date = new Date(dateStr);
@@ -131,11 +166,33 @@ export const TagVersionSelect: React.FC<TagVersionSelectProps> = ({
       
       {tags.map((tag) => (
         <Option key={`tag-${tag.tag_name}`} value={tag.tag_name}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>🏷️ {tag.tag_name}</span>
-            <span style={{ fontSize: '12px', color: '#8c8c8c', marginLeft: '8px' }}>
-              {formatDate(tag.created_at)}
-            </span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+              <span>🏷️ {tag.tag_name}</span>
+              <span style={{ fontSize: '12px', color: '#8c8c8c', marginLeft: '8px' }}>
+                {formatDate(tag.created_at)}
+              </span>
+            </div>
+            <Popconfirm
+              title="确认删除标签?"
+              description={`删除后无法恢复，确定要删除标签 "${tag.tag_name}" 吗？`}
+              onConfirm={(e) => {
+                e?.stopPropagation();
+                handleDeleteTag(tag.tag_name);
+              }}
+              onCancel={(e) => e?.stopPropagation()}
+              okText="删除"
+              cancelText="取消"
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={<DeleteOutlined />}
+                danger
+                onClick={(e) => e.stopPropagation()}
+                style={{ marginLeft: 8, padding: '0 4px' }}
+              />
+            </Popconfirm>
           </div>
         </Option>
       ))}

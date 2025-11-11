@@ -519,14 +519,17 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"DELETE /api/v1/projects/:id/tasks/:task_id/summaries/:summary_id": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/summaries/by-week":                       {users.ScopeTaskRead},
 		// Tag版本管理API - 文档标签
-		"POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags":              {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags":               {users.ScopeTaskRead},
+		"POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags":                 {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags":                  {users.ScopeTaskRead},
 		"POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName/switch": {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName":      {users.ScopeTaskRead},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName":         {users.ScopeTaskRead},
+		"DELETE /api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName":      {users.ScopeTaskWrite},
 		// Tag版本管理API - 执行计划标签
-		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/tags":              {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan/tags":               {users.ScopeTaskRead},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/tags":                 {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan/tags":                  {users.ScopeTaskRead},
 		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName/switch": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName":         {users.ScopeTaskRead},
+		"DELETE /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName":      {users.ScopeTaskWrite},
 	}
 
 	matchRouteKey := func(method, path string) (scopes []string, ok bool) {
@@ -1064,13 +1067,14 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.POST("/api/v1/projects/:id/tasks/:task_id/test/squash", api.HandleSquashTaskDoc(taskDocSvc, "test"))
 	r.GET("/api/v1/projects/:id/tasks/:task_id/test/export", api.HandleExportTaskDoc(taskDocSvc, "test"))
 
-	// ========== Tag Version Management API (7 endpoints) ==========
-	// Document tags (4 endpoints for requirements/design/test)
+	// ========== Tag Version Management API (10 endpoints) ==========
+	// Document tags (5 endpoints for requirements/design/test)
 	r.POST("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags", tagHandler.CreateTag)
 	r.GET("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags", tagHandler.ListTags)
 	r.POST("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName/switch", tagHandler.SwitchTag)
 	r.GET("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName", tagHandler.GetTagInfo)
-	// Execution plan tags (3 endpoints)
+	r.DELETE("/api/v1/projects/:id/tasks/:task_id/docs/:docType/tags/:tagName", tagHandler.DeleteTag)
+	// Execution plan tags (5 endpoints)
 	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags", func(c *gin.Context) {
 		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
 		tagHandler.CreateTag(c)
@@ -1082,6 +1086,14 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName/switch", func(c *gin.Context) {
 		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
 		tagHandler.SwitchTag(c)
+	})
+	r.GET("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName", func(c *gin.Context) {
+		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
+		tagHandler.GetTagInfo(c)
+	})
+	r.DELETE("/api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName", func(c *gin.Context) {
+		c.Params = append(c.Params, gin.Param{Key: "docType", Value: "execution-plan"})
+		tagHandler.DeleteTag(c)
 	})
 
 	// ========== Similarity Service (Semantic Recommendations) ==========

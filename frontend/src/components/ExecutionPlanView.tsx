@@ -255,12 +255,10 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   const handleCreateTag = async (tagName: string) => {
     try {
       await tagService.createExecutionPlanTag(projectId, taskId, tagName);
-      message.success(`标签 "${tagName}" 创建成功`);
-      // 刷新tag列表
+      // 刷新tag列表（成功提示由TagButton组件显示）
       setTagRefreshKey(prev => prev + 1);
     } catch (error: any) {
-      const errorMsg = error?.response?.data?.error || error.message || '创建标签失败';
-      message.error(errorMsg);
+      // 错误会被TagButton组件处理，这里直接抛出
       throw error;
     }
   };
@@ -710,6 +708,7 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
                   docType="execution-plan"
                   currentVersion={selectedTag}
                   onSwitchTag={handleSwitchTag}
+                  onTagDeleted={() => setTagRefreshKey(prev => prev + 1)}
                   refreshKey={tagRefreshKey}
                   size="small"
                 />

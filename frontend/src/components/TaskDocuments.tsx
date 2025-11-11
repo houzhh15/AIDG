@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card, Drawer, Badge } from 'antd';
 import {
   FileTextOutlined,
@@ -13,6 +13,7 @@ import {
   ClockCircleOutlined,
   ReloadOutlined,
   BulbOutlined,
+  VerticalAlignTopOutlined,
 } from '@ant-design/icons';
 import { getTaskDocument, saveTaskDocument, getProjectTask, getTaskPrompts, getExecutionPlan, getTaskSection, ProjectTask, TaskPrompt } from '../api/tasks';
 import MarkdownViewer from './MarkdownViewer';
@@ -36,6 +37,8 @@ interface Props {
 
 const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   const [activeTab, setActiveTab] = useState<'info' | 'requirements' | 'design' | 'test' | 'prompts' | 'incremental' | 'documents' | 'execution-plan'>('info');
+  const [showBackTop, setShowBackTop] = useState(false);
+  const lastScrollElementRef = useRef<HTMLElement | null>(null);
   const [documents, setDocuments] = useState<Record<string, { 
     content: string; 
     exists: boolean;
@@ -120,6 +123,43 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   } | null>(null);
 
   const { refreshTrigger } = useTaskRefresh();
+
+  // 使用全局滚动监听 - 监听页面上所有的滚动事件
+  useEffect(() => {
+    const handleScroll = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target && target.scrollTop !== undefined) {
+        const scrollTop = target.scrollTop;
+        
+        // 记录最后滚动的元素
+        lastScrollElementRef.current = target;
+        
+        // 更新按钮显示状态
+        setShowBackTop(scrollTop > 100);
+      }
+    };
+
+    // 使用捕获阶段监听所有滚动事件
+    document.addEventListener('scroll', handleScroll, { passive: true, capture: true });
+
+    return () => {
+      document.removeEventListener('scroll', handleScroll, true);
+    };
+  }, []);
+
+  // 返回顶部函数
+  const scrollToTop = () => {
+    // 滚动最后记录的元素
+    if (lastScrollElementRef.current) {
+      lastScrollElementRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      // 回退: 尝试滚动 .scroll-region
+      const scrollRegion = document.querySelector('.scroll-region');
+      if (scrollRegion) {
+        scrollRegion.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+  };
 
   // 当切换任务时，重置tag选择状态
   useEffect(() => {
@@ -429,11 +469,12 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   const handleCreateTag = async (docType: 'requirements' | 'design' | 'test', tagName: string) => {
     try {
       await tagService.createTag(projectId, taskId, docType, tagName);
-      message.success(`标签 "${tagName}" 创建成功`);
+      // 成功提示由TagButton组件显示
       setTagRefreshKey(prev => ({ ...prev, [docType]: prev[docType] + 1 })); // 增加刷新键
       // 刷新文档内容
       await reloadDocument(docType);
     } catch (error: any) {
+      // 错误会被TagButton组件处理，这里直接抛出
       throw new Error(error.response?.data?.error || error.message || '创建标签失败');
     }
   };
@@ -538,6 +579,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 docType={docType}
                 currentVersion={selectedTag[docType]}
                 onSwitchTag={(tagName) => handleSwitchTag(docType, tagName)}
+                onTagDeleted={() => setTagRefreshKey(prev => ({ ...prev, [docType]: prev[docType] + 1 }))}
                 refreshKey={tagRefreshKey[docType]}
                 size="small"
               />
@@ -577,6 +619,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
               docType={docType}
               currentVersion={selectedTag[docType]}
               onSwitchTag={(tagName) => handleSwitchTag(docType, tagName)}
+              onTagDeleted={() => setTagRefreshKey(prev => ({ ...prev, [docType]: prev[docType] + 1 }))}
               refreshKey={tagRefreshKey[docType]}
               size="small"
             />
@@ -631,6 +674,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 minHeight: 0
               }}>
                 <DocumentTOC 
+                  key={`${docType}-${projectId}-${taskId}`}
                   content={doc.content} 
                   projectId={projectId}
                   taskId={taskId}
@@ -909,7 +953,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       label: (
         <span>
           <MessageOutlined />
-          提示词
+          提示词记录
           {prompts.length > 0 && <span style={{ color: '#1890ff', marginLeft: 4 }}>({prompts.length})</span>}
         </span>
       ),
@@ -953,31 +997,33 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   }
 
   return (
-    <Spin spinning={loading}>
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <Tabs
-          activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as any)}
-          items={tabItems}
-          style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
-          tabBarStyle={{ margin: 0, paddingLeft: 16, marginBottom: 5 }}
-          tabBarExtraContent={{
-            right: (
-              <Button
-                type="primary"
-                icon={<ReloadOutlined />}
-                onClick={refreshPage}
-                loading={loading}
-                size="small"
-              >
-                刷新页面
-              </Button>
-            )
-          }}
-        />
-      </div>
+    <>
+      <Spin spinning={loading}>
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Tabs
+            activeKey={activeTab}
+            onChange={(key) => setActiveTab(key as any)}
+            items={tabItems}
+            destroyInactiveTabPane={true}
+            style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+            tabBarStyle={{ margin: 0, paddingLeft: 16, marginBottom: 5 }}
+            tabBarExtraContent={{
+              right: (
+                <Button
+                  type="primary"
+                  icon={<ReloadOutlined />}
+                  onClick={refreshPage}
+                  loading={loading}
+                  size="small"
+                >
+                  刷新页面
+                </Button>
+              )
+            }}
+          />
+        </div>
 
-      {/* 推荐抽屉 */}
+        {/* 推荐抽屉 */}
       <Drawer
         title={
           selectedRecommendation ? (
@@ -1158,7 +1204,29 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
         onConfirm={handleConfirmSwitch}
         onCancel={handleCancelSwitch}
       />
-    </Spin>
+      </Spin>
+
+      {/* 返回顶部浮动按钮 */}
+      {showBackTop && (
+        <Button
+          type="primary"
+          shape="circle"
+          icon={<VerticalAlignTopOutlined />}
+          size="large"
+          onClick={scrollToTop}
+          style={{
+            position: 'fixed',
+            right: 24,
+            bottom: 24,
+            zIndex: 9999,
+            width: 40,
+            height: 40,
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+          }}
+          title="返回顶部"
+        />
+      )}
+    </>
   );
 };
 

@@ -121,6 +121,25 @@ export async function getTagInfo(
   return response.data;
 }
 
+/**
+ * 删除指定Tag
+ * @param projectId 项目ID
+ * @param taskId 任务ID
+ * @param docType 文档类型
+ * @param tagName Tag名称
+ */
+export async function deleteTag(
+  projectId: string,
+  taskId: string,
+  docType: 'requirements' | 'design' | 'test',
+  tagName: string
+): Promise<{ success: boolean; message: string }> {
+  const response = await api.delete(
+    `/projects/${projectId}/tasks/${taskId}/docs/${docType}/tags/${tagName}`
+  );
+  return response.data;
+}
+
 // ==================== 执行计划Tag服务 ====================
 
 /**
@@ -193,6 +212,23 @@ export async function getExecutionPlanTagInfo(
   return response.data;
 }
 
+/**
+ * 删除执行计划Tag
+ * @param projectId 项目ID
+ * @param taskId 任务ID
+ * @param tagName Tag名称
+ */
+export async function deleteExecutionPlanTag(
+  projectId: string,
+  taskId: string,
+  tagName: string
+): Promise<{ success: boolean; message: string }> {
+  const response = await api.delete(
+    `/projects/${projectId}/tasks/${taskId}/execution-plan/tags/${tagName}`
+  );
+  return response.data;
+}
+
 // ==================== 统一导出 ====================
 
 export const tagService = {
@@ -201,12 +237,14 @@ export const tagService = {
   listTags,
   switchTag,
   getTagInfo,
+  deleteTag,
   
   // 执行计划Tag
   createExecutionPlanTag,
   listExecutionPlanTags,
   switchExecutionPlanTag,
   getExecutionPlanTagInfo,
+  deleteExecutionPlanTag,
 };
 
 export default tagService;
