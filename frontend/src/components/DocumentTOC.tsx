@@ -39,6 +39,7 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
   const [contentVersion, setContentVersion] = useState(() => ++globalVersionCounter);
   const contentVersionRef = useRef(contentVersion);
   const pendingTimersRef = useRef<Set<NodeJS.Timeout>>(new Set());
+  const lastClickTimeRef = useRef<Record<string, number>>({});
 
   // 组件卸载时的清理
   useEffect(() => {
@@ -100,6 +101,14 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
   }, [content, docType]);
 
   const handleClick = (id: string) => {
+    // 防抖：如果在500ms内重复点击同一项，忽略后续点击
+    const now = Date.now();
+    const lastClickTime = lastClickTimeRef.current[id] || 0;
+    if (now - lastClickTime < 500) {
+      return;
+    }
+    lastClickTimeRef.current[id] = now;
+    
     const clickVersion = contentVersionRef.current;
     
     const scrollToElement = (retryCount = 0) => {
