@@ -559,8 +559,8 @@ func HandleCreateProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
-		// Generate task ID
-		taskID := fmt.Sprintf("task_%d", time.Now().Unix())
+		// Generate task ID (using nanosecond timestamp to avoid collisions)
+		taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
 		taskData["id"] = taskID
 		taskData["created_at"] = time.Now().Format(time.RFC3339)
 		taskData["updated_at"] = time.Now().Format(time.RFC3339)

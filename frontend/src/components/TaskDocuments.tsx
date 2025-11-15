@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card, Drawer, Badge } from 'antd';
+import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card, Drawer, Badge, Modal, Form, Input } from 'antd';
 import {
   FileTextOutlined,
   EditOutlined,
@@ -16,6 +16,8 @@ import {
   VerticalAlignTopOutlined,
 } from '@ant-design/icons';
 import { getTaskDocument, saveTaskDocument, getProjectTask, getTaskPrompts, getExecutionPlan, getTaskSection, ProjectTask, TaskPrompt } from '../api/tasks';
+import { addCustomResource } from '../api/resourceApi';
+import { loadAuth } from '../api/auth';
 import MarkdownViewer from './MarkdownViewer';
 import ExecutionPlanView from './ExecutionPlanView';
 import TaskDocIncremental from './TaskDocIncremental';
@@ -67,6 +69,30 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     design: false,
     test: false,
   });
+
+  // 章节编辑弹窗状态（用于从TOC触发编辑）
+  const [sectionEditorModal, setSectionEditorModal] = useState<{
+    visible: boolean;
+    docType: 'requirements' | 'design' | 'test' | null;
+    sectionTitle: string | null;
+  }>({
+    visible: false,
+    docType: null,
+    sectionTitle: null,
+  });
+
+  // MCP资源添加弹窗状态
+  const [mcpResourceModal, setMcpResourceModal] = useState<{
+    visible: boolean;
+    docType: 'requirements' | 'design' | 'test' | null;
+    sectionTitle: string | null;
+  }>({
+    visible: false,
+    docType: null,
+    sectionTitle: null,
+  });
+  const [mcpForm] = Form.useForm();
+  const [mcpSaving, setMcpSaving] = useState(false);
 
   // Tag版本管理状态
   const [selectedTag, setSelectedTag] = useState<Record<string, string>>({
@@ -400,6 +426,125 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     }
   };
 
+  // 处理从TOC触发的章节编辑
+  const handleEditSectionFromTOC = (docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+    // 打开章节编辑弹窗
+    setSectionEditorModal({
+      visible: true,
+      docType,
+      sectionTitle,
+    });
+  };
+
+  // 处理复制章节名
+  const handleCopySectionName = (docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+    const docTypeMap = {
+      requirements: '需求文档',
+      design: '设计文档',
+      test: '测试文档'
+    };
+
+    const copyText = `${taskId}::${docTypeMap[docType]}::${sectionTitle}`;
+    
+    navigator.clipboard.writeText(copyText).then(() => {
+      message.success(`已复制: ${copyText}`);
+    }).catch(err => {
+      console.error('复制失败:', err);
+      message.error('复制失败');
+    });
+  };
+
+  // 处理添加到MCP资源
+  const handleAddToMCPResource = (docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+    setMcpResourceModal({
+      visible: true,
+      docType,
+      sectionTitle,
+    });
+    mcpForm.setFieldsValue({
+      name: `${sectionTitle} - ${taskId}`,
+      description: `来自任务 ${taskId} 的章节内容`,
+    });
+  };
+
+  // 从文档内容中提取章节内容
+  const getSectionContent = (content: string, sectionTitle: string): string => {
+    const lines = content.split('\n');
+    const headingRegex = /^(#{1,6})\s+(.+?)\s*$/;
+    
+    let startIndex = -1;
+    let endIndex = lines.length;
+    let currentLevel = 0;
+
+    // 找到当前章节的起始位置
+    for (let i = 0; i < lines.length; i++) {
+      const m = headingRegex.exec(lines[i]);
+      if (m && m[2].trim() === sectionTitle) {
+        startIndex = i;
+        currentLevel = m[1].length;
+        break;
+      }
+    }
+
+    if (startIndex === -1) return '';
+
+    // 找到下一个同级或更高级标题的位置
+    for (let i = startIndex + 1; i < lines.length; i++) {
+      const m = headingRegex.exec(lines[i]);
+      if (m && m[1].length <= currentLevel) {
+        endIndex = i;
+        break;
+      }
+    }
+
+    // 提取内容
+    return lines.slice(startIndex, endIndex).join('\n');
+  };
+
+  // 提交MCP资源
+  const handleSubmitMCPResource = async () => {
+    if (!mcpResourceModal.docType || !mcpResourceModal.sectionTitle) return;
+
+    try {
+      const values = await mcpForm.validateFields();
+      const auth = loadAuth();
+      if (!auth) {
+        message.error('请先登录');
+        return;
+      }
+
+      setMcpSaving(true);
+
+      // 获取对应文档类型的内容
+      const docContent = documents[mcpResourceModal.docType]?.content || '';
+      
+      // 获取章节及其子章节的内容
+      const sectionContent = getSectionContent(docContent, mcpResourceModal.sectionTitle);
+
+      await addCustomResource(auth.username, {
+        name: values.name,
+        description: values.description,
+        content: sectionContent,
+        visibility: 'private',
+        projectId: projectId,
+        taskId: taskId,
+      });
+
+      message.success('已添加到MCP资源');
+      setMcpResourceModal({
+        visible: false,
+        docType: null,
+        sectionTitle: null,
+      });
+      mcpForm.resetFields();
+    } catch (error: any) {
+      console.error('添加MCP资源失败:', error);
+      message.error('添加失败: ' + (error.message || '未知错误'));
+    } finally {
+      setMcpSaving(false);
+    }
+  };
+
   // 刷新整个页面数据
   const refreshPage = async () => {
     if (!projectId || !taskId) return;
@@ -546,8 +691,12 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
             projectId={projectId}
             taskId={taskId}
             docType={docType}
-            onCancel={() => setEditMode(prev => ({ ...prev, [docType]: false }))}
-            onSave={() => reloadDocument(docType)}
+            onCancel={() => {
+              setEditMode(prev => ({ ...prev, [docType]: false }));
+            }}
+            onSave={() => {
+              reloadDocument(docType);
+            }}
           />
         </div>
       );
@@ -679,6 +828,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                   projectId={projectId}
                   taskId={taskId}
                   docType={docType as 'requirements' | 'design' | 'test'}
+                  onEditSection={(sectionTitle) => handleEditSectionFromTOC(docType as 'requirements' | 'design' | 'test', sectionTitle)}
                 />
               </div>
             </div>
@@ -697,7 +847,14 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 overflowX: 'hidden',
                 padding: '16px'
               }}>
-                <MarkdownViewer showFullscreenButton={docType === 'requirements' || docType === 'design'}>{doc.content}</MarkdownViewer>
+                <MarkdownViewer 
+                  showFullscreenButton={docType === 'requirements' || docType === 'design'}
+                  onEditSection={(sectionTitle) => handleEditSectionFromTOC(docType as 'requirements' | 'design' | 'test', sectionTitle)}
+                  onCopySectionName={(sectionTitle) => handleCopySectionName(docType as 'requirements' | 'design' | 'test', sectionTitle)}
+                  onAddToMCP={(sectionTitle) => handleAddToMCPResource(docType as 'requirements' | 'design' | 'test', sectionTitle)}
+                >
+                  {doc.content}
+                </MarkdownViewer>
               </div>
             </div>
         </div>
@@ -1205,6 +1362,72 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
         onCancel={handleCancelSwitch}
       />
       </Spin>
+
+      {/* 章节编辑弹窗 */}
+      <Modal
+        title={`编辑章节 - ${sectionEditorModal.docType === 'requirements' ? '需求文档' : sectionEditorModal.docType === 'design' ? '设计文档' : '测试文档'}`}
+        open={sectionEditorModal.visible}
+        onCancel={() => setSectionEditorModal({ visible: false, docType: null, sectionTitle: null })}
+        width="90%"
+        style={{ top: 20 }}
+        footer={null}
+        destroyOnClose
+      >
+        {sectionEditorModal.visible && sectionEditorModal.docType && (
+          <div style={{ height: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
+            <SectionEditor
+              key={`modal-${taskId}-${sectionEditorModal.docType}-${sectionEditorModal.sectionTitle || ''}`}
+              projectId={projectId}
+              taskId={taskId}
+              docType={sectionEditorModal.docType}
+              initialSectionTitle={sectionEditorModal.sectionTitle || undefined}
+              onCancel={() => setSectionEditorModal({ visible: false, docType: null, sectionTitle: null })}
+              onSave={() => {
+                if (sectionEditorModal.docType) {
+                  reloadDocument(sectionEditorModal.docType);
+                }
+                setSectionEditorModal({ visible: false, docType: null, sectionTitle: null });
+              }}
+            />
+          </div>
+        )}
+      </Modal>
+
+      {/* MCP资源添加弹窗 */}
+      <Modal
+        title="添加到MCP资源"
+        open={mcpResourceModal.visible}
+        onCancel={() => {
+          setMcpResourceModal({ visible: false, docType: null, sectionTitle: null });
+          mcpForm.resetFields();
+        }}
+        onOk={handleSubmitMCPResource}
+        confirmLoading={mcpSaving}
+        okText="添加"
+        cancelText="取消"
+      >
+        <Form
+          form={mcpForm}
+          layout="vertical"
+        >
+          <Form.Item
+            name="name"
+            label="资源名称"
+            rules={[{ required: true, message: '请输入资源名称' }]}
+          >
+            <Input placeholder="请输入资源名称" />
+          </Form.Item>
+          <Form.Item
+            name="description"
+            label="资源描述"
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder="请输入资源描述（可选）"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       {/* 返回顶部浮动按钮 */}
       {showBackTop && (

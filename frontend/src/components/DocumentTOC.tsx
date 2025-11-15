@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Dropdown, Modal, Form, Input, message } from 'antd';
 import type { MenuProps } from 'antd';
-import { CopyOutlined, PlusOutlined } from '@ant-design/icons';
+import { CopyOutlined, PlusOutlined, EditOutlined } from '@ant-design/icons';
 import { addCustomResource } from '../api/resourceApi';
 import { loadAuth } from '../api/auth';
 
@@ -18,6 +18,7 @@ interface Props {
   projectId?: string;
   taskId?: string;
   docType?: 'requirements' | 'design' | 'test';
+  onEditSection?: (sectionId: string) => void; // 编辑章节的回调
 }
 
 // Generate slug consistent with MarkdownViewer (without duplicate handling yet)
@@ -31,7 +32,7 @@ function baseSlug(text: string) {
 // 全局版本计数器，不会因组件重新挂载而重置
 let globalVersionCounter = 0;
 
-export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel = 4, projectId, taskId, docType }) => {
+export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel = 4, projectId, taskId, docType, onEditSection }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [contextMenuItem, setContextMenuItem] = useState<TOCItem | null>(null);
   const [form] = Form.useForm();
@@ -100,11 +101,18 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
     };
   }, [content, docType]);
 
-  const handleClick = (id: string) => {
+  const handleClick = (id: string, e?: React.MouseEvent) => {
+    // 阻止浏览器的默认双击行为（选中文本）
+    if (e) {
+      e.preventDefault();
+    }
+    
     // 防抖：如果在500ms内重复点击同一项，忽略后续点击
     const now = Date.now();
     const lastClickTime = lastClickTimeRef.current[id] || 0;
-    if (now - lastClickTime < 500) {
+    const timeDiff = now - lastClickTime;
+    
+    if (timeDiff < 500) {
       return;
     }
     lastClickTimeRef.current[id] = now;
@@ -123,7 +131,6 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
       }
       
       // 使用指数退避策略，最多重试20次
-      // 延迟: 100, 150, 200, 250, 300, 350, 400, 450, 500, 500...
       if (retryCount < 20) {
         const delay = Math.min(100 + retryCount * 50, 500);
         const timer = setTimeout(() => {
@@ -138,7 +145,6 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
     };
     
     // 首次尝试前等待更长时间，确保tab切换和渲染完成
-    // Tab切换的click handler需要150-200ms，所以至少等待250ms
     const initialTimer = setTimeout(() => {
       pendingTimersRef.current.delete(initialTimer);
       scrollToElement();
@@ -250,9 +256,28 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
     }
   };
 
+  // 编辑章节
+  const handleEditSection = (item: TOCItem) => {
+    if (!onEditSection) {
+      message.warning('编辑功能不可用');
+      return;
+    }
+    
+    // 将标题文本传递给父组件，让父组件根据标题查找对应的章节ID
+    // 这里使用标题文本作为标识，父组件需要在章节列表中查找匹配的章节
+    onEditSection(item.text);
+  };
+
   // 右键菜单
   const getContextMenu = (item: TOCItem): MenuProps => ({
     items: [
+      {
+        key: 'edit-section',
+        icon: <EditOutlined />,
+        label: '章节编辑',
+        onClick: () => handleEditSection(item),
+        disabled: !projectId || !taskId || !docType || !onEditSection,
+      },
       {
         key: 'copy-name',
         icon: <CopyOutlined />,
@@ -288,9 +313,10 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
                 style={{
                   margin: '4px 0',
                   paddingLeft: (item.level - 1) * 12,
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  userSelect: 'none', // 防止双击选中文本
                 }}
-                onClick={() => handleClick(item.id)}
+                onClick={(e) => handleClick(item.id, e)}
               >
                 <span
                   style={{

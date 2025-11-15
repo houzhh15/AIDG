@@ -11,11 +11,13 @@ interface Props {
   projectId: string
   taskId: string
   docType: string
+  initialSectionId?: string  // 新增：初始选中的章节ID
+  initialSectionTitle?: string  // 新增：初始选中的章节标题（将根据标题查找ID）
   onCancel?: () => void
   onSave?: () => void  // 新增：保存成功后的回调
 }
 
-const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, onSave: onSaveCallback }) => {
+const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSectionId, initialSectionTitle, onCancel, onSave: onSaveCallback }) => {
   const [sections, setSections] = useState<SectionMeta | null>(null)
   const [currentSectionId, setCurrentSectionId] = useState<string | null>(null)
   const [sectionContent, setSectionContent] = useState<SectionContent | null>(null)
@@ -28,6 +30,53 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
   useEffect(() => {
     loadSections()
   }, [projectId, taskId, docType])
+
+  // 设置初始选中的章节
+  useEffect(() => {
+    if (sections) {
+      // 如果提供了章节ID，直接使用
+      if (initialSectionId) {
+        setCurrentSectionId(initialSectionId)
+      }
+      // 如果提供了章节标题，根据标题查找章节ID
+      else if (initialSectionTitle) {
+        console.log('[SectionEditor] Searching for section with title:', initialSectionTitle)
+        console.log('[SectionEditor] Available sections:', sections.sections.map(s => ({ id: s.id, title: s.title })))
+        
+        // 规范化标题：移除 Markdown 标题符号和多余空格
+        const normalizeTitle = (title: string) => {
+          return title
+            .replace(/^#+\s+/, '') // 移除开头的 # 符号和空格
+            .trim()
+        }
+        
+        const normalizedSearch = normalizeTitle(initialSectionTitle)
+        console.log('[SectionEditor] Normalized search title:', normalizedSearch)
+        
+        // 先尝试精确匹配（忽略 Markdown 标题符号）
+        const section = sections.sections.find(s => normalizeTitle(s.title) === normalizedSearch)
+        
+        if (section) {
+          console.log('[SectionEditor] Found exact match:', section.id, section.title)
+          setCurrentSectionId(section.id)
+        } else {
+          console.log('[SectionEditor] No exact match found, trying partial match...')
+          // 尝试部分匹配
+          const matchedSection = sections.sections.find(s => {
+            const normalized = normalizeTitle(s.title)
+            return normalized.includes(normalizedSearch) || normalizedSearch.includes(normalized)
+          })
+          
+          if (matchedSection) {
+            console.log('[SectionEditor] Found partial match:', matchedSection.id, matchedSection.title)
+            setCurrentSectionId(matchedSection.id)
+          } else {
+            console.log('[SectionEditor] No match found at all')
+          }
+        }
+      }
+    }
+  }, [initialSectionId, initialSectionTitle, sections])
 
   // 加载章节内容（依赖任务参数，确保任务切换时重新加载）
   useEffect(() => {
@@ -42,9 +91,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, onCancel, 
       const response = await getTaskSections(projectId, taskId, docType)
       setSections(response)
 
-      // 如果当前没有选中任何章节，自动选中第一个章节
-      // 注意：不要在保存后自动切换选中的章节（保持用户当前的选择）
-      if (!currentSectionId && response.sections.length > 0) {
+      // 如果当前没有选中任何章节，并且没有提供初始章节，才自动选中第一个章节
+      // 这样可以避免覆盖用户通过 initialSectionTitle/initialSectionId 指定的章节
+      if (!currentSectionId && !initialSectionId && !initialSectionTitle && response.sections.length > 0) {
         setCurrentSectionId(response.sections[0].id)
       }
     } catch (error) {

@@ -24,4 +24,137 @@
 	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
+/* 标题悬浮操作按钮组样式 */
+.markdown-heading-with-edit {
+	/* 左侧添加彩色边框指示可交互 */
+	padding-left: 12px;
+	border-left: 3px solid transparent;
+	transition: all 0.2s ease;
+	cursor: pointer;
+	margin-left: -15px;
+	border-radius: 4px;
+}
+
+.markdown-heading-with-edit:hover {
+	/* 悬停时显示左侧蓝色边框和浅色背景 */
+	border-left-color: #1890ff;
+	background-color: #f0f7ff;
+	padding-right: 8px;
+}
+
+.markdown-heading-with-edit:hover .heading-interactive-indicator {
+	opacity: 1 !important;
+	transform: rotate(90deg);
+}
+
+.markdown-heading-with-edit:hover .heading-action-buttons {
+	opacity: 1 !important;
+}
+
+.heading-action-buttons button:hover {
+	background-color: #ffffff !important;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 可交互标题的指示器动画 */
+.heading-interactive-indicator {
+	display: inline-block;
+	transition: all 0.3s ease;
+}
+
+/* 包含可交互标题的文档容器样式 */
+.markdown-body.has-interactive-headings {
+	padding-left: 15px;
+}
+
+/* 标题本身保持负边距，使其突出到左侧 */
+.markdown-body.has-interactive-headings h1,
+.markdown-body.has-interactive-headings h2,
+.markdown-body.has-interactive-headings h3,
+.markdown-body.has-interactive-headings h4,
+.markdown-body.has-interactive-headings h5,
+.markdown-body.has-interactive-headings h6 {
+	margin-left: -15px;
+}
+
+/* 内容元素添加浅色左边框作为视觉引导线 */
+.markdown-body.has-interactive-headings > p,
+.markdown-body.has-interactive-headings > ul,
+.markdown-body.has-interactive-headings > ol,
+.markdown-body.has-interactive-headings > blockquote,
+.markdown-body.has-interactive-headings > pre,
+.markdown-body.has-interactive-headings > table,
+.markdown-body.has-interactive-headings > div:not(.markdown-heading-with-edit) {
+	border-left: 2px solid #f5f5f5;
+	padding-left: 12px;
+	margin-left: 0;
+}
+
+/* 列表特殊处理 - 增加额外的左侧空间，避免序号/图标与边框重叠 */
+.markdown-body.has-interactive-headings > ul,
+.markdown-body.has-interactive-headings > ol {
+	padding-left: 32px; /* 12px (边框间距) + 20px (列表标记空间) */
+}
+
+/* 列表项本身的样式 */
+.markdown-body.has-interactive-headings li {
+	margin-left: 0;
+	padding-left: 8px; /* 列表标记与文本之间的间距 */
+}
+
+/* 嵌套列表的层级缩进 - 减少缩进以保持整体风格一致 */
+.markdown-body.has-interactive-headings li > ul,
+.markdown-body.has-interactive-headings li > ol {
+	margin-left: 0;
+	margin-top: 4px;
+	margin-bottom: 4px;
+	border-left: 2px solid #f0f0f0; /* 嵌套列表也有引导线，但颜色更浅 */
+	padding-left: 24px; /* 减少缩进：12px (边框间距) + 12px (列表标记空间) */
+}
+
+/* 第三层嵌套列表 */
+.markdown-body.has-interactive-headings li li > ul,
+.markdown-body.has-interactive-headings li li > ol {
+	border-left-color: #f8f8f8; /* 更浅的颜色显示更深的层级 */
+	padding-left: 20px; /* 三级列表缩进更少 */
+}
+
+/* 列表项内的段落不需要额外边框 */
+.markdown-body.has-interactive-headings li > p {
+	border-left: none;
+	padding-left: 0;
+	margin: 4px 0;
+}
+
+/* 标题字体大小控制 - 4级及以上标题保持相同大小 */
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+	font-size: 1.1em; /* 保持统一的可读大小 */
+	font-weight: 600;
+}
+
+/* 确保1-3级标题有明显的层级区分 */
+.markdown-body h1 {
+	font-size: 2em;
+	font-weight: 700;
+	margin-top: 24px;
+	margin-bottom: 16px;
+}
+
+.markdown-body h2 {
+	font-size: 1.5em;
+	font-weight: 700;
+	margin-top: 20px;
+	margin-bottom: 12px;
+}
+
+.markdown-body h3 {
+	font-size: 1.25em;
+	font-weight: 600;
+	margin-top: 16px;
+	margin-bottom: 10px;
+}
+
+
 

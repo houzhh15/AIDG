@@ -19,6 +19,7 @@ const ProjectTaskSelector: React.FC = () => {
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [saving, setSaving] = useState(false);
   const [current, setCurrent] = useState<CurrentTaskInfo | null>(null);
+  const [hoveredOptionValue, setHoveredOptionValue] = useState<string | null>(null);
   const { refreshTrigger } = useTaskRefresh();
 
   // 初始与登录状态变化时再加载当前任务，避免未登录 401 噪音
@@ -148,14 +149,35 @@ const ProjectTaskSelector: React.FC = () => {
     // 从 value 中提取 taskId，确保能获取到正确的ID
     const taskId = option.taskId || (option.value ? option.value.split('::')[1] : '');
     return (
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-        <span style={{ flex: 1 }}>{option.label}</span>
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        width: '100%',
+        padding: '2px 12px',
+        gap: 8
+      }}
+      onMouseEnter={() => setHoveredOptionValue(option.value)}
+      onMouseLeave={() => setHoveredOptionValue(null)}
+      >
+        <span style={{ 
+          flex: 1,
+          fontSize: 14,
+          whiteSpace: 'nowrap'
+        }}>{option.label}</span>
         <Button
           type="text"
           size="small"
           icon={<CopyOutlined />}
           onClick={(e) => handleCopyTaskId(taskId, e)}
-          style={{ marginLeft: 8, color: '#1890ff' }}
+          style={{ 
+            color: '#1890ff', 
+            padding: '2px 8px', 
+            flexShrink: 0,
+            opacity: hoveredOptionValue === option.value ? 1 : 0,
+            transition: 'opacity 0.2s ease',
+            pointerEvents: hoveredOptionValue === option.value ? 'auto' : 'none'
+          }}
           title={`复制任务ID: ${taskId}`}
         />
       </div>
@@ -200,8 +222,7 @@ const ProjectTaskSelector: React.FC = () => {
   const value = current ? `${current.project_id}::${current.task_id}` : undefined;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ color: '#d0e6f9', fontSize: 12 }}>当前任务:</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}> 
       {username && (
         <Tooltip title={showAll ? '已显示全部任务' : '切换：显示全部任务'}>
           <Button
@@ -212,9 +233,10 @@ const ProjectTaskSelector: React.FC = () => {
           >{showAll ? '全部' : '我的'}</Button>
         </Tooltip>
       )}
+      <span style={{ color: '#d0e6f9', fontSize: 14 }}>当前任务:</span>
       <Tooltip title={username ? (showAll ? '当前显示全部任务' : '当前仅显示指派给你的任务') : '请先登录以选择指派任务'}>
         <Select
-        style={{ width: 300 }}
+        style={{ width: 260 }}
         placeholder="选择项目任务"
         loading={loadingProjects || loadingTasks || saving}
         onDropdownVisibleChange={handleOpen}
@@ -226,6 +248,15 @@ const ProjectTaskSelector: React.FC = () => {
         options={grouped}
         disabled={!username}
         optionRender={renderOption}
+        listHeight={400}
+        dropdownStyle={{
+          maxHeight: 400,
+          overflowY: 'auto',
+          minWidth: 260,
+          maxWidth: 600
+        }}
+        popupMatchSelectWidth={false}
+        placement="bottomRight"
         />
       </Tooltip>
     </div>

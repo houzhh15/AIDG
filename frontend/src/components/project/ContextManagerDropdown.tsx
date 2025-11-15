@@ -207,11 +207,21 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
           type="text"
           icon={<PlusOutlined />}
           onClick={handleCreateClick}
-          style={{ width: '100%', textAlign: 'left', minHeight: 40 }}
+          style={{ 
+            width: '100%', 
+            textAlign: 'left', 
+            height: 32,
+            lineHeight: '32px',
+            padding: '4px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            border: 'none'
+          }}
         >
           新增资源
         </Button>
-      )
+      ),
+      style: { height: 32, lineHeight: '32px', padding: 0 }
     },
     // 刷新资源按钮
     {
@@ -221,17 +231,28 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
           type="text"
           icon={<ReloadOutlined />}
           onClick={handleRefreshClick}
-          style={{ width: '100%', textAlign: 'left', minHeight: 40 }}
+          style={{ 
+            width: '100%', 
+            textAlign: 'left', 
+            height: 32,
+            lineHeight: '32px',
+            padding: '4px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            border: 'none'
+          }}
         >
           刷新资源
         </Button>
-      )
+      ),
+      style: { height: 32, lineHeight: '32px', padding: 0 }
     },
     { type: 'divider' },
     // 资源列表项
     ...(resources.length > 0
       ? resources.map(resource => ({
           key: resource.resourceId,
+          style: { height: 32, lineHeight: '32px', padding: '4px 12px' },
           label: (
             <div
               style={{
@@ -239,12 +260,18 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 width: '100%',
-                minHeight: 40
+                height: '100%'
               }}
               onMouseEnter={() => setHoveredResourceId(resource.resourceId)}
               onMouseLeave={() => setHoveredResourceId(null)}
             >
-              <span style={{ flex: 1 }}>{resource.name}</span>
+              <span style={{ 
+                flex: 1, 
+                overflow: 'hidden', 
+                textOverflow: 'ellipsis', 
+                whiteSpace: 'nowrap',
+                fontSize: 14
+              }}>{resource.name}</span>
               <Space size="small">
                 <Button
                   type="text"
@@ -282,7 +309,8 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
       : [
           {
             key: 'empty',
-            label: <span style={{ color: '#999', minHeight: 40, display: 'flex', alignItems: 'center' }}>暂无资源</span>,
+            style: { height: 32, lineHeight: '32px', padding: '4px 12px' },
+            label: <span style={{ color: '#999', fontSize: 14 }}>暂无资源</span>,
             disabled: true
           }
         ])
@@ -298,8 +326,23 @@ const ContextManagerDropdown: React.FC<ContextManagerDropdownProps> = ({
       <Dropdown
         menu={{ 
           items: menuItems,
-          style: { minWidth: 200 } // 增加下拉菜单宽度
+          style: { 
+            minWidth: 200,
+            maxWidth: 600,
+            maxHeight: 400,
+            overflowY: 'auto',
+            padding: 0
+          }
         }}
+        dropdownRender={(menu) => (
+          <div style={{
+            maxHeight: 400,
+            overflowY: 'auto',
+            boxShadow: '0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 9px 28px 8px rgba(0, 0, 0, 0.05)'
+          }}>
+            {menu}
+          </div>
+        )}
         open={menuOpen}
         onOpenChange={handleMenuOpenChange}
         placement="bottomRight"

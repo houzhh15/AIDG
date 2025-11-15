@@ -67,13 +67,30 @@ export const TaskSelector: React.FC<TaskSelectorProps> = ({
       filterOption={(input, option) =>
         option?.children?.toString().toLowerCase().includes(input.toLowerCase()) || false
       }
+      listHeight={400}
+      dropdownStyle={{
+        maxHeight: 400,
+        overflowY: 'auto'
+      }}
+      optionLabelProp="label"
     >
       {tasks.map(task => {
         const text = getDisplayText(task);
         return (
-          <Option key={task.id} value={task.id}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <FolderOutlined style={{ color: '#1890ff', flexShrink: 0 }} />
+          <Option 
+            key={task.id} 
+            value={task.id}
+            label={text}
+            style={{
+              height: 32,
+              lineHeight: '32px',
+              padding: '0 12px',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, height: '100%' }}>
+              <FolderOutlined style={{ color: '#1890ff', flexShrink: 0, fontSize: 14 }} />
               <Tooltip title={<div style={{ maxWidth: 480, whiteSpace: 'normal', wordBreak: 'break-all' }}>{text}</div>}>
                 <span style={{
                   display: 'inline-block',

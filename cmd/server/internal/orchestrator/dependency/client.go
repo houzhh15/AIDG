@@ -181,13 +181,16 @@ func (c *DependencyClient) SplitAudioIntoChunks(ctx context.Context, inputPath, 
 	)
 
 	// Construct ffmpeg command for segmentation
+	// Note: We need to re-encode to PCM for WAV format, can't use -c copy with m4a -> wav
 	req := CommandRequest{
 		Command: "ffmpeg",
 		Args: []string{
 			"-i", inputPath,
 			"-f", "segment",
 			"-segment_time", fmt.Sprintf("%d", chunkDurationSec),
-			"-c", "copy", // Copy without re-encoding (fast)
+			"-ar", "16000", // Sample rate 16kHz (optimal for Whisper)
+			"-ac", "1", // Mono audio
+			"-c:a", "pcm_s16le", // PCM 16-bit little-endian (WAV format)
 			"-reset_timestamps", "1",
 			outputPattern,
 		},
