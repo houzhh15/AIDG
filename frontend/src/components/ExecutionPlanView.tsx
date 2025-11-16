@@ -253,14 +253,9 @@ const ExecutionPlanView: React.FC<Props> = ({ projectId, taskId }) => {
   
   // 创建Tag
   const handleCreateTag = async (tagName: string) => {
-    try {
-      await tagService.createExecutionPlanTag(projectId, taskId, tagName);
-      // 刷新tag列表（成功提示由TagButton组件显示）
-      setTagRefreshKey(prev => prev + 1);
-    } catch (error: any) {
-      // 错误会被TagButton组件处理，这里直接抛出
-      throw error;
-    }
+    await tagService.createExecutionPlanTag(projectId, taskId, tagName);
+    // 刷新tag列表（成功提示由TagButton组件显示）
+    setTagRefreshKey(prev => prev + 1);
   };
 
   // 切换Tag
