@@ -9,6 +9,7 @@ import { getProjectFeatureList, saveProjectFeatureList, getProjectFeatureListHis
 import { TaskSelector } from '../TaskSelector';
 import { DiffModal } from '../DiffModal';
 import { authedApi } from '../../api/auth';
+import { useRefreshTrigger, useTaskRefresh } from '../../contexts/TaskRefreshContext';
 
 const { TextArea } = Input;
 
@@ -43,6 +44,10 @@ export const ProjectFeatureList: React.FC<Props> = ({ projectId }) => {
   const [showDiffModal, setShowDiffModal] = useState(false);
   const [copying, setCopying] = useState(false);
   const [selectedKinds, setSelectedKinds] = useState<string[]>(['feature-list']);
+  
+  // 监听项目文档刷新事件
+  const projectDocRefresh = useRefreshTrigger('project-document');
+  const { triggerRefreshFor } = useTaskRefresh();
 
   async function load(){
     if(!projectId) return;
@@ -69,7 +74,10 @@ export const ProjectFeatureList: React.FC<Props> = ({ projectId }) => {
       setContent(editContent); 
       setExists(true); 
       setIsEditing(false); 
-      if(history.length>0) loadHistoryFn(); 
+      if(history.length>0) loadHistoryFn();
+      
+      // 触发项目文档刷新
+      triggerRefreshFor('project-document');
     }
     catch(e:any){ message.error('保存失败'); } finally { setSaving(false); }
   }
@@ -81,7 +89,15 @@ export const ProjectFeatureList: React.FC<Props> = ({ projectId }) => {
   async function performCopy(){
     if(!projectId || !sourceTaskId) return;
     setCopying(true);
-    try { await copyDeliverablesFromTask(projectId, sourceTaskId, selectedKinds); message.success('拷贝成功'); setShowDiffModal(false); load(); }
+    try { 
+      await copyDeliverablesFromTask(projectId, sourceTaskId, selectedKinds); 
+      message.success('拷贝成功'); 
+      setShowDiffModal(false); 
+      load();
+      
+      // 触发项目文档刷新
+      triggerRefreshFor('project-document');
+    }
     catch(e:any){ message.error('拷贝失败'); }
     finally { setCopying(false); }
   }
@@ -104,7 +120,7 @@ export const ProjectFeatureList: React.FC<Props> = ({ projectId }) => {
     }
   };
 
-  useEffect(()=>{ load(); setIsEditing(false); }, [projectId]);
+  useEffect(()=>{ load(); setIsEditing(false); }, [projectId, projectDocRefresh]);
 
   const historyMenu: MenuProps['items'] = history.map((h,i)=>({
     key: String(h.version||i+1),

@@ -12,6 +12,7 @@ import {
   updateResource
 } from '../../api/resourceApi';
 import { ResourceEditorMode, ResourcePayload } from './types';
+import { useTaskRefresh } from '../../contexts/TaskRefreshContext';
 
 /**
  * ResourceEditorModal 组件属性接口
@@ -54,6 +55,9 @@ const ResourceEditorModal: React.FC<ResourceEditorModalProps> = ({
 }) => {
   // 跟踪编辑器内容是否被修改（用于关闭前提示）
   const [isDirty, setIsDirty] = useState<boolean>(false);
+  
+  // 获取刷新函数
+  const { triggerRefreshFor } = useTaskRefresh();
 
   /**
    * 动态生成对话框标题
@@ -77,6 +81,9 @@ const ResourceEditorModal: React.FC<ResourceEditorModalProps> = ({
         // 编辑资源
         await updateResource(username, initialResource.resourceId, payload);
       }
+      
+      // 触发用户资源刷新
+      triggerRefreshFor('user-resource');
       
       // 注意：不在这里调用 onSuccess()
       // ResourceEditor 会在底部保存按钮保存后调用 onCancel()，由 handleCancel 处理刷新

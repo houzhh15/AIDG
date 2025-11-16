@@ -4,6 +4,7 @@ import SectionTree, { FULL_DOCUMENT_ID } from './SectionTree'
 import SectionContentEditor from './SectionContentEditor'
 import { getTaskSections, getTaskSection, updateTaskSection, updateTaskSectionFull, getTaskDocument, saveTaskDocument } from '../api/tasks'
 import type { SectionMeta, SectionContent } from '../types/section'
+import { useTaskRefresh } from '../contexts/TaskRefreshContext'
 
 const { Sider, Content } = Layout
 
@@ -25,6 +26,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
   const [saving, setSaving] = useState(false)
   const [isFullEditMode, setIsFullEditMode] = useState(false) // 新增：是否为全文编辑模式
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false) // 新增：跟踪是否有未保存的更改
+  
+  // 获取刷新函数
+  const { triggerRefreshForMultiple } = useTaskRefresh()
 
   // 加载章节列表
   useEffect(() => {
@@ -253,6 +257,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
       if (onSaveCallback) {
         onSaveCallback()
       }
+      
+      // 触发全局刷新事件，让其他组件也能响应
+      triggerRefreshForMultiple(['task-document', 'task-detail'])
       
       // 重置未保存状态
       setHasUnsavedChanges(false)
