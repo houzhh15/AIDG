@@ -63,14 +63,14 @@ const MarkdownViewer: React.FC<Props> = ({
   }
   
   // 从React节点中提取纯文本（处理加粗、斜体等格式）
-  const extractText = (node: any): string => {
+  const extractText = (node: React.ReactNode): string => {
     if (typeof node === 'string') {
       return node;
     }
     if (Array.isArray(node)) {
       return node.map(extractText).join('');
     }
-    if (node && node.props && node.props.children) {
+    if (node && typeof node === 'object' && 'props' in node && node.props && 'children' in node.props) {
       return extractText(node.props.children);
     }
     return '';
@@ -78,6 +78,7 @@ const MarkdownViewer: React.FC<Props> = ({
   
   // 创建带编辑按钮的标题组件
   const createHeadingWithEditButton = (level: 1 | 2 | 3 | 4 | 5 | 6) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return ({ children, ...props }: any) => {
       const id = generateHeadingId(children);
       const text = extractText(children);
@@ -189,11 +190,11 @@ const MarkdownViewer: React.FC<Props> = ({
     };
   };
   
-  const generateHeadingId = (children: any): string => {
+  const generateHeadingId = (children: React.ReactNode): string => {
     // 先提取纯文本
     const text = extractText(children);
     
-    let id = text
+    const id = text
       .toLowerCase()
       .replace(/[^\w\u4e00-\u9fa5\s-]/g, '')
       .replace(/\s+/g, '-');
@@ -298,7 +299,7 @@ const MarkdownViewer: React.FC<Props> = ({
         {children || ''}
       </ReactMarkdown>
     );
-  }, [children, allowMermaid]); // 依赖 children 和 allowMermaid
+  }, [children, allowMermaid, onEditSection, onCopySectionName, onAddToMCP]); // 添加所有依赖
 
   // 检查是否有可交互的标题
   const hasInteractiveHeadings = !!(onEditSection || onCopySectionName || onAddToMCP);
