@@ -113,19 +113,24 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
     const timeDiff = now - lastClickTime;
     
     if (timeDiff < 500) {
+      console.log(`[DocumentTOC] 防抖拦截: ${id}, 距上次点击 ${timeDiff}ms`);
       return;
     }
     lastClickTimeRef.current[id] = now;
     
     const clickVersion = contentVersionRef.current;
+    console.log(`[DocumentTOC] 点击目录项: ${id}, version: ${clickVersion}`);
     
     const scrollToElement = (retryCount = 0) => {
+      // 检查版本是否已过期
       if (clickVersion !== contentVersionRef.current) {
+        console.log(`[DocumentTOC] 版本已过期，停止滚动: ${id}`);
         return false;
       }
       
       const el = document.getElementById(id);
       if (el) {
+        console.log(`[DocumentTOC] 找到元素，开始滚动: ${id} (尝试 ${retryCount})`);
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         return true;
       }
@@ -133,6 +138,7 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
       // 使用指数退避策略，最多重试20次
       if (retryCount < 20) {
         const delay = Math.min(100 + retryCount * 50, 500);
+        console.log(`[DocumentTOC] 未找到元素 ${id}, ${delay}ms 后重试 (第 ${retryCount + 1}/20 次)`);
         const timer = setTimeout(() => {
           pendingTimersRef.current.delete(timer);
           scrollToElement(retryCount + 1);
@@ -141,15 +147,12 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
         return false;
       }
       
+      console.error(`[DocumentTOC] 重试20次后仍未找到元素: ${id}`);
       return false;
     };
     
-    // 首次尝试前等待更长时间，确保tab切换和渲染完成
-    const initialTimer = setTimeout(() => {
-      pendingTimersRef.current.delete(initialTimer);
-      scrollToElement();
-    }, 250);
-    pendingTimersRef.current.add(initialTimer);
+    // 立即尝试滚动（移除初始延迟，因为 MarkdownViewer 现在有 key，会在切换时重新挂载）
+    scrollToElement();
   };
 
   // 从 content 中提取章节及其子章节的内容
@@ -375,4 +378,15 @@ export const DocumentTOC: React.FC<Props> = ({ content, minLevel = 1, maxLevel =
   );
 };
 
-export default DocumentTOC;
+// 使用 React.memo 优化组件，防止父组件重新渲染时不必要的更新
+export default React.memo(DocumentTOC, (prevProps, nextProps) => {
+  return (
+    prevProps.content === nextProps.content &&
+    prevProps.minLevel === nextProps.minLevel &&
+    prevProps.maxLevel === nextProps.maxLevel &&
+    prevProps.projectId === nextProps.projectId &&
+    prevProps.taskId === nextProps.taskId &&
+    prevProps.docType === nextProps.docType &&
+    prevProps.onEditSection === nextProps.onEditSection
+  );
+});

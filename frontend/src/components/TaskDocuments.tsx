@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card, Drawer, Badge, Modal, Form, Input } from 'antd';
 import {
   FileTextOutlined,
@@ -160,8 +160,9 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
         // 记录最后滚动的元素
         lastScrollElementRef.current = target;
         
-        // 更新按钮显示状态
-        setShowBackTop(scrollTop > 100);
+        // 只在状态真正需要改变时才更新，避免不必要的重新渲染
+        const shouldShowBackTop = scrollTop > 100;
+        setShowBackTop(prev => prev !== shouldShowBackTop ? shouldShowBackTop : prev);
       }
     };
 
@@ -427,17 +428,17 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
   };
 
   // 处理从TOC触发的章节编辑
-  const handleEditSectionFromTOC = (docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+  const handleEditSectionFromTOC = useCallback((docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
     // 打开章节编辑弹窗
     setSectionEditorModal({
       visible: true,
       docType,
       sectionTitle,
     });
-  };
+  }, []);
 
   // 处理复制章节名
-  const handleCopySectionName = (docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+  const handleCopySectionName = useCallback((docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
     const docTypeMap = {
       requirements: '需求文档',
       design: '设计文档',
@@ -452,10 +453,10 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       console.error('复制失败:', err);
       message.error('复制失败');
     });
-  };
+  }, [taskId]);
 
   // 处理添加到MCP资源
-  const handleAddToMCPResource = (docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+  const handleAddToMCPResource = useCallback((docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
     setMcpResourceModal({
       visible: true,
       docType,
@@ -465,7 +466,26 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       name: `${sectionTitle} - ${taskId}`,
       description: `来自任务 ${taskId} 的章节内容`,
     });
-  };
+  }, [taskId, mcpForm]);
+
+  // 为每个文档类型创建稳定的回调函数映射
+  const docTypeCallbacks = React.useMemo(() => ({
+    requirements: {
+      onEditSection: (sectionTitle: string) => handleEditSectionFromTOC('requirements', sectionTitle),
+      onCopySectionName: (sectionTitle: string) => handleCopySectionName('requirements', sectionTitle),
+      onAddToMCP: (sectionTitle: string) => handleAddToMCPResource('requirements', sectionTitle),
+    },
+    design: {
+      onEditSection: (sectionTitle: string) => handleEditSectionFromTOC('design', sectionTitle),
+      onCopySectionName: (sectionTitle: string) => handleCopySectionName('design', sectionTitle),
+      onAddToMCP: (sectionTitle: string) => handleAddToMCPResource('design', sectionTitle),
+    },
+    test: {
+      onEditSection: (sectionTitle: string) => handleEditSectionFromTOC('test', sectionTitle),
+      onCopySectionName: (sectionTitle: string) => handleCopySectionName('test', sectionTitle),
+      onAddToMCP: (sectionTitle: string) => handleAddToMCPResource('test', sectionTitle),
+    },
+  }), [handleEditSectionFromTOC, handleCopySectionName, handleAddToMCPResource]);
 
   // 从文档内容中提取章节内容
   const getSectionContent = (content: string, sectionTitle: string): string => {
@@ -800,7 +820,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
               position: 'sticky',
               top: 0,
               alignSelf: 'flex-start',
-              maxHeight: '100vh',
+              maxHeight: 'calc(100vh - 150px)',
               display: 'flex',
               flexDirection: 'column',
               border: '1px solid #f0f0f0',
@@ -823,12 +843,12 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 minHeight: 0
               }}>
                 <DocumentTOC 
-                  key={`${docType}-${projectId}-${taskId}`}
+                  key={`toc-${docType}-${projectId}-${taskId}`}
                   content={doc.content} 
                   projectId={projectId}
                   taskId={taskId}
                   docType={docType as 'requirements' | 'design' | 'test'}
-                  onEditSection={(sectionTitle) => handleEditSectionFromTOC(docType as 'requirements' | 'design' | 'test', sectionTitle)}
+                  onEditSection={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onEditSection}
                 />
               </div>
             </div>
@@ -848,10 +868,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 padding: '16px'
               }}>
                 <MarkdownViewer 
+                  key={`markdown-${docType}-${projectId}-${taskId}`}
                   showFullscreenButton={docType === 'requirements' || docType === 'design'}
-                  onEditSection={(sectionTitle) => handleEditSectionFromTOC(docType as 'requirements' | 'design' | 'test', sectionTitle)}
-                  onCopySectionName={(sectionTitle) => handleCopySectionName(docType as 'requirements' | 'design' | 'test', sectionTitle)}
-                  onAddToMCP={(sectionTitle) => handleAddToMCPResource(docType as 'requirements' | 'design' | 'test', sectionTitle)}
+                  onEditSection={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onEditSection}
+                  onCopySectionName={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onCopySectionName}
+                  onAddToMCP={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onAddToMCP}
                 >
                   {doc.content}
                 </MarkdownViewer>

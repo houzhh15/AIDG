@@ -56,11 +56,14 @@ const MarkdownViewer: React.FC<Props> = ({
   const prevChildrenRef = React.useRef<string>();
   const idCountRef = React.useRef(new Map<string, number>());
   
-  // 如果 children 改变了，重置计数器
-  if (prevChildrenRef.current !== children) {
-    prevChildrenRef.current = children;
-    idCountRef.current = new Map<string, number>();
-  }
+  // 使用 useEffect 来检测 children 的真实变化并重置计数器
+  React.useEffect(() => {
+    if (prevChildrenRef.current !== children) {
+      console.log('[MarkdownViewer] Content changed, resetting ID counter');
+      prevChildrenRef.current = children;
+      idCountRef.current = new Map<string, number>();
+    }
+  }, [children]);
   
   // 从React节点中提取纯文本（处理加粗、斜体等格式）
   const extractText = (node: React.ReactNode): string => {
@@ -204,16 +207,20 @@ const MarkdownViewer: React.FC<Props> = ({
     const idCount = idCountRef.current;
     const currentCount = idCount.get(id);
     
+    let finalId: string;
     if (currentCount !== undefined) {
       // 不是第一次出现
       const count = currentCount + 1;
       idCount.set(id, count);
-      return `${id}-${count}`;
+      finalId = `${id}-${count}`;
     } else {
       // 第一次出现，不添加后缀
       idCount.set(id, 0);
-      return id;
+      finalId = id;
     }
+    
+    console.log(`[MarkdownViewer] Generated ID for "${text}": ${finalId} (count: ${currentCount ?? 0})`);
+    return finalId;
   };
 
   // 使用 useMemo 缓存 ReactMarkdown 渲染结果，只有当 children 改变时才重新渲染
@@ -364,4 +371,17 @@ const MarkdownViewer: React.FC<Props> = ({
   );
 };
 
-export default MarkdownViewer;
+// 使用 React.memo 优化组件，防止不必要的重新渲染
+// 只有当 children 内容真正改变时才重新渲染
+export default React.memo(MarkdownViewer, (prevProps, nextProps) => {
+  // 比较所有 props，children 是最重要的
+  return (
+    prevProps.children === nextProps.children &&
+    prevProps.className === nextProps.className &&
+    prevProps.allowMermaid === nextProps.allowMermaid &&
+    prevProps.showFullscreenButton === nextProps.showFullscreenButton &&
+    prevProps.onEditSection === nextProps.onEditSection &&
+    prevProps.onCopySectionName === nextProps.onCopySectionName &&
+    prevProps.onAddToMCP === nextProps.onAddToMCP
+  );
+});
