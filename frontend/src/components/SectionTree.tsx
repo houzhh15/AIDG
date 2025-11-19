@@ -44,8 +44,9 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
 
     // 检测循环引用的辅助函数
     const hasCircularReference = (sectionId: string, parentId: string, visited = new Set<string>()): boolean => {
-      if (visited.has(parentId)) {
-        return true // 检测到循环
+      // 如果父节点就是自己，或者已经访问过这个父节点，说明有循环
+      if (parentId === sectionId || visited.has(parentId)) {
+        return true
       }
       
       const parent = sections.find(s => s.id === parentId)
@@ -64,7 +65,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
       if (section.parent_id) {
         // 检查是否存在循环引用
         if (hasCircularReference(section.id, section.parent_id)) {
-          console.error(`[SectionTree] 检测到循环引用: 节点 ${section.id}(${section.title}) -> 父节点 ${section.parent_id}`)
+          console.error(`[SectionTree] 数据中存在循环引用: 节点 ${section.id}(${section.title}) -> 父节点 ${section.parent_id}，将其作为根节点处理`)
           // 将其作为根节点处理
           roots.push(node)
           return
@@ -76,7 +77,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
           parent.children.push(node)
         } else {
           // 父节点不存在，作为根节点
-          console.warn(`[SectionTree] 父节点不存在: 节点 ${section.id}(${section.title}) 的父节点 ${section.parent_id}`)
+          console.warn(`[SectionTree] 父节点不存在: 节点 ${section.id}(${section.title}) 的父节点 ${section.parent_id}，将其作为根节点处理`)
           roots.push(node)
         }
       } else {
@@ -84,6 +85,8 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
       }
     })
 
+    console.log(`[SectionTree] 构建完成，根节点数量: ${roots.length}`)
+    
     // 在最前面添加"全文"节点
     const fullDocNode: DataNode = {
       key: FULL_DOCUMENT_ID,
@@ -98,11 +101,13 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
   const wrapTreeNodeRecursive = (node: DataNode, visited: Set<React.Key>, path: string[] = []): DataNode => {
     // 防止循环引用
     if (visited.has(node.key)) {
-      console.warn(`[SectionTree] 检测到循环引用: ${node.key}, 路径: ${path.join(' -> ')}`)
-      // 使用路径创建唯一的 key，避免重复
+      const pathStr = path.join('->')
+      console.warn(`[SectionTree] 检测到循环引用: ${node.key}, 路径: ${pathStr}`)
+      // 使用完整路径创建唯一的 key，避免重复
+      const uniqueKey = `${node.key}-dup-${pathStr.replace(/[^a-zA-Z0-9]/g, '_')}`
       return {
         ...node,
-        key: `${node.key}-duplicate-${path.length}`,
+        key: uniqueKey,
         children: [], // 中断循环
       }
     }
