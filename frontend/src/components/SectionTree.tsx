@@ -92,24 +92,27 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
     return [fullDocNode, ...roots]
   }
 
-  // 包装树节点，为非全文节点添加右键菜单
-  const wrapTreeNode = (node: DataNode, visited = new Set<React.Key>()): DataNode => {
+  // 包装树节点，为非全文节点添加右键菜单（内部递归函数）
+  const wrapTreeNodeRecursive = (node: DataNode, visited: Set<React.Key>, path: string[] = []): DataNode => {
     // 防止循环引用
     if (visited.has(node.key)) {
-      console.warn(`[SectionTree] 检测到循环引用: ${node.key}`)
+      console.warn(`[SectionTree] 检测到循环引用: ${node.key}, 路径: ${path.join(' -> ')}`)
+      // 使用路径创建唯一的 key，避免重复
       return {
         ...node,
+        key: `${node.key}-duplicate-${path.length}`,
         children: [], // 中断循环
       }
     }
     
     visited.add(node.key)
+    const currentPath = [...path, String(node.key)]
 
     // 如果是全文节点，不添加右键菜单
     if (node.key === FULL_DOCUMENT_ID) {
       return {
         ...node,
-        children: node.children?.map(child => wrapTreeNode(child, visited)),
+        children: node.children?.map(child => wrapTreeNodeRecursive(child, visited, currentPath)),
       }
     }
 
@@ -118,7 +121,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
     if (!section) {
       return {
         ...node,
-        children: node.children?.map(child => wrapTreeNode(child, visited)),
+        children: node.children?.map(child => wrapTreeNodeRecursive(child, visited, currentPath)),
       }
     }
 
@@ -133,8 +136,13 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
     return {
       ...node,
       title: wrappedTitle,
-      children: node.children?.map(child => wrapTreeNode(child, visited)),
+      children: node.children?.map(child => wrapTreeNodeRecursive(child, visited, currentPath)),
     }
+  }
+
+  // 包装树节点的入口函数
+  const wrapTreeNode = (node: DataNode): DataNode => {
+    return wrapTreeNodeRecursive(node, new Set<React.Key>(), [])
   }
 
   // 格式化标题：去除 Markdown 标记
@@ -279,9 +287,8 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
   })
 
   const treeData = buildTreeData(sections)
-  // 创建一个共享的 visited Set 来防止循环引用
-  const visited = new Set<React.Key>()
-  const wrappedTreeData = treeData.map(node => wrapTreeNode(node, visited))
+  // 每个顶级节点都有自己的 visited Set，避免不同树之间的节点被误判为循环
+  const wrappedTreeData = treeData.map(node => wrapTreeNode(node))
 
   return (
     <>
