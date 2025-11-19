@@ -59,29 +59,44 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
     }
 
     // 第二遍：建立父子关系，跳过有循环引用的节点
+    const addedNodes = new Set<string>() // 追踪已经添加到树中的节点
+    
     sections.forEach(section => {
       const node = map.get(section.id)!
 
       if (section.parent_id) {
         // 检查是否存在循环引用
         if (hasCircularReference(section.id, section.parent_id)) {
-          console.error(`[SectionTree] 数据中存在循环引用: 节点 ${section.id}(${section.title}) -> 父节点 ${section.parent_id}，将其作为根节点处理`)
-          // 将其作为根节点处理
-          roots.push(node)
+          console.error(`[SectionTree] 数据中存在循环引用: 节点 ${section.id}(${section.title}) -> 父节点 ${section.parent_id}，跳过此节点`)
+          // 跳过有循环引用的节点，不添加到树中
           return
         }
 
         const parent = map.get(section.parent_id)
         if (parent) {
+          // 检查节点是否已经被添加到其他位置
+          if (addedNodes.has(section.id)) {
+            console.warn(`[SectionTree] 节点已存在: ${section.id}(${section.title}) 已经被添加到树中，跳过重复添加`)
+            return
+          }
+          
           parent.children = parent.children || []
           parent.children.push(node)
+          addedNodes.add(section.id)
         } else {
           // 父节点不存在，作为根节点
           console.warn(`[SectionTree] 父节点不存在: 节点 ${section.id}(${section.title}) 的父节点 ${section.parent_id}，将其作为根节点处理`)
-          roots.push(node)
+          if (!addedNodes.has(section.id)) {
+            roots.push(node)
+            addedNodes.add(section.id)
+          }
         }
       } else {
-        roots.push(node)
+        // 没有父节点，是根节点
+        if (!addedNodes.has(section.id)) {
+          roots.push(node)
+          addedNodes.add(section.id)
+        }
       }
     })
 
