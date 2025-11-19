@@ -427,26 +427,34 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     }
   };
 
-  // 处理从TOC触发的章节编辑
-  const handleEditSectionFromTOC = useCallback((docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
-    // 打开章节编辑弹窗
+  // 为每个文档类型创建稳定的编辑回调
+  const handleEditRequirements = useCallback((sectionTitle: string) => {
     setSectionEditorModal({
       visible: true,
-      docType,
+      docType: 'requirements',
       sectionTitle,
     });
   }, []);
 
-  // 处理复制章节名
-  const handleCopySectionName = useCallback((docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
-    const docTypeMap = {
-      requirements: '需求文档',
-      design: '设计文档',
-      test: '测试文档'
-    };
+  const handleEditDesign = useCallback((sectionTitle: string) => {
+    setSectionEditorModal({
+      visible: true,
+      docType: 'design',
+      sectionTitle,
+    });
+  }, []);
 
-    const copyText = `${taskId}::${docTypeMap[docType]}::${sectionTitle}`;
-    
+  const handleEditTest = useCallback((sectionTitle: string) => {
+    setSectionEditorModal({
+      visible: true,
+      docType: 'test',
+      sectionTitle,
+    });
+  }, []);
+
+  // 为每个文档类型创建稳定的复制回调
+  const handleCopyRequirements = useCallback((sectionTitle: string) => {
+    const copyText = `${taskId}::需求文档::${sectionTitle}`;
     navigator.clipboard.writeText(copyText).then(() => {
       message.success(`已复制: ${copyText}`);
     }).catch(err => {
@@ -455,11 +463,31 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     });
   }, [taskId]);
 
-  // 处理添加到MCP资源
-  const handleAddToMCPResource = useCallback((docType: 'requirements' | 'design' | 'test', sectionTitle: string) => {
+  const handleCopyDesign = useCallback((sectionTitle: string) => {
+    const copyText = `${taskId}::设计文档::${sectionTitle}`;
+    navigator.clipboard.writeText(copyText).then(() => {
+      message.success(`已复制: ${copyText}`);
+    }).catch(err => {
+      console.error('复制失败:', err);
+      message.error('复制失败');
+    });
+  }, [taskId]);
+
+  const handleCopyTest = useCallback((sectionTitle: string) => {
+    const copyText = `${taskId}::测试文档::${sectionTitle}`;
+    navigator.clipboard.writeText(copyText).then(() => {
+      message.success(`已复制: ${copyText}`);
+    }).catch(err => {
+      console.error('复制失败:', err);
+      message.error('复制失败');
+    });
+  }, [taskId]);
+
+  // 为每个文档类型创建稳定的MCP资源添加回调
+  const handleAddRequirementsToMCP = useCallback((sectionTitle: string) => {
     setMcpResourceModal({
       visible: true,
-      docType,
+      docType: 'requirements',
       sectionTitle,
     });
     mcpForm.setFieldsValue({
@@ -468,24 +496,29 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     });
   }, [taskId, mcpForm]);
 
-  // 为每个文档类型创建稳定的回调函数映射
-  const docTypeCallbacks = React.useMemo(() => ({
-    requirements: {
-      onEditSection: (sectionTitle: string) => handleEditSectionFromTOC('requirements', sectionTitle),
-      onCopySectionName: (sectionTitle: string) => handleCopySectionName('requirements', sectionTitle),
-      onAddToMCP: (sectionTitle: string) => handleAddToMCPResource('requirements', sectionTitle),
-    },
-    design: {
-      onEditSection: (sectionTitle: string) => handleEditSectionFromTOC('design', sectionTitle),
-      onCopySectionName: (sectionTitle: string) => handleCopySectionName('design', sectionTitle),
-      onAddToMCP: (sectionTitle: string) => handleAddToMCPResource('design', sectionTitle),
-    },
-    test: {
-      onEditSection: (sectionTitle: string) => handleEditSectionFromTOC('test', sectionTitle),
-      onCopySectionName: (sectionTitle: string) => handleCopySectionName('test', sectionTitle),
-      onAddToMCP: (sectionTitle: string) => handleAddToMCPResource('test', sectionTitle),
-    },
-  }), [handleEditSectionFromTOC, handleCopySectionName, handleAddToMCPResource]);
+  const handleAddDesignToMCP = useCallback((sectionTitle: string) => {
+    setMcpResourceModal({
+      visible: true,
+      docType: 'design',
+      sectionTitle,
+    });
+    mcpForm.setFieldsValue({
+      name: `${sectionTitle} - ${taskId}`,
+      description: `来自任务 ${taskId} 的章节内容`,
+    });
+  }, [taskId, mcpForm]);
+
+  const handleAddTestToMCP = useCallback((sectionTitle: string) => {
+    setMcpResourceModal({
+      visible: true,
+      docType: 'test',
+      sectionTitle,
+    });
+    mcpForm.setFieldsValue({
+      name: `${sectionTitle} - ${taskId}`,
+      description: `来自任务 ${taskId} 的章节内容`,
+    });
+  }, [taskId, mcpForm]);
 
   // 从文档内容中提取章节内容
   const getSectionContent = (content: string, sectionTitle: string): string => {
@@ -848,7 +881,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                   projectId={projectId}
                   taskId={taskId}
                   docType={docType as 'requirements' | 'design' | 'test'}
-                  onEditSection={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onEditSection}
+                  onEditSection={
+                    docType === 'requirements' ? handleEditRequirements :
+                    docType === 'design' ? handleEditDesign :
+                    handleEditTest
+                  }
                 />
               </div>
             </div>
@@ -870,9 +907,21 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
                 <MarkdownViewer 
                   key={`markdown-${docType}-${projectId}-${taskId}`}
                   showFullscreenButton={docType === 'requirements' || docType === 'design'}
-                  onEditSection={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onEditSection}
-                  onCopySectionName={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onCopySectionName}
-                  onAddToMCP={docTypeCallbacks[docType as 'requirements' | 'design' | 'test'].onAddToMCP}
+                  onEditSection={
+                    docType === 'requirements' ? handleEditRequirements :
+                    docType === 'design' ? handleEditDesign :
+                    handleEditTest
+                  }
+                  onCopySectionName={
+                    docType === 'requirements' ? handleCopyRequirements :
+                    docType === 'design' ? handleCopyDesign :
+                    handleCopyTest
+                  }
+                  onAddToMCP={
+                    docType === 'requirements' ? handleAddRequirementsToMCP :
+                    docType === 'design' ? handleAddDesignToMCP :
+                    handleAddTestToMCP
+                  }
                 >
                   {doc.content}
                 </MarkdownViewer>

@@ -66,25 +66,69 @@ const MarkdownViewer: React.FC<Props> = ({
   }, [children]);
   
   // 从React节点中提取纯文本（处理加粗、斜体等格式）
-  const extractText = (node: React.ReactNode): string => {
+  // 使用 useCallback 确保函数引用稳定
+  const extractText = React.useCallback((node: React.ReactNode, visited = new WeakSet()): string => {
+    // 处理基本类型
     if (typeof node === 'string') {
       return node;
     }
+    if (typeof node === 'number') {
+      return String(node);
+    }
+    if (!node || typeof node === 'boolean') {
+      return '';
+    }
+    
+    // 处理数组
     if (Array.isArray(node)) {
-      return node.map(extractText).join('');
+      return node.map(n => extractText(n, visited)).join('');
     }
-    if (node && typeof node === 'object' && 'props' in node && node.props && 'children' in node.props) {
-      return extractText(node.props.children);
+    
+    // 处理对象 - 检查循环引用
+    if (typeof node === 'object') {
+      // 检查是否已经访问过这个对象
+      if (visited.has(node)) {
+        console.warn('[MarkdownViewer] Circular reference detected in extractText');
+        return '';
+      }
+      
+      // 标记为已访问
+      visited.add(node);
+      
+      // 处理 React 元素
+      if ('props' in node && node.props && 'children' in node.props) {
+        return extractText(node.props.children, visited);
+      }
     }
+    
     return '';
-  };
+  }, []);
   
   // 创建带编辑按钮的标题组件
   const createHeadingWithEditButton = (level: 1 | 2 | 3 | 4 | 5 | 6) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return ({ children, ...props }: any) => {
-      const id = generateHeadingId(children);
       const text = extractText(children);
+      
+      // 生成ID（简化版，避免递归调用generateHeadingId）
+      const id = text
+        .toLowerCase()
+        .replace(/[^\w\u4e00-\u9fa5\s-]/g, '')
+        .replace(/\s+/g, '-');
+      
+      // 处理重复ID
+      const idCount = idCountRef.current;
+      const currentCount = idCount.get(id);
+      let finalId: string;
+      if (currentCount !== undefined) {
+        const count = currentCount + 1;
+        idCount.set(id, count);
+        finalId = `${id}-${count}`;
+      } else {
+        idCount.set(id, 0);
+        finalId = id;
+      }
+      
       const HeadingTag = `h${level}` as keyof JSX.IntrinsicElements;
       
       // 检查是否有可用操作
@@ -193,35 +237,8 @@ const MarkdownViewer: React.FC<Props> = ({
     };
   };
   
-  const generateHeadingId = (children: React.ReactNode): string => {
-    // 先提取纯文本
-    const text = extractText(children);
-    
-    const id = text
-      .toLowerCase()
-      .replace(/[^\w\u4e00-\u9fa5\s-]/g, '')
-      .replace(/\s+/g, '-');
-    
-    // 处理重复ID，添加序号
-    // 注意：第一次出现的ID不加后缀，从第二次开始才加 -1, -2, ...
-    const idCount = idCountRef.current;
-    const currentCount = idCount.get(id);
-    
-    let finalId: string;
-    if (currentCount !== undefined) {
-      // 不是第一次出现
-      const count = currentCount + 1;
-      idCount.set(id, count);
-      finalId = `${id}-${count}`;
-    } else {
-      // 第一次出现，不添加后缀
-      idCount.set(id, 0);
-      finalId = id;
-    }
-    
-    console.log(`[MarkdownViewer] Generated ID for "${text}": ${finalId} (count: ${currentCount ?? 0})`);
-    return finalId;
-  };
+  // 移除了 generateHeadingId 函数，因为逻辑已经合并到 createHeadingWithEditButton 中
+
 
   // 使用 useMemo 缓存 ReactMarkdown 渲染结果，只有当 children 改变时才重新渲染
   // 这样可以确保 ID 计数器不会在相同内容下被重复计数
