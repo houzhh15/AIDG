@@ -28,6 +28,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
 
   // 将扁平的 sections 转换为树形结构
   const buildTreeData = (sections: Section[]): DataNode[] => {
+    console.log(`[SectionTree] 构建树结构，sections数量: ${sections.length}`)
     const map = new Map<string, DataNode>()
     const roots: DataNode[] = []
 
@@ -63,7 +64,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
       if (section.parent_id) {
         // 检查是否存在循环引用
         if (hasCircularReference(section.id, section.parent_id)) {
-          console.error(`[SectionTree] 检测到循环引用: 节点 ${section.id} -> 父节点 ${section.parent_id}`)
+          console.error(`[SectionTree] 检测到循环引用: 节点 ${section.id}(${section.title}) -> 父节点 ${section.parent_id}`)
           // 将其作为根节点处理
           roots.push(node)
           return
@@ -75,6 +76,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
           parent.children.push(node)
         } else {
           // 父节点不存在，作为根节点
+          console.warn(`[SectionTree] 父节点不存在: 节点 ${section.id}(${section.title}) 的父节点 ${section.parent_id}`)
           roots.push(node)
         }
       } else {
