@@ -41,15 +41,41 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
       map.set(section.id, node)
     })
 
-    // 第二遍：建立父子关系
+    // 检测循环引用的辅助函数
+    const hasCircularReference = (sectionId: string, parentId: string, visited = new Set<string>()): boolean => {
+      if (visited.has(parentId)) {
+        return true // 检测到循环
+      }
+      
+      const parent = sections.find(s => s.id === parentId)
+      if (!parent || !parent.parent_id) {
+        return false // 到达根节点
+      }
+      
+      visited.add(parentId)
+      return hasCircularReference(sectionId, parent.parent_id, visited)
+    }
+
+    // 第二遍：建立父子关系，跳过有循环引用的节点
     sections.forEach(section => {
       const node = map.get(section.id)!
 
       if (section.parent_id) {
+        // 检查是否存在循环引用
+        if (hasCircularReference(section.id, section.parent_id)) {
+          console.error(`[SectionTree] 检测到循环引用: 节点 ${section.id} -> 父节点 ${section.parent_id}`)
+          // 将其作为根节点处理
+          roots.push(node)
+          return
+        }
+
         const parent = map.get(section.parent_id)
         if (parent) {
           parent.children = parent.children || []
           parent.children.push(node)
+        } else {
+          // 父节点不存在，作为根节点
+          roots.push(node)
         }
       } else {
         roots.push(node)
@@ -67,12 +93,23 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
   }
 
   // 包装树节点，为非全文节点添加右键菜单
-  const wrapTreeNode = (node: DataNode): DataNode => {
+  const wrapTreeNode = (node: DataNode, visited = new Set<React.Key>()): DataNode => {
+    // 防止循环引用
+    if (visited.has(node.key)) {
+      console.warn(`[SectionTree] 检测到循环引用: ${node.key}`)
+      return {
+        ...node,
+        children: [], // 中断循环
+      }
+    }
+    
+    visited.add(node.key)
+
     // 如果是全文节点，不添加右键菜单
     if (node.key === FULL_DOCUMENT_ID) {
       return {
         ...node,
-        children: node.children?.map(wrapTreeNode),
+        children: node.children?.map(child => wrapTreeNode(child, visited)),
       }
     }
 
@@ -81,7 +118,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
     if (!section) {
       return {
         ...node,
-        children: node.children?.map(wrapTreeNode),
+        children: node.children?.map(child => wrapTreeNode(child, visited)),
       }
     }
 
@@ -96,7 +133,7 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
     return {
       ...node,
       title: wrappedTitle,
-      children: node.children?.map(wrapTreeNode),
+      children: node.children?.map(child => wrapTreeNode(child, visited)),
     }
   }
 
@@ -242,7 +279,9 @@ const SectionTree: React.FC<Props> = ({ sections, selectedSectionId, onSelect, p
   })
 
   const treeData = buildTreeData(sections)
-  const wrappedTreeData = treeData.map(wrapTreeNode)
+  // 创建一个共享的 visited Set 来防止循环引用
+  const visited = new Set<React.Key>()
+  const wrappedTreeData = treeData.map(node => wrapTreeNode(node, visited))
 
   return (
     <>

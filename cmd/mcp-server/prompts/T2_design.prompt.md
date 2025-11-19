@@ -60,7 +60,7 @@ version: 1.1
 
 **第六步：更新设计文档 (Update Design Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
-*   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。为防止文件长度过大导致请求失败，可分多次调用，参考章节编辑标准流程，直至全部完成。
+*   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。如果文档过长不要一次提交，参考章节编辑标准流程，直至全部完成。
 
 ### 章节级编辑标准流程 (Section-Level Editing Workflow)
 - 1. 先使用 updata_task_document 提交所有的章节包括子章节。
