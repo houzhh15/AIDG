@@ -73,6 +73,7 @@ data/users/*
 data/meetings/*
 data/audit_logs/*
 !data/.gitkeep
+users/
 
 # Models directory
 models/

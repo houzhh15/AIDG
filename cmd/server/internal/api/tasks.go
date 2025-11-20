@@ -223,7 +223,7 @@ type UserCurrentTask struct {
 func getUserCurrentTask(username string) (*UserCurrentTask, error) {
 	usersDir := os.Getenv("USERS_DIR")
 	if usersDir == "" {
-		usersDir = "./users"
+		usersDir = "./data/users"
 	}
 	userFile := filepath.Join(usersDir, username, "current_task.json")
 	data, err := os.ReadFile(userFile)
@@ -245,7 +245,7 @@ func getUserCurrentTask(username string) (*UserCurrentTask, error) {
 func setUserCurrentTask(username, projectID, taskID string) error {
 	usersDir := os.Getenv("USERS_DIR")
 	if usersDir == "" {
-		usersDir = "./users"
+		usersDir = "./data/users"
 	}
 	userDir := filepath.Join(usersDir, username)
 	if err := os.MkdirAll(userDir, 0o755); err != nil {
