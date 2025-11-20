@@ -42,11 +42,12 @@ const ProjectOverview: React.FC<Props> = ({ projectId }) => {
       if (response.success && response.data) {
         setOverview(response.data);
       } else {
-        message.error(response.message || '加载项目概述失败');
+        // 对于失败响应不显示错误提示（可能是权限问题）
+        console.warn('加载项目概述失败:', response.message);
       }
     } catch (error: any) {
-      // 对403权限错误不显示提示，让无权限页面处理
-      if (error?.response?.status !== 403) {
+      // 对403/500等权限/服务器错误不显示提示
+      if (error?.response?.status !== 403 && error?.response?.status !== 500) {
         message.error('加载项目概述失败: ' + (error as Error).message);
       }
     } finally {

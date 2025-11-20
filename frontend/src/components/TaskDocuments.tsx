@@ -233,7 +233,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       if (documentsResult.status === 'fulfilled') {
         setDocuments(documentsResult.value);
       } else {
-        message.error('加载文档失败');
+        // 对403/500等权限/服务器错误不显示提示，避免影响无权限用户体验
+        const error = documentsResult.reason;
+        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+          message.error('加载文档失败');
+        }
         console.error(documentsResult.reason);
       }
 
@@ -241,7 +245,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       if (taskInfoResult.status === 'fulfilled') {
         setTaskInfo(taskInfoResult.value.data || null);
       } else {
-        message.error('加载任务信息失败');
+        // 对403/500等权限/服务器错误不显示提示
+        const error = taskInfoResult.reason;
+        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+          message.error('加载任务信息失败');
+        }
         console.error(taskInfoResult.reason);
         setTaskInfo(null);
       }
@@ -250,7 +258,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       if (promptsResult.status === 'fulfilled') {
         setPrompts(promptsResult.value.data || []);
       } else {
-        message.error('加载提示词失败');
+        // 对403/500等权限/服务器错误不显示提示
+        const error = promptsResult.reason;
+        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+          message.error('加载提示词失败');
+        }
         console.error(promptsResult.reason);
         setPrompts([]);
       }
@@ -264,7 +276,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
         setExecutionPlanExists(false);
       }
     } catch (error) {
-      message.error('加载数据失败');
+      // 对403/500等权限/服务器错误不显示提示
+      const err = error as any;
+      if (err?.response?.status !== 403 && err?.response?.status !== 500) {
+        message.error('加载数据失败');
+      }
       console.error(error);
     } finally {
       setLoading(false);
@@ -305,8 +321,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     try {
       const result = await getProjectTask(projectId, taskId);
       setTaskInfo(result.data || null);
-    } catch (error) {
-      message.error('加载任务信息失败');
+    } catch (error: any) {
+      // 对403/500等权限/服务器错误不显示提示
+      if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+        message.error('加载任务信息失败');
+      }
       console.error(error);
       setTaskInfo(null);
     }
@@ -319,8 +338,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     try {
       const result = await getTaskPrompts(projectId, taskId);
       setPrompts(result.data || []);
-    } catch (error) {
-      message.error('加载提示词失败');
+    } catch (error: any) {
+      // 对403/500等权限/服务器错误不显示提示
+      if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+        message.error('加载提示词失败');
+      }
       console.error(error);
       setPrompts([]);
     } finally {
@@ -404,8 +426,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
         similarity,
         loading: false
       });
-    } catch (error) {
-      message.error('加载推荐文档失败');
+    } catch (error: any) {
+      // 对403/500等权限/服务器错误不显示提示
+      if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+        message.error('加载推荐文档失败');
+      }
       console.error('加载推荐文档失败:', error);
       setSelectedRecommendation(null);
     }
@@ -622,7 +647,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       if (documentsResult.status === 'fulfilled') {
         setDocuments(documentsResult.value);
       } else {
-        message.error('加载文档失败');
+        // 对403/500等权限/服务器错误不显示提示，避免影响无权限用户体验
+        const error = documentsResult.reason;
+        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+          message.error('加载文档失败');
+        }
         console.error(documentsResult.reason);
       }
 
@@ -630,7 +659,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       if (taskInfoResult.status === 'fulfilled') {
         setTaskInfo(taskInfoResult.value.data || null);
       } else {
-        message.error('加载任务信息失败');
+        // 对403/500等权限/服务器错误不显示提示
+        const error = taskInfoResult.reason;
+        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+          message.error('加载任务信息失败');
+        }
         console.error(taskInfoResult.reason);
         setTaskInfo(null);
       }
@@ -639,7 +672,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       if (promptsResult.status === 'fulfilled') {
         setPrompts(promptsResult.value.data || []);
       } else {
-        message.error('加载提示词失败');
+        // 对403/500等权限/服务器错误不显示提示
+        const error = promptsResult.reason;
+        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
+          message.error('加载提示词失败');
+        }
         console.error(promptsResult.reason);
         setPrompts([]);
       }
@@ -655,7 +692,11 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
 
       message.success('页面数据已刷新');
     } catch (error) {
-      message.error('刷新页面数据失败');
+      // 对403/500等权限/服务器错误不显示提示
+      const err = error as any;
+      if (err?.response?.status !== 403 && err?.response?.status !== 500) {
+        message.error('刷新页面数据失败');
+      }
       console.error(error);
     } finally {
       setLoading(false);
