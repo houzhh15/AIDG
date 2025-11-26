@@ -349,11 +349,11 @@ func (t *UnifiedDocSectionsTool) Description() string {
 	case "get_one":
 		return fmt.Sprintf("获取%s文档单个章节当前基线（标题+Markdown 正文，可选子章节）。用于在 update 前读取基线并构造最小差异，避免全文覆盖。", scopeDesc)
 	case "update":
-		return fmt.Sprintf("局部章节正文更新（标题保持不变），支持 expected_version 并发防护。优先用于细粒度修改，代替全文覆盖。", scopeDesc)
+		return fmt.Sprintf("局部%s章节正文更新（标题保持不变），支持 expected_version 并发防护。优先用于细粒度修改，代替全文覆盖。", scopeDesc)
 	case "insert":
-		return fmt.Sprintf("插入新章节（同级）。默认追加到末尾；若需精确位置请先 get_sections 并提供 after_section_id。自动同步 compiled.md。", scopeDesc)
+		return fmt.Sprintf("插入新%s章节（同级）。默认追加到末尾；若需精确位置请先 get_sections 并提供 after_section_id。自动同步 compiled.md。", scopeDesc)
 	case "delete":
-		return fmt.Sprintf("删除章节（可级联子章节 cascade=true）。操作前建议重新获取章节列表确认 ID，删除后同步 compiled.md，谨慎使用。", scopeDesc)
+		return fmt.Sprintf("删除%s章节（可级联子章节 cascade=true）。操作前建议重新获取章节列表确认 ID，删除后同步 compiled.md，谨慎使用。", scopeDesc)
 	default:
 		return fmt.Sprintf("%s文档章节操作", scopeDesc)
 	}
