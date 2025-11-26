@@ -58,6 +58,22 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* 全高度 Tabs - 让 Tabs 内容区域填满剩余高度并独立滚动 */
+.full-height-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.full-height-tabs .ant-tabs-content {
+  height: 100%;
+}
+
+.full-height-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow: hidden;
+}
+
 /* 允许三个区域自身滚动：
    1. 任务侧边栏 TaskSidebar 内部列表已自带 overflow:auto
    2. Chunk 列表容器

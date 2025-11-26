@@ -166,6 +166,7 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
           paddingRight: 8,
           flexShrink: 0
         }}
+        className="full-height-tabs"
       />
     </div>
   );

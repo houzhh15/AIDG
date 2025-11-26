@@ -1082,13 +1082,12 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
           {taskInfo.description && (
             <Descriptions.Item label="任务描述">
               <div style={{ 
-                whiteSpace: 'pre-wrap',
                 backgroundColor: '#fafafa',
                 padding: 12,
                 borderRadius: 6,
                 border: '1px solid #f0f0f0'
               }}>
-                {taskInfo.description}
+                <MarkdownViewer>{taskInfo.description}</MarkdownViewer>
               </div>
             </Descriptions.Item>
           )}

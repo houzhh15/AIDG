@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse } from 'antd';
+import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse, Tooltip, Row, Col } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask } from '../api/tasks';
 import { getUsers, User } from '../api/users';
 import { useTaskRefresh } from '../contexts/TaskRefreshContext';
+import MarkdownViewer from './MarkdownViewer';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -25,9 +26,11 @@ interface Props {
   projectId: string;
   currentTask?: string;
   onTaskSelect: (taskId: string) => void;
+  collapsed?: boolean;
+  onCollapse?: (collapsed: boolean) => void;
 }
 
-const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSelect }) => {
+const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSelect, collapsed = false, onCollapse }) => {
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -181,9 +184,66 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const filtered = Object.values(visibleTasks).flat().length;
   const filterApplied = Boolean(assigneeFilter || searchQuery);
 
+  // 折叠状态
+  if (collapsed) {
+    return (
+      <div style={{ 
+        width: 48, 
+        borderRight: '1px solid #f0f0f0', 
+        height: '100%', 
+        display: 'flex', 
+        flexDirection: 'column',
+        alignItems: 'center',
+        paddingTop: 8,
+        background: '#fff'
+      }}>
+        <Tooltip title="展开任务列表" placement="right">
+          <Button
+            type="text"
+            icon={<MenuUnfoldOutlined />}
+            onClick={() => onCollapse?.(false)}
+            style={{ marginBottom: 8 }}
+          />
+        </Tooltip>
+        <div style={{ 
+          writingMode: 'vertical-rl', 
+          textOrientation: 'mixed',
+          color: '#666',
+          fontSize: 12,
+          marginTop: 8
+        }}>
+          项目任务 ({total})
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ width: 250, borderRight: '1px solid #f0f0f0', height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: 16, borderBottom: '1px solid #f0f0f0' }}>
+        {/* 标题栏 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title="新建任务">
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={handleCreate}
+              >
+                新建
+              </Button>
+            </Tooltip>
+          </div>
+          <Tooltip title="收起任务列表">
+            <Button
+              type="text"
+              icon={<MenuFoldOutlined />}
+              onClick={() => onCollapse?.(true)}
+              size="small"
+            />
+          </Tooltip>
+        </div>
         <Button
           block
           type="dashed"
@@ -192,17 +252,6 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
         >
           查看项目文档
         </Button>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>项目任务</span>
-          <Button
-            type="primary"
-            size="small"
-            icon={<PlusOutlined />}
-            onClick={handleCreate}
-          >
-            新建
-          </Button>
-        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Input
             placeholder="搜索任务名"
@@ -223,9 +272,6 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
             <Option value="week">本周</Option>
             <Option value="month">本月</Option>
           </Select>
-        </div>
-        <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-          共 {filterApplied ? `${filtered}/${total}` : total} 个任务
         </div>
       </div>
 
@@ -365,7 +411,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
-        width={500}
+        width={1000}
         okText={editingTask ? '更新' : '创建'}
         cancelText="取消"
       >
@@ -374,76 +420,109 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
           layout="vertical"
           preserve={false}
         >
-          <Form.Item
-            name="name"
-            label="任务名称"
-            rules={[{ required: true, message: '请输入任务名称' }]}
-          >
-            <Input placeholder="输入任务名称" />
-          </Form.Item>
+          <Row gutter={24}>
+            {/* 左侧: 基本信息 */}
+            <Col span={10}>
+              <Form.Item
+                name="name"
+                label="任务名称"
+                rules={[{ required: true, message: '请输入任务名称' }]}
+              >
+                <Input placeholder="输入任务名称" />
+              </Form.Item>
 
-          <Form.Item
-            name="assignee"
-            label="负责人"
-          >
-            <Select
-              placeholder="选择负责人"
-              allowClear
-              showSearch
-              filterOption={(input, option) =>
-                String(option?.children || '').toLowerCase().includes(input.toLowerCase())
-              }
-            >
-              {users.map(user => (
-                <Option key={user.username} value={user.username}>
-                  {user.username}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
+              <Form.Item
+                name="assignee"
+                label="负责人"
+              >
+                <Select
+                  placeholder="选择负责人"
+                  allowClear
+                  showSearch
+                  filterOption={(input, option) =>
+                    String(option?.children || '').toLowerCase().includes(input.toLowerCase())
+                  }
+                >
+                  {users.map(user => (
+                    <Option key={user.username} value={user.username}>
+                      {user.username}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
 
-          <Form.Item
-            name="feature_id"
-            label="关联特性ID"
-          >
-            <Input placeholder="输入特性ID，如 N-F01-S01" />
-          </Form.Item>
+              <Form.Item
+                name="feature_id"
+                label="关联特性ID"
+              >
+                <Input placeholder="输入特性ID，如 N-F01-S01" />
+              </Form.Item>
 
-          <Form.Item
-            name="feature_name"
-            label="特性名称"
-          >
-            <Input placeholder="输入特性名称" />
-          </Form.Item>
+              <Form.Item
+                name="feature_name"
+                label="特性名称"
+              >
+                <Input placeholder="输入特性名称" />
+              </Form.Item>
 
-          <Form.Item
-            name="module"
-            label="模块"
-          >
-            <Input placeholder="输入模块名称" />
-          </Form.Item>
+              <Form.Item
+                name="module"
+                label="模块"
+              >
+                <Input placeholder="输入模块名称" />
+              </Form.Item>
 
-          <Form.Item
-            name="status"
-            label="状态"
-          >
-            <Select placeholder="选择状态" allowClear>
-              <Option value="todo">待开始</Option>
-              <Option value="in-progress">进行中</Option>
-              <Option value="completed">已完成</Option>
-              <Option value="cancelled">已取消</Option>
-            </Select>
-          </Form.Item>
+              <Form.Item
+                name="status"
+                label="状态"
+              >
+                <Select placeholder="选择状态" allowClear>
+                  <Option value="todo">待开始</Option>
+                  <Option value="in-progress">进行中</Option>
+                  <Option value="completed">已完成</Option>
+                  <Option value="cancelled">已取消</Option>
+                </Select>
+              </Form.Item>
+            </Col>
 
-          <Form.Item
-            name="description"
-            label="描述"
-          >
-            <TextArea
-              placeholder="输入任务描述"
-              rows={3}
-            />
-          </Form.Item>
+            {/* 右侧: 描述和预览 */}
+            <Col span={14}>
+              <Form.Item
+                name="description"
+                label="任务描述（支持Markdown格式）"
+                style={{ marginBottom: 8 }}
+              >
+                <TextArea
+                  placeholder="输入任务描述，支持Markdown格式..."
+                  rows={8}
+                />
+              </Form.Item>
+              
+              <div style={{ marginBottom: 8 }}>
+                <span style={{ fontWeight: 500, color: '#666' }}>预览</span>
+              </div>
+              <div style={{ 
+                border: '1px solid #d9d9d9', 
+                borderRadius: 6, 
+                padding: 12,
+                minHeight: 180,
+                maxHeight: 260,
+                overflow: 'auto',
+                backgroundColor: '#fafafa'
+              }}>
+                <Form.Item noStyle shouldUpdate={(prev, cur) => prev.description !== cur.description}>
+                  {() => {
+                    const desc = form.getFieldValue('description') || '';
+                    return desc ? (
+                      <MarkdownViewer>{desc}</MarkdownViewer>
+                    ) : (
+                      <span style={{ color: '#999' }}>在左侧输入描述后，此处将显示Markdown预览...</span>
+                    );
+                  }}
+                </Form.Item>
+              </div>
+            </Col>
+          </Row>
         </Form>
       </Modal>
     </div>

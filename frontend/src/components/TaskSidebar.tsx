@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Layout, List, Space, Tag, Typography, Popconfirm, message, Tooltip } from 'antd';
-import { SettingOutlined } from '@ant-design/icons';
+import { Button, Layout, List, Space, Tag, Typography, Popconfirm, message, Tooltip, Input } from 'antd';
+import { SettingOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined } from '@ant-design/icons';
 import TaskDetailSettings from './TaskDetailSettings';
 import { PlayCircleOutlined, StopOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { TaskSummary, AvDevice } from '../types';
@@ -25,11 +25,15 @@ interface Props {
   onChangeDevice: (id: string, dev: string) => Promise<void>;
   onRefreshTasks?: () => void; // 刷新任务列表的回调
   scopes?: string[]; // 可选：传入当前用户权限
+  collapsed?: boolean; // 是否折叠
+  onCollapse?: (collapsed: boolean) => void; // 折叠状态改变回调
 }
 
-export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreate, onDelete, onStart, onStop, onChangeDevice, onRefreshTasks, scopes }) => {
+export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreate, onDelete, onStart, onStop, onChangeDevice, onRefreshTasks, scopes, collapsed = false, onCollapse }) => {
   const canWriteMeeting = scopes ? scopes.includes('meeting.write') : true;
   const currentTask = tasks.find(t=>t.id===current);
+  // 搜索关键词
+  const [searchKeyword, setSearchKeyword] = React.useState('');
   // moved device/backend settings into TaskDetailSettings drawer
   const [settingsOpen,setSettingsOpen] = React.useState(false);
   const [configSnapshot,setConfigSnapshot] = React.useState<any>(null);
@@ -67,15 +71,95 @@ export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreat
   };
 
   async function loadDevices(force=false){}
+  
+  // 过滤后的任务列表 - 必须在所有条件分支之前调用 Hook
+  const filteredTasks = React.useMemo(() => {
+    if (!searchKeyword.trim()) return tasks;
+    const keyword = searchKeyword.toLowerCase();
+    return tasks.filter(t => 
+      t.id.toLowerCase().includes(keyword) ||
+      t.product_line?.toLowerCase().includes(keyword)
+    );
+  }, [tasks, searchKeyword]);
+  
+  // 折叠状态下的简化视图
+  if (collapsed) {
+    return (
+      <Layout.Sider 
+        width={48}
+        style={{ 
+          background: '#fff', 
+          borderRight: '1px solid #eee', 
+          height: '100%',
+        }}
+      >
+        <div style={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          paddingTop: 8,
+        }}>
+          <Tooltip title="展开会议列表" placement="right">
+            <Button
+              type="text"
+              icon={<MenuUnfoldOutlined />}
+              onClick={() => onCollapse?.(false)}
+              style={{ marginBottom: 8 }}
+            />
+          </Tooltip>
+          <div style={{ 
+            writingMode: 'vertical-rl', 
+            textOrientation: 'mixed',
+            color: '#666',
+            fontSize: 12,
+            marginTop: 8
+          }}>
+            会议列表 ({tasks.length})
+          </div>
+        </div>
+      </Layout.Sider>
+    );
+  }
+  
   return (
     <Layout.Sider width={280} style={{ background: '#fff', borderRight: '1px solid #eee', height: '100%', position: 'relative' }}>
+      {/* 标题栏：显示标题和折叠按钮 */}
+      <div style={{ 
+        padding: '8px 12px', 
+        borderBottom: '1px solid #f0f0f0',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <span style={{ fontWeight: 500, fontSize: 14 }}>会议列表 ({filteredTasks.length}/{tasks.length})</span>
+        <Tooltip title="收起会议列表">
+          <Button
+            type="text"
+            icon={<MenuFoldOutlined />}
+            onClick={() => onCollapse?.(true)}
+            size="small"
+          />
+        </Tooltip>
+      </div>
+      {/* 搜索框 */}
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
+        <Input
+          placeholder="搜索会议..."
+          prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+          value={searchKeyword}
+          onChange={e => setSearchKeyword(e.target.value)}
+          allowClear
+          size="small"
+        />
+      </div>
       <div className="scroll-region" style={{ 
         height: 'calc(100% - 140px)', 
         paddingBottom: '8px' 
       }}>
         <List
           size="small"
-          dataSource={tasks}
+          dataSource={filteredTasks}
           renderItem={t => (
             <List.Item
               onClick={() => onSelect(t.id)}
@@ -125,7 +209,6 @@ export const TaskSidebar: React.FC<Props> = ({ tasks, current, onSelect, onCreat
         bottom: 0,
         left: 0,
         right: 0,
-        height: '140px',
         padding: 8, 
         borderTop: '1px solid #eee', 
         background: '#fff'

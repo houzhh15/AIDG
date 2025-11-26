@@ -10,6 +10,7 @@ export type RefreshEvent =
   | 'task-document'       // 任务文档变更
   | 'project-list'        // 项目列表变更
   | 'project-document'    // 项目文档变更
+  | 'meeting-document'    // 会议文档变更
   | 'user-resource'       // 用户资源变更
   | 'execution-plan'      // 执行计划变更
   | 'task-summary'        // 任务总结变更

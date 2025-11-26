@@ -71,7 +71,13 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     try {
       const r = await authedApi.get(`/tasks/${encodeURIComponent(taskId)}/merged_all`);
       setRaw(r.data.content || '');
-    } catch(e:any){ message.error(e.message); }
+    } catch(e:any){ 
+      // 404 表示文件不存在，不需要显示错误
+      if (e?.response?.status !== 404) {
+        message.error(e.message); 
+      }
+      setRaw('');
+    }
     finally { setLoading(false); }
   }
 
@@ -81,7 +87,13 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     try {
       const r = await authedApi.get(`/tasks/${encodeURIComponent(taskId)}/polish`);
       setRaw(r.data.content || '');
-    } catch(e:any){ message.error(e.message); }
+    } catch(e:any){ 
+      // 404 表示文件不存在，不需要显示错误
+      if (e?.response?.status !== 404) {
+        message.error(e.message); 
+      }
+      setRaw('');
+    }
     finally { setLoading(false); }
   }
 
@@ -129,7 +141,14 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
       const txt = await getChunkFileRaw(taskId, chunkId, active, needsNoCache ? true : noCache);
       setRaw(txt);
       if(isSegments){ setEditable(txt); }
-    } catch(e:any){ message.error(e.message); }
+    } catch(e:any){ 
+      // 404 表示文件不存在，不需要显示错误
+      if (e?.response?.status !== 404) {
+        message.error(e.message); 
+      }
+      setRaw('');
+      if(isSegments){ setEditable(''); }
+    }
     finally { setLoading(false); }
   }
 

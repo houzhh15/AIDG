@@ -103,13 +103,14 @@ export const RightPanel: React.FC<RightPanelProps> = ({
   ];
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
         items={items.filter(Boolean) as any}
-        style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
         tabBarStyle={{ marginBottom: 16, paddingLeft: 8, paddingRight: 8, flexShrink: 0 }}
+        className="full-height-tabs"
       />
     </div>
   );

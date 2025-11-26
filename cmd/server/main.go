@@ -29,6 +29,7 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/audit"
 	"github.com/houzhh15/AIDG/cmd/server/internal/config"
 	documents "github.com/houzhh15/AIDG/cmd/server/internal/documents"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/docslot"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 	syncdomain "github.com/houzhh15/AIDG/cmd/server/internal/domain/sync"
@@ -1275,6 +1276,12 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	// ========== Execution Plan ==========
 	execPlanHandler := executionplan.NewHandler(projectsRoot)
 	execPlanHandler.RegisterRoutes(r)
+
+	// ========== Unified Document Service API (step-07) ==========
+	// 统一项目、会议、任务三类文档的 API
+	unifiedDocSvc := docslot.NewUnifiedDocService(projectsRoot)
+	unifiedDocsGroup := r.Group("/api/v1")
+	api.RegisterUnifiedDocRoutes(unifiedDocsGroup, unifiedDocSvc)
 
 	// ========== Documents API (20 endpoints) ==========
 	r.POST("/api/v1/projects/:id/documents/nodes", docHandler.CreateNode)

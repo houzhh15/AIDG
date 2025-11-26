@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Layout, message, Select, DatePicker, Space, Button, Segmented, Tabs } from 'antd';
+import { Layout, message, Select, DatePicker, Space, Button, Segmented, Tabs, Tooltip } from 'antd';
 import { ProjectSidebar } from './components/ProjectSidebar';
 import { Deliverables } from './components/Deliverables';
 import { TaskSidebar } from './components/TaskSidebar';
@@ -17,7 +17,7 @@ import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, upd
 import { authedApi } from './api/auth';
 import { login, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
 import { TaskSummary, ChunkFlag } from './types';
-import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined } from '@ant-design/icons';
+import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { SyncPanel } from './components/SyncPanel';
 import { svnSync } from './api/svn';
@@ -55,6 +55,10 @@ const MeetingView: React.FC<{
   const canWriteMeeting = scopes.includes('meeting.write');
   const canReadMeeting = canWriteMeeting || scopes.includes('meeting.read');
   
+  // 折叠状态
+  const [taskSidebarCollapsed, setTaskSidebarCollapsed] = useState(false);
+  const [chunkListCollapsed, setChunkListCollapsed] = useState(true); // 默认收起
+  
   // 检查是否应该显示 chunk 相关功能
   // 只有当 whisper 和 deps-service 都可用时才显示
   const showChunkFeatures = servicesStatus?.whisper_available && servicesStatus?.deps_service_available;
@@ -73,19 +77,79 @@ const MeetingView: React.FC<{
         onChangeDevice={canWriteMeeting ? (async (id, dev)=>{ await handleChangeDevice(id, dev); }) : (async()=>{})}
         onRefreshTasks={refreshTasks}
         scopes={scopes}
+        collapsed={taskSidebarCollapsed}
+        onCollapse={setTaskSidebarCollapsed}
       />
       <Content style={{ display:'flex', height: '100%', minHeight: 0 }}>
         {canReadMeeting && showChunkFeatures && (
-          <div className="scroll-region" style={{ width:280, borderRight:'1px solid #f0f0f0', height: '100%' }}>
-            {(() => { const taskObj = tasks.find(t=>t.id===currentTask); return (
-              <ChunkList 
-                taskId={currentTask}
-                chunks={chunks} 
-                current={currentChunk} 
-                onSelect={onSelectChunk} 
-                onPlay={onPlay} 
-                chunkDuration={taskObj?.record_chunk_seconds}
-              />); })()}
+          <div style={{ 
+            width: chunkListCollapsed ? 48 : 280, 
+            borderRight:'1px solid #f0f0f0', 
+            height: '100%',
+            transition: 'width 0.2s ease',
+            display: 'flex',
+            flexDirection: 'column',
+            background: '#fff'
+          }}>
+            {chunkListCollapsed ? (
+              // 折叠状态
+              <div style={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                alignItems: 'center',
+                paddingTop: 8
+              }}>
+                <Tooltip title="展开音频片段" placement="right">
+                  <Button
+                    type="text"
+                    icon={<MenuUnfoldOutlined />}
+                    onClick={() => setChunkListCollapsed(false)}
+                    style={{ marginBottom: 8 }}
+                  />
+                </Tooltip>
+                <div style={{ 
+                  writingMode: 'vertical-rl', 
+                  textOrientation: 'mixed',
+                  color: '#666',
+                  fontSize: 12,
+                  marginTop: 8
+                }}>
+                  音频片段 ({chunks.length})
+                </div>
+              </div>
+            ) : (
+              // 展开状态
+              <>
+                <div style={{ 
+                  padding: '8px 12px', 
+                  borderBottom: '1px solid #f0f0f0',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <span style={{ fontWeight: 500, fontSize: 14 }}>音频片段 ({chunks.length})</span>
+                  <Tooltip title="收起音频片段">
+                    <Button
+                      type="text"
+                      icon={<MenuFoldOutlined />}
+                      onClick={() => setChunkListCollapsed(true)}
+                      size="small"
+                    />
+                  </Tooltip>
+                </div>
+                <div className="scroll-region" style={{ flex: 1, minHeight: 0 }}>
+                  {(() => { const taskObj = tasks.find(t=>t.id===currentTask); return (
+                    <ChunkList 
+                      taskId={currentTask}
+                      chunks={chunks} 
+                      current={currentChunk} 
+                      onSelect={onSelectChunk} 
+                      onPlay={onPlay} 
+                      chunkDuration={taskObj?.record_chunk_seconds}
+                    />); })()}
+                </div>
+              </>
+            )}
           </div>
         )}
         <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height: '100%' }}>
@@ -115,6 +179,7 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('project');
   const [currentProject, setCurrentProject] = useState<string | undefined>();
   const [currentProjectTask, setCurrentProjectTask] = useState<string | undefined>();
+  const [projectTaskSidebarCollapsed, setProjectTaskSidebarCollapsed] = useState(false);
   const isAdmin = !!auth?.scopes?.includes('user.manage');
   const [showSync, setShowSync] = useState(false);
   const [svnRunning, setSvnRunning] = useState(false);
@@ -545,6 +610,8 @@ const App: React.FC = () => {
                 projectId={currentProject}
                 currentTask={currentProjectTask}
                 onTaskSelect={setCurrentProjectTask}
+                collapsed={projectTaskSidebarCollapsed}
+                onCollapse={setProjectTaskSidebarCollapsed}
               />
             )}
             <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
