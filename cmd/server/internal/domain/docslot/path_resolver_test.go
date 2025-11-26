@@ -213,6 +213,7 @@ func TestPathResolver_ValidateScope(t *testing.T) {
 func TestResolveLegacyPath(t *testing.T) {
 	tests := []struct {
 		name     string
+		basePath string
 		scope    DocumentScope
 		scopeID  string
 		slotKey  string
@@ -220,6 +221,7 @@ func TestResolveLegacyPath(t *testing.T) {
 	}{
 		{
 			name:     "legacy project feature_list",
+			basePath: "data/projects",
 			scope:    ScopeProject,
 			scopeID:  "proj-123",
 			slotKey:  "feature_list",
@@ -227,6 +229,7 @@ func TestResolveLegacyPath(t *testing.T) {
 		},
 		{
 			name:     "legacy meeting polish",
+			basePath: "data/projects",
 			scope:    ScopeMeeting,
 			scopeID:  "meet-456",
 			slotKey:  "polish",
@@ -234,6 +237,7 @@ func TestResolveLegacyPath(t *testing.T) {
 		},
 		{
 			name:     "task scope returns empty",
+			basePath: "data/projects",
 			scope:    ScopeTask,
 			scopeID:  "task-123",
 			slotKey:  "design",
@@ -243,7 +247,7 @@ func TestResolveLegacyPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotPath := ResolveLegacyPath("data", tt.scope, tt.scopeID, tt.slotKey)
+			gotPath := ResolveLegacyPath(tt.basePath, tt.scope, tt.scopeID, tt.slotKey)
 			if gotPath != tt.wantPath {
 				t.Errorf("got %q, want %q", gotPath, tt.wantPath)
 			}
