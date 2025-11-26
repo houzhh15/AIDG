@@ -14,6 +14,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [searchText, setSearchText] = useState('');
 
   // 加载用户列表
   const loadUsers = async () => {
@@ -124,6 +125,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
     handleUpdateUserScopes(selectedUser.username, newScopes);
   };
 
+  // 过滤用户列表
+  const filteredUsers = users.filter(user =>
+    user.username.toLowerCase().includes(searchText.toLowerCase())
+  );
+
   return (
     <div className={`user-management ${className}`}>
       {error && (
@@ -164,11 +170,28 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
             </button>
           </div>
 
+          {/* 搜索框 */}
+          <div style={{ marginBottom: '10px' }}>
+            <input
+              type="text"
+              placeholder="搜索用户名..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+
           {loading && users.length === 0 ? (
             <div>加载中...</div>
           ) : (
             <div className="user-list">
-              {users.map(user => (
+              {filteredUsers.map(user => (
                 <div
                   key={user.username}
                   className={`user-item ${selectedUser?.username === user.username ? 'selected' : ''}`}

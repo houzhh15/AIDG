@@ -43,7 +43,8 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
   }
 
   async function handleSubmit(){
-    try { const values = await form.validateFields();
+    try { 
+      const values = await form.validateFields();
       if(editing){
         await patchProject(editing.id, { name: values.name, product_line: values.product_line });
         message.success('项目已更新');
@@ -51,8 +52,25 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
         await createProject({ name: values.name, product_line: values.product_line, from_task_id: values.from_task_id });
         message.success('项目已创建');
       }
-      setModalOpen(false); refresh();
-    } catch(e:any){ /* validation or API error already shown */ }
+      setModalOpen(false); 
+      refresh();
+    } catch(e:any) { 
+      // 表单验证错误会自动显示，这里处理API错误
+      if (e.response) {
+        const errorMsg = e.response.data?.error || e.message;
+        if (errorMsg === 'invalid project name') {
+          message.error('项目名称格式无效，只能包含字母、数字、空格、连字符和下划线，长度1-100字符');
+        } else if (errorMsg === 'project name already exists') {
+          message.error('项目名称已存在，请使用其他名称');
+        } else {
+          message.error(`操作失败: ${errorMsg}`);
+        }
+      } else if (e.errorFields) {
+        // 表单验证错误，已经在表单上显示，不需要额外提示
+      } else {
+        message.error(`操作失败: ${e.message || '未知错误'}`);
+      }
+    }
   }
 
   async function handleDelete(id: string){
@@ -113,7 +131,8 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
         borderRight: '1px solid #eee',
         height: '100%',
         display: 'flex',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        minHeight: 0,
       }}
     >
       <div
@@ -140,122 +159,116 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
           />
         </Tooltip>
       </div>
-
-      <div
-        className="scroll-region"
-        style={{
-          flex: 1,
-          overflow: 'auto'
-        }}
-      >
-        <List
-          size="small"
-          dataSource={projects}
-          loading={loading}
-          renderItem={p => (
-            <Dropdown
-              menu={{ items: getContextMenuItems(p) }}
-              trigger={['contextMenu']}
-            >
-              <List.Item
-                onClick={()=>onSelect(p.id)}
-                style={{
-                  cursor: 'pointer',
-                  background: p.id===current ? '#f0f5ff' : undefined,
-                  padding: collapsed ? '8px 4px' : '8px 8px'
-                }}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div className="scroll-region" style={{ flex: 1, minHeight: 0 }}>
+          <List
+            size="small"
+            dataSource={projects}
+            loading={loading}
+            renderItem={p => (
+              <Dropdown
+                menu={{ items: getContextMenuItems(p) }}
+                trigger={['contextMenu']}
               >
-              <div style={{ display:'flex', width:'100%', alignItems:'center' }}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <Typography.Text
-                    strong
-                    style={{
-                      display: 'block',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      textAlign: 'center',
-                      maxWidth: collapsed ? 68 : 140,
-                      fontSize: collapsed ? 12 : 13
-                    }}
-                  >
-                    {p.name || p.id}
-                  </Typography.Text>
-                  <div
-                    style={{
-                      height: 16,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    <Typography.Text
-                      type="secondary"
-                      style={{
-                        fontSize: 10,
-                        textAlign: 'center',
-                        visibility: collapsed ? 'hidden' : 'visible'
-                      }}
-                    >
-                      {p.product_line || '\u00A0'}
-                    </Typography.Text>
+                <List.Item
+                  onClick={()=>onSelect(p.id)}
+                  style={{
+                    cursor: 'pointer',
+                    background: p.id===current ? '#f0f5ff' : undefined,
+                    padding: collapsed ? '8px 4px' : '8px 8px'
+                  }}
+                >
+                  <div style={{ display:'flex', width:'100%', alignItems:'center' }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <Typography.Text
+                        strong
+                        style={{
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          textAlign: 'center',
+                          maxWidth: collapsed ? 68 : 140,
+                          fontSize: collapsed ? 12 : 13
+                        }}
+                      >
+                        {p.name || p.id}
+                      </Typography.Text>
+                      <div
+                        style={{
+                          height: 16,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <Typography.Text
+                          type="secondary"
+                          style={{
+                            fontSize: 10,
+                            textAlign: 'center',
+                            visibility: collapsed ? 'hidden' : 'visible'
+                          }}
+                        >
+                          {p.product_line || '\u00A0'}
+                        </Typography.Text>
+                      </div>
+                      <div
+                        style={{
+                          height: 16,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        <Typography.Text
+                          type="secondary"
+                          style={{
+                            fontSize: 10,
+                            textAlign: 'center',
+                            visibility: collapsed ? 'hidden' : 'visible'
+                          }}
+                        >
+                          项目
+                        </Typography.Text>
+                      </div>
+                    </div>
+                    {!collapsed && (
+                      <div style={{ display:'flex', flexDirection:'column', gap:4 }} onClick={e=>e.stopPropagation()}>
+                        <Button size="small" icon={<EditOutlined />} onClick={()=>openEdit(p)} />
+                        <Popconfirm title="确认删除?" onConfirm={()=>handleDelete(p.id)}>
+                          <Button size="small" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                      </div>
+                    )}
                   </div>
-                  <div
-                    style={{
-                      height: 16,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}
-                  >
-                    <Typography.Text
-                      type="secondary"
-                      style={{
-                        fontSize: 10,
-                        textAlign: 'center',
-                        visibility: collapsed ? 'hidden' : 'visible'
-                      }}
-                    >
-                      项目
-                    </Typography.Text>
-                  </div>
-                </div>
-                {!collapsed && (
-                  <div style={{ display:'flex', flexDirection:'column', gap:4 }} onClick={e=>e.stopPropagation()}>
-                    <Button size="small" icon={<EditOutlined />} onClick={()=>openEdit(p)} />
-                    <Popconfirm title="确认删除?" onConfirm={()=>handleDelete(p.id)}>
-                      <Button size="small" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                  </div>
-                )}
-              </div>
-            </List.Item>
-            </Dropdown>
-          )}
-        />
-      </div>
-
-      {!collapsed && (
-        <div
-          style={{
-            borderTop: '1px solid #eee',
-            background: '#fff',
-            padding: 8,
-            flexShrink: 0
-          }}
-        >
-          <Space style={{ width: '100%' }}>
-            <Button
-              icon={<PlusOutlined />}
-              type="dashed"
-              onClick={openCreate}
-              block
-            >
-              新建项目
-            </Button>
-          </Space>
+                  </List.Item>
+                </Dropdown>
+              )}
+            />
         </div>
-      )}
+        {!collapsed && (
+          <div
+            style={{
+              borderTop: '1px solid #eee',
+              background: '#fff',
+              padding: 8,
+              flexShrink: 0
+            }}
+          >
+            <Space style={{ width: '100%' }}>
+              <Button
+                icon={<PlusOutlined />}
+                type="dashed"
+                onClick={openCreate}
+                block
+              >
+                新建项目
+              </Button>
+            </Space>
+          </div>
+        )}
+      </div>
       <Modal
         title={editing ? '编辑项目' : '创建项目'}
         open={modalOpen}
@@ -265,7 +278,17 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
         destroyOnClose
       >
         <Form layout="vertical" form={form} preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required:true, message:'请输入项目名称'}]}>
+          <Form.Item 
+            name="name" 
+            label="名称" 
+            rules={[
+              { required: true, message: '请输入项目名称' },
+              { 
+                pattern: /^[a-zA-Z0-9 _-]{1,100}$/,
+                message: '项目名称只能包含字母、数字、空格、连字符和下划线，长度1-100字符'
+              }
+            ]}
+          >
             <Input placeholder="项目名称" />
           </Form.Item>
           <Form.Item name="product_line" label="产品线">
