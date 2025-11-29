@@ -150,26 +150,49 @@ func (t *UpdateProjectDocumentTool) Execute(
 		return "", fmt.Errorf("update_project_document: %w", err)
 	}
 
-	// 3. 获取 API 路径
+	// 3. 获取槽位配置
+	slotConfig, err := t.Registry.GetProjectSlotConfig(slotKey)
+	if err != nil {
+		return "", fmt.Errorf("update_project_document: %w", err)
+	}
+
+	// 4. 获取 API 路径
 	path, err := t.Registry.GetProjectAPIPath(slotKey, "PUT", projectID, format)
 	if err != nil {
 		return "", fmt.Errorf("update_project_document: %w", err)
 	}
 
-	// 4. 构造请求体（根据 format 处理 content 类型）
+	// 5. 根据是否使用统一文档API构造请求体
 	var body map[string]interface{}
-	if format == "json" {
-		// 对于 json 格式，content 应该是对象
-		body = map[string]interface{}{"content": content}
-	} else {
-		// 对于 markdown 格式，content 应该是字符串
+	var method string
+	if slotConfig.UseUnifiedAPI {
+		// 统一文档API使用POST和特定的请求体格式
+		method = "POST"
 		contentStr, ok := content.(string)
 		if !ok {
-			return "", fmt.Errorf("update_project_document: markdown 格式的 content 必须是字符串")
+			return "", fmt.Errorf("update_project_document: 统一文档API的 content 必须是字符串")
 		}
-		body = map[string]interface{}{"content": contentStr}
+		body = map[string]interface{}{
+			"content": contentStr,
+			"op":      "replace_full", // 全量替换
+			"source":  "mcp_tool",
+		}
+	} else {
+		// 旧API使用PUT
+		method = "PUT"
+		if format == "json" {
+			// 对于 json 格式，content 应该是对象
+			body = map[string]interface{}{"content": content}
+		} else {
+			// 对于 markdown 格式，content 应该是字符串
+			contentStr, ok := content.(string)
+			if !ok {
+				return "", fmt.Errorf("update_project_document: markdown 格式的 content 必须是字符串")
+			}
+			body = map[string]interface{}{"content": contentStr}
+		}
 	}
 
-	// 5. 调用 API
-	return shared.CallAPI(apiClient, "PUT", path, body, clientToken)
+	// 6. 调用 API
+	return shared.CallAPI(apiClient, method, path, body, clientToken)
 }

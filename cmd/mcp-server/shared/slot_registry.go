@@ -151,20 +151,22 @@ func (r *SlotRegistry) initMeetingSlots() {
 func (r *SlotRegistry) initProjectSlots() {
 	r.projectSlots = map[string]*SlotConfig{
 		"feature_list": {
-			Key:          "feature_list",
-			DisplayName:  "项目特性列表",
-			Description:  "项目的特性列表（支持 json 和 markdown 格式）",
-			PathPattern:  "/api/v1/projects/{project_id}/feature-list",
-			SupportedOps: []string{"GET", "PUT"},
-			ContentType:  "markdown", // 默认，可通过 format 参数覆盖
+			Key:           "feature_list",
+			DisplayName:   "项目特性列表",
+			Description:   "项目的特性列表（支持 json 和 markdown 格式）",
+			PathPattern:   "/api/v1/projects/{project_id}/docs/feature_list",
+			SupportedOps:  []string{"GET", "PUT"},
+			ContentType:   "markdown", // 默认，可通过 format 参数覆盖
+			UseUnifiedAPI: true,
 		},
 		"architecture_design": {
-			Key:          "architecture_design",
-			DisplayName:  "项目架构设计",
-			Description:  "项目的架构设计文档",
-			PathPattern:  "/api/v1/projects/{project_id}/architecture-design",
-			SupportedOps: []string{"GET", "PUT"},
-			ContentType:  "markdown",
+			Key:           "architecture_design",
+			DisplayName:   "项目架构设计",
+			Description:   "项目的架构设计文档",
+			PathPattern:   "/api/v1/projects/{project_id}/docs/architecture_design",
+			SupportedOps:  []string{"GET", "PUT"},
+			ContentType:   "markdown",
+			UseUnifiedAPI: true,
 		},
 	}
 }
@@ -278,7 +280,17 @@ func (r *SlotRegistry) GetMeetingAPIPath(slotKey, operation, meetingID string) (
 	return path, nil
 }
 
-// GetProjectAPIPath 返回项目文档的 API 路径，根据 format 参数决定路径后缀（.json 或无后缀）
+// GetProjectSlotConfig 返回项目文档槽位配置
+func (r *SlotRegistry) GetProjectSlotConfig(slotKey string) (*SlotConfig, error) {
+	slot, exists := r.projectSlots[slotKey]
+	if !exists {
+		return nil, fmt.Errorf("槽位 '%s' 不存在", slotKey)
+	}
+	return slot, nil
+}
+
+// GetProjectAPIPath 返回项目文档的 API 路径
+// 对于使用统一文档API的槽位，会根据操作类型添加相应后缀（/export 或 /append）
 func (r *SlotRegistry) GetProjectAPIPath(slotKey, operation, projectID, format string) (string, error) {
 	slot, exists := r.projectSlots[slotKey]
 	if !exists {
@@ -293,9 +305,19 @@ func (r *SlotRegistry) GetProjectAPIPath(slotKey, operation, projectID, format s
 	// 替换路径模板中的占位符
 	path := strings.ReplaceAll(slot.PathPattern, "{project_id}", projectID)
 
-	// 根据 format 参数决定路径后缀
-	if format == "json" && slotKey == "feature_list" {
-		path += ".json"
+	// 如果是统一文档API，根据操作类型添加后缀
+	if slot.UseUnifiedAPI {
+		switch operation {
+		case "GET":
+			path += "/export"
+		case "PUT", "POST":
+			path += "/append"
+		}
+	} else {
+		// 旧API：根据 format 参数决定路径后缀
+		if format == "json" && slotKey == "feature_list" {
+			path += ".json"
+		}
 	}
 
 	return path, nil
