@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+
 	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
@@ -132,13 +133,34 @@ func (t *UpdateMeetingDocumentTool) Execute(
 		return "", fmt.Errorf("update_meeting_document: 无效的槽位 '%s': %w", slotKey, err)
 	}
 
-	// 3. 获取 API 路径
+	// 3. 获取槽位配置
+	slotConfig, err := t.Registry.GetMeetingSlotConfig(slotKey)
+	if err != nil {
+		return "", fmt.Errorf("update_meeting_document: %w", err)
+	}
+
+	// 4. 获取 API 路径
 	path, err := t.Registry.GetMeetingAPIPath(slotKey, "PUT", meetingID)
 	if err != nil {
 		return "", fmt.Errorf("update_meeting_document: %w", err)
 	}
 
-	// 4. 构造请求体并调用 API
-	body := map[string]string{"content": content}
-	return shared.CallAPI(apiClient, "PUT", path, body, clientToken)
+	// 5. 根据是否使用统一文档API构造请求体
+	var body interface{}
+	var method string
+	if slotConfig.UseUnifiedAPI {
+		// 统一文档API使用POST和特定的请求体格式
+		method = "POST"
+		body = map[string]interface{}{
+			"content": content,
+			"op":      "replace_full", // 全量替换
+			"source":  "mcp_tool",
+		}
+	} else {
+		// 旧API使用PUT
+		method = "PUT"
+		body = map[string]string{"content": content}
+	}
+
+	return shared.CallAPI(apiClient, method, path, body, clientToken)
 }

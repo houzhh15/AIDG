@@ -7,12 +7,13 @@ import (
 
 // SlotConfig 槽位配置
 type SlotConfig struct {
-	Key          string   // 槽位键名，如 "requirements"
-	DisplayName  string   // 显示名称，如 "需求文档"
-	Description  string   // 描述信息
-	PathPattern  string   // API 路径模板，如 "/api/v1/projects/{project_id}/tasks/{task_id}/requirements"
-	SupportedOps []string // 支持的操作：GET, PUT, POST
-	ContentType  string   // 内容类型：markdown, json
+	Key           string   // 槽位键名，如 "requirements"
+	DisplayName   string   // 显示名称，如 "需求文档"
+	Description   string   // 描述信息
+	PathPattern   string   // API 路径模板，如 "/api/v1/projects/{project_id}/tasks/{task_id}/requirements"
+	SupportedOps  []string // 支持的操作：GET, PUT, POST
+	ContentType   string   // 内容类型：markdown, json
+	UseUnifiedAPI bool     // 是否使用统一文档API（新文档模式）
 }
 
 // SlotRegistry 槽位注册表
@@ -93,20 +94,22 @@ func (r *SlotRegistry) initMeetingSlots() {
 			ContentType:  "markdown",
 		},
 		"summary": {
-			Key:          "summary",
-			DisplayName:  "会议总结",
-			Description:  "会议的结构化总结",
-			PathPattern:  "/api/v1/tasks/{meeting_id}/meeting-summary",
-			SupportedOps: []string{"GET", "PUT"},
-			ContentType:  "markdown",
+			Key:           "summary",
+			DisplayName:   "会议总结",
+			Description:   "会议的结构化总结",
+			PathPattern:   "/api/v1/meetings/{meeting_id}/docs/summary",
+			SupportedOps:  []string{"GET", "PUT"},
+			ContentType:   "markdown",
+			UseUnifiedAPI: true,
 		},
 		"topic": {
-			Key:          "topic",
-			DisplayName:  "讨论话题",
-			Description:  "会议讨论的主要话题",
-			PathPattern:  "/api/v1/tasks/{meeting_id}/topic",
-			SupportedOps: []string{"GET", "PUT"},
-			ContentType:  "markdown",
+			Key:           "topic",
+			DisplayName:   "讨论话题",
+			Description:   "会议讨论的主要话题",
+			PathPattern:   "/api/v1/meetings/{meeting_id}/docs/topic",
+			SupportedOps:  []string{"GET", "PUT"},
+			ContentType:   "markdown",
+			UseUnifiedAPI: true,
 		},
 		"merged_all": {
 			Key:          "merged_all",
@@ -117,12 +120,13 @@ func (r *SlotRegistry) initMeetingSlots() {
 			ContentType:  "markdown",
 		},
 		"polish_all": {
-			Key:          "polish_all",
-			DisplayName:  "润色合成记录",
-			Description:  "会议的完整润色合成记录",
-			PathPattern:  "/api/v1/tasks/{meeting_id}/polish",
-			SupportedOps: []string{"GET", "PUT"},
-			ContentType:  "markdown",
+			Key:           "polish_all",
+			DisplayName:   "润色合成记录",
+			Description:   "会议的完整润色合成记录",
+			PathPattern:   "/api/v1/meetings/{meeting_id}/docs/polish",
+			SupportedOps:  []string{"GET", "PUT"},
+			ContentType:   "markdown",
+			UseUnifiedAPI: true,
 		},
 		"feature_list": {
 			Key:          "feature_list",
@@ -236,7 +240,17 @@ func (r *SlotRegistry) GetTaskAPIPath(slotKey, operation, projectID, taskID stri
 	return path, nil
 }
 
+// GetMeetingSlotConfig 返回会议文档槽位配置
+func (r *SlotRegistry) GetMeetingSlotConfig(slotKey string) (*SlotConfig, error) {
+	slot, exists := r.meetingSlots[slotKey]
+	if !exists {
+		return nil, fmt.Errorf("槽位 '%s' 不存在", slotKey)
+	}
+	return slot, nil
+}
+
 // GetMeetingAPIPath 返回会议文档的 API 路径
+// 对于使用统一文档API的槽位，会根据操作类型添加相应后缀（/export 或 /append）
 func (r *SlotRegistry) GetMeetingAPIPath(slotKey, operation, meetingID string) (string, error) {
 	slot, exists := r.meetingSlots[slotKey]
 	if !exists {
@@ -250,6 +264,16 @@ func (r *SlotRegistry) GetMeetingAPIPath(slotKey, operation, meetingID string) (
 
 	// 替换路径模板中的占位符
 	path := strings.ReplaceAll(slot.PathPattern, "{meeting_id}", meetingID)
+
+	// 如果是统一文档API，根据操作类型添加后缀
+	if slot.UseUnifiedAPI {
+		switch operation {
+		case "GET":
+			path += "/export"
+		case "PUT", "POST":
+			path += "/append"
+		}
+	}
 
 	return path, nil
 }
