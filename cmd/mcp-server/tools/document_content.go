@@ -24,7 +24,7 @@ func (t *ReadDocumentContentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"node_id": map[string]interface{}{
 				"type":        "string",
@@ -35,7 +35,7 @@ func (t *ReadDocumentContentTool) InputSchema() map[string]interface{} {
 				"description": "可选的版本号，如果不提供则返回最新版本",
 			},
 		},
-		"required": []string{"project_id", "node_id"},
+		"required": []string{"node_id"},
 	}
 }
 
@@ -45,7 +45,7 @@ func (t *ReadDocumentContentTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("read_document_content: %w", err)
 	}
@@ -85,7 +85,7 @@ func (t *WriteDocumentContentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"node_id": map[string]interface{}{
 				"type":        "string",
@@ -100,7 +100,7 @@ func (t *WriteDocumentContentTool) InputSchema() map[string]interface{} {
 				"description": "当前版本号，用于乐观锁控制",
 			},
 		},
-		"required": []string{"project_id", "node_id", "content", "version"},
+		"required": []string{"node_id", "content", "version"},
 	}
 }
 
@@ -110,7 +110,7 @@ func (t *WriteDocumentContentTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("write_document_content: %w", err)
 	}
@@ -157,7 +157,7 @@ func (t *GetHierarchicalDocumentsTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"node_id": map[string]interface{}{
 				"type":        "string",
@@ -168,7 +168,7 @@ func (t *GetHierarchicalDocumentsTool) InputSchema() map[string]interface{} {
 				"description": "可选的深度限制",
 			},
 		},
-		"required": []string{"project_id"},
+		"required": []string{},
 	}
 }
 
@@ -178,7 +178,7 @@ func (t *GetHierarchicalDocumentsTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("get_hierarchical_documents: %w", err)
 	}
@@ -223,7 +223,7 @@ func (t *AnalyzeDocumentRelationshipsTool) InputSchema() map[string]interface{} 
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"node_id": map[string]interface{}{
 				"type":        "string",
@@ -241,7 +241,7 @@ func (t *AnalyzeDocumentRelationshipsTool) InputSchema() map[string]interface{} 
 				},
 			},
 		},
-		"required": []string{"project_id", "node_id"},
+		"required": []string{"node_id"},
 	}
 }
 
@@ -251,7 +251,7 @@ func (t *AnalyzeDocumentRelationshipsTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("analyze_document_relationships: %w", err)
 	}
@@ -303,11 +303,11 @@ func (t *ManageDocumentReferenceTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_id": map[string]interface{}{
 				"type":        "string",
@@ -327,7 +327,7 @@ func (t *ManageDocumentReferenceTool) InputSchema() map[string]interface{} {
 				"description": "创建引用时的上下文信息",
 			},
 		},
-		"required": []string{"project_id", "task_id", "action"},
+		"required": []string{"action"},
 	}
 }
 
@@ -337,11 +337,7 @@ func (t *ManageDocumentReferenceTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("manage_document_reference: %w", err)
-	}
-	taskID, err := shared.SafeGetString(args, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("manage_document_reference: %w", err)
 	}

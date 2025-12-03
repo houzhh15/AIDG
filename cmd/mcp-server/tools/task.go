@@ -23,15 +23,15 @@ func (t *ListProjectTasksTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 		},
-		"required": []string{"project_id"},
+		"required": []string{},
 	}
 }
 
 func (t *ListProjectTasksTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("list_project_tasks: %w", err)
 	}
@@ -55,7 +55,7 @@ func (t *CreateProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"name": map[string]interface{}{
 				"type":        "string",
@@ -87,12 +87,12 @@ func (t *CreateProjectTaskTool) InputSchema() map[string]interface{} {
 				"description": "所属模块",
 			},
 		},
-		"required": []string{"project_id", "name"},
+		"required": []string{"name"},
 	}
 }
 
 func (t *CreateProjectTaskTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("create_project_task: %w", err)
 	}
@@ -145,23 +145,19 @@ func (t *GetProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 		},
-		"required": []string{"project_id", "task_id"},
+		"required": []string{},
 	}
 }
 
 func (t *GetProjectTaskTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("get_project_task: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("get_project_task: %w", err)
 	}
@@ -185,11 +181,11 @@ func (t *UpdateProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"name": map[string]interface{}{
 				"type":        "string",
@@ -221,16 +217,12 @@ func (t *UpdateProjectTaskTool) InputSchema() map[string]interface{} {
 				"description": "所属模块",
 			},
 		},
-		"required": []string{"project_id", "task_id"},
+		"required": []string{},
 	}
 }
 
 func (t *UpdateProjectTaskTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("update_project_task: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("update_project_task: %w", err)
 	}
@@ -280,23 +272,19 @@ func (t *DeleteProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 		},
-		"required": []string{"project_id", "task_id"},
+		"required": []string{},
 	}
 }
 
 func (t *DeleteProjectTaskTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("delete_project_task: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("delete_project_task: %w", err)
 	}
@@ -320,23 +308,19 @@ func (t *GetProjectTaskPromptsTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 		},
-		"required": []string{"project_id", "task_id"},
+		"required": []string{},
 	}
 }
 
 func (t *GetProjectTaskPromptsTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("get_project_task_prompts: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("get_project_task_prompts: %w", err)
 	}
@@ -360,11 +344,11 @@ func (t *CreateProjectTaskPromptTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"username": map[string]interface{}{
 				"type":        "string",
@@ -375,16 +359,12 @@ func (t *CreateProjectTaskPromptTool) InputSchema() map[string]interface{} {
 				"description": "提示词内容",
 			},
 		},
-		"required": []string{"project_id", "task_id", "username", "content"},
+		"required": []string{"username", "content"},
 	}
 }
 
 func (t *CreateProjectTaskPromptTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("create_project_task_prompt: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("create_project_task_prompt: %w", err)
 	}

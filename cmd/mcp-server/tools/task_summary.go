@@ -26,14 +26,6 @@ func (t *TaskSummaryTool) InputSchema() map[string]interface{} {
 				"description": "操作类型",
 				"enum":        []string{"list", "add", "update", "delete", "query_by_week"},
 			},
-			"project_id": map[string]interface{}{
-				"type":        "string",
-				"description": "项目ID",
-			},
-			"task_id": map[string]interface{}{
-				"type":        "string",
-				"description": "任务ID（action=list/add/update/delete时必填，query_by_week时可选）",
-			},
 			"summary_id": map[string]interface{}{
 				"type":        "string",
 				"description": "总结ID（action=update/delete时必填）",
@@ -55,7 +47,7 @@ func (t *TaskSummaryTool) InputSchema() map[string]interface{} {
 				"description": "结束周（action=list/query_by_week时可选，格式：YYYY-WW）",
 			},
 		},
-		"required": []string{"action", "project_id"},
+		"required": []string{"action"},
 	}
 }
 
@@ -70,8 +62,8 @@ func (t *TaskSummaryTool) Execute(
 		return "", fmt.Errorf("task_summary: %w", err)
 	}
 
-	// 2. 提取project_id
-	projectID, err := shared.SafeGetString(args, "project_id")
+	// 2. 提取project_id（使用回退机制）
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("task_summary: %w", err)
 	}
@@ -100,10 +92,10 @@ func (t *TaskSummaryTool) listTaskSummaries(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 提取task_id参数
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 提取task_id参数（使用回退机制）
+	taskID, err := shared.GetTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
-		return "", fmt.Errorf("task_summary[list]: 缺少必填参数 'task_id'")
+		return "", fmt.Errorf("task_summary[list]: %w", err)
 	}
 
 	// 构造API路径（带查询参数）
@@ -133,10 +125,10 @@ func (t *TaskSummaryTool) addTaskSummary(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 提取task_id参数
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 提取task_id参数（使用回退机制）
+	taskID, err := shared.GetTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
-		return "", fmt.Errorf("task_summary[add]: 缺少必填参数 'task_id'")
+		return "", fmt.Errorf("task_summary[add]: %w", err)
 	}
 
 	// 提取time参数
@@ -171,10 +163,10 @@ func (t *TaskSummaryTool) updateTaskSummary(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 提取task_id参数
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 提取task_id参数（使用回退机制）
+	taskID, err := shared.GetTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
-		return "", fmt.Errorf("task_summary[update]: 缺少必填参数 'task_id'")
+		return "", fmt.Errorf("task_summary[update]: %w", err)
 	}
 
 	// 提取summary_id参数
@@ -213,10 +205,10 @@ func (t *TaskSummaryTool) deleteTaskSummary(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 提取task_id参数
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 提取task_id参数（使用回退机制）
+	taskID, err := shared.GetTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
-		return "", fmt.Errorf("task_summary[delete]: 缺少必填参数 'task_id'")
+		return "", fmt.Errorf("task_summary[delete]: %w", err)
 	}
 
 	// 提取summary_id参数

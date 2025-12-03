@@ -29,7 +29,7 @@ func (t *ProgressSummaryTool) InputSchema() map[string]interface{} {
 			},
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"year": map[string]interface{}{
 				"type":        "integer",
@@ -56,7 +56,7 @@ func (t *ProgressSummaryTool) InputSchema() map[string]interface{} {
 				"description": "周总结（action=update时可选，Markdown格式）",
 			},
 		},
-		"required": []string{"action", "project_id"},
+		"required": []string{"action"},
 	}
 }
 
@@ -71,8 +71,8 @@ func (t *ProgressSummaryTool) Execute(
 		return "", fmt.Errorf("progress_summary: %w", err)
 	}
 
-	// 2. 提取project_id
-	projectID, err := shared.SafeGetString(args, "project_id")
+	// 2. 提取project_id（使用回退机制）
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("progress_summary: %w", err)
 	}

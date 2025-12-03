@@ -19,18 +19,17 @@ func (t *GetExecutionPlanTool) Description() string {
 
 func (t *GetExecutionPlanTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"project_id": map[string]interface{}{"type": "string", "description": "项目ID"},
-			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID"},
-		},
-		"required": []string{"project_id", "task_id"},
+		"type":       "object",
+		"properties": map[string]interface{}{},
+		"required":   []string{},
 	}
 }
 
 func (t *GetExecutionPlanTool) Execute(args map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, _ := shared.SafeGetString(args, "project_id")
-	taskID, _ := shared.SafeGetString(args, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("get_execution_plan: %w", err)
+	}
 	return shared.CallAPI(apiClient, "GET", fmt.Sprintf("/internal/api/v1/projects/%s/tasks/%s/execution-plan", projectID, taskID), nil, clientToken)
 }
 
@@ -49,17 +48,17 @@ func (t *UpdateExecutionPlanTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"project_id": map[string]interface{}{"type": "string", "description": "项目ID"},
-			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID"},
-			"content":    map[string]interface{}{"type": "string", "description": "执行计划 Markdown 全文"},
+			"content": map[string]interface{}{"type": "string", "description": "执行计划 Markdown 全文"},
 		},
-		"required": []string{"project_id", "task_id", "content"},
+		"required": []string{"content"},
 	}
 }
 
 func (t *UpdateExecutionPlanTool) Execute(args map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, _ := shared.SafeGetString(args, "project_id")
-	taskID, _ := shared.SafeGetString(args, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("update_execution_plan: %w", err)
+	}
 	content, _ := shared.SafeGetString(args, "content")
 	return shared.CallAPI(apiClient, "POST", fmt.Sprintf("/internal/api/v1/projects/%s/tasks/%s/execution-plan", projectID, taskID), map[string]interface{}{"content": content}, clientToken)
 }
@@ -77,18 +76,17 @@ func (t *GetNextExecutableStepTool) Description() string {
 
 func (t *GetNextExecutableStepTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"project_id": map[string]interface{}{"type": "string", "description": "项目ID"},
-			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID"},
-		},
-		"required": []string{"project_id", "task_id"},
+		"type":       "object",
+		"properties": map[string]interface{}{},
+		"required":   []string{},
 	}
 }
 
 func (t *GetNextExecutableStepTool) Execute(args map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, _ := shared.SafeGetString(args, "project_id")
-	taskID, _ := shared.SafeGetString(args, "task_id")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("get_next_executable_step: %w", err)
+	}
 	return shared.CallAPI(apiClient, "GET", fmt.Sprintf("/internal/api/v1/projects/%s/tasks/%s/execution-plan/next-step", projectID, taskID), nil, clientToken)
 }
 
@@ -107,14 +105,6 @@ func (t *UpdatePlanStepStatusTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"project_id": map[string]interface{}{
-				"type":        "string",
-				"description": "项目ID",
-			},
-			"task_id": map[string]interface{}{
-				"type":        "string",
-				"description": "任务ID",
-			},
 			"step_id": map[string]interface{}{
 				"type":        "string",
 				"description": "步骤ID",
@@ -129,19 +119,14 @@ func (t *UpdatePlanStepStatusTool) InputSchema() map[string]interface{} {
 				"description": "步骤执行输出（可选）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "step_id", "status"},
+		"required": []string{"step_id", "status"},
 	}
 }
 
 func (t *UpdatePlanStepStatusTool) Execute(args map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(args, "project_id")
-	if err != nil || projectID == "" {
-		return "", fmt.Errorf("参数错误：project_id 是必需的字符串参数。请提供项目ID，例如：\"AI-Dev-Gov\"")
-	}
-
-	taskID, err := shared.SafeGetString(args, "task_id")
-	if err != nil || taskID == "" {
-		return "", fmt.Errorf("参数错误：task_id 是必需的字符串参数。请提供任务ID，例如：\"task_1759401721\"")
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("update_plan_step_status: %w", err)
 	}
 
 	stepID, err := shared.SafeGetString(args, "step_id")

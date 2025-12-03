@@ -25,7 +25,7 @@ func (t *GetProjectDocumentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"slot_key": map[string]interface{}{
 				"type":        "string",
@@ -39,7 +39,7 @@ func (t *GetProjectDocumentTool) InputSchema() map[string]interface{} {
 				"default":     "markdown",
 			},
 		},
-		"required": []string{"project_id", "slot_key"},
+		"required": []string{"slot_key"},
 	}
 }
 
@@ -49,7 +49,7 @@ func (t *GetProjectDocumentTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("get_project_document: %w", err)
 	}
@@ -98,7 +98,7 @@ func (t *UpdateProjectDocumentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"slot_key": map[string]interface{}{
 				"type":        "string",
@@ -115,7 +115,7 @@ func (t *UpdateProjectDocumentTool) InputSchema() map[string]interface{} {
 				"default":     "markdown",
 			},
 		},
-		"required": []string{"project_id", "slot_key", "content"},
+		"required": []string{"slot_key", "content"},
 	}
 }
 
@@ -125,7 +125,7 @@ func (t *UpdateProjectDocumentTool) Execute(
 	apiClient *shared.APIClient,
 ) (string, error) {
 	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
+	projectID, err := shared.GetProjectIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("update_project_document: %w", err)
 	}

@@ -75,14 +75,14 @@ func (t *SetUserCurrentTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 		},
-		"required": []string{"project_id", "task_id"},
+		"required": []string{},
 	}
 }
 
@@ -101,14 +101,8 @@ func (t *SetUserCurrentTaskTool) Execute(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 提取并验证 project_id 参数
-	projectID, err := shared.SafeGetString(args, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("set_user_current_task: %w", err)
-	}
-
-	// 提取并验证 task_id 参数
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 提取并验证 project_id 和 task_id 参数（使用回退机制）
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("set_user_current_task: %w", err)
 	}

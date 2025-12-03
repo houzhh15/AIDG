@@ -8,6 +8,138 @@ import (
 	"strings"
 )
 
+// CurrentTaskInfo 当前任务信息结构
+type CurrentTaskInfo struct {
+	ProjectID string `json:"project_id"`
+	TaskID    string `json:"task_id"`
+}
+
+// GetCurrentTask 获取当前用户的任务信息
+// 调用后端 API: GET /api/v1/user/current-task
+func GetCurrentTask(apiClient *APIClient, clientToken string) (*CurrentTaskInfo, error) {
+	resp, err := CallAPI(apiClient, "GET", "/api/v1/user/current-task", nil, clientToken)
+	if err != nil {
+		return nil, fmt.Errorf("获取当前任务失败: %w", err)
+	}
+
+	var result CurrentTaskInfo
+	if err := json.Unmarshal([]byte(resp), &result); err != nil {
+		return nil, fmt.Errorf("解析当前任务响应失败: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetProjectIDWithFallback 获取 project_id，如果参数缺失或为空则从当前任务获取
+// 参数:
+//   - args: 工具参数 map
+//   - apiClient: API 客户端
+//   - clientToken: 认证 token
+//
+// 返回:
+//   - string: project_id 值
+//   - error: 如果既无参数又无法获取当前任务则返回错误
+func GetProjectIDWithFallback(args map[string]interface{}, apiClient *APIClient, clientToken string) (string, error) {
+	// 先尝试从参数获取
+	projectID, err := SafeGetString(args, "project_id")
+	if err == nil && projectID != "" {
+		return projectID, nil
+	}
+
+	// 参数缺失或为空，尝试从当前任务获取
+	currentTask, err := GetCurrentTask(apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("参数 project_id 缺失，且无法获取当前任务: %w", err)
+	}
+
+	if currentTask.ProjectID == "" {
+		return "", fmt.Errorf("参数 project_id 缺失，且当前任务未设置 project_id")
+	}
+
+	return currentTask.ProjectID, nil
+}
+
+// GetTaskIDWithFallback 获取 task_id，如果参数缺失或为空则从当前任务获取
+// 参数:
+//   - args: 工具参数 map
+//   - apiClient: API 客户端
+//   - clientToken: 认证 token
+//
+// 返回:
+//   - string: task_id 值
+//   - error: 如果既无参数又无法获取当前任务则返回错误
+func GetTaskIDWithFallback(args map[string]interface{}, apiClient *APIClient, clientToken string) (string, error) {
+	// 先尝试从参数获取
+	taskID, err := SafeGetString(args, "task_id")
+	if err == nil && taskID != "" {
+		return taskID, nil
+	}
+
+	// 参数缺失或为空，尝试从当前任务获取
+	currentTask, err := GetCurrentTask(apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("参数 task_id 缺失，且无法获取当前任务: %w", err)
+	}
+
+	if currentTask.TaskID == "" {
+		return "", fmt.Errorf("参数 task_id 缺失，且当前任务未设置 task_id")
+	}
+
+	return currentTask.TaskID, nil
+}
+
+// GetProjectAndTaskIDWithFallback 同时获取 project_id 和 task_id，支持从当前任务回退
+// 这是一个优化版本，只调用一次 API 来获取当前任务（如果需要回退的话）
+// 参数:
+//   - args: 工具参数 map
+//   - apiClient: API 客户端
+//   - clientToken: 认证 token
+//
+// 返回:
+//   - projectID: project_id 值
+//   - taskID: task_id 值
+//   - error: 如果任一参数缺失且无法从当前任务获取则返回错误
+func GetProjectAndTaskIDWithFallback(args map[string]interface{}, apiClient *APIClient, clientToken string) (projectID string, taskID string, err error) {
+	// 先尝试从参数获取
+	projectID, projectErr := SafeGetString(args, "project_id")
+	taskID, taskErr := SafeGetString(args, "task_id")
+
+	// 如果两个参数都存在且有效，直接返回
+	if projectErr == nil && projectID != "" && taskErr == nil && taskID != "" {
+		return projectID, taskID, nil
+	}
+
+	// 至少有一个参数需要从当前任务获取
+	currentTask, err := GetCurrentTask(apiClient, clientToken)
+	if err != nil {
+		missingParams := []string{}
+		if projectErr != nil || projectID == "" {
+			missingParams = append(missingParams, "project_id")
+		}
+		if taskErr != nil || taskID == "" {
+			missingParams = append(missingParams, "task_id")
+		}
+		return "", "", fmt.Errorf("参数 %s 缺失，且无法获取当前任务: %w", strings.Join(missingParams, ", "), err)
+	}
+
+	// 用当前任务的值填充缺失的参数
+	if projectErr != nil || projectID == "" {
+		if currentTask.ProjectID == "" {
+			return "", "", fmt.Errorf("参数 project_id 缺失，且当前任务未设置 project_id")
+		}
+		projectID = currentTask.ProjectID
+	}
+
+	if taskErr != nil || taskID == "" {
+		if currentTask.TaskID == "" {
+			return "", "", fmt.Errorf("参数 task_id 缺失，且当前任务未设置 task_id")
+		}
+		taskID = currentTask.TaskID
+	}
+
+	return projectID, taskID, nil
+}
+
 // APIClient API客户端结构
 type APIClient struct {
 	BaseURL string

@@ -23,11 +23,11 @@ func (t *GetTaskDocSectionsTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -35,19 +35,15 @@ func (t *GetTaskDocSectionsTool) InputSchema() map[string]interface{} {
 				"enum":        []string{"requirements", "design", "test"},
 			},
 		},
-		"required": []string{"project_id", "task_id", "doc_type"},
+		"required": []string{"doc_type"},
 	}
 }
 
 func (t *GetTaskDocSectionsTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil || projectID == "" {
-		return "", fmt.Errorf("参数错误：project_id 是必需的字符串参数。请提供项目ID，例如：\"AI-Dev-Gov\"")
-	}
-
-	taskID, err := shared.SafeGetString(arguments, "task_id")
-	if err != nil || taskID == "" {
-		return "", fmt.Errorf("参数错误：task_id 是必需的字符串参数。请提供任务ID，例如：\"task_1759401721\"")
+	// 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("get_task_doc_sections: %w", err)
 	}
 
 	docType, err := shared.SafeGetString(arguments, "doc_type")
@@ -81,11 +77,11 @@ func (t *GetTaskDocSectionTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -101,16 +97,13 @@ func (t *GetTaskDocSectionTool) InputSchema() map[string]interface{} {
 				"description": "是否包含子章节内容（默认false）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "doc_type", "section_id"},
+		"required": []string{"doc_type", "section_id"},
 	}
 }
 
 func (t *GetTaskDocSectionTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("get_task_doc_section: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	// 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("get_task_doc_section: %w", err)
 	}
@@ -154,11 +147,11 @@ func (t *UpdateTaskDocSectionTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -178,16 +171,13 @@ func (t *UpdateTaskDocSectionTool) InputSchema() map[string]interface{} {
 				"description": "期望版本号（用于版本冲突检测，可选）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "doc_type", "section_id", "content"},
+		"required": []string{"doc_type", "section_id", "content"},
 	}
 }
 
 func (t *UpdateTaskDocSectionTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("update_task_doc_section: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	// 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("update_task_doc_section: %w", err)
 	}
@@ -237,11 +227,11 @@ func (t *InsertTaskDocSectionTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -261,16 +251,13 @@ func (t *InsertTaskDocSectionTool) InputSchema() map[string]interface{} {
 				"description": "在哪个章节后插入（可选，不提供则插入到末尾）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "doc_type", "title", "content"},
+		"required": []string{"doc_type", "title", "content"},
 	}
 }
 
 func (t *InsertTaskDocSectionTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("insert_task_doc_section: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	// 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("insert_task_doc_section: %w", err)
 	}
@@ -326,11 +313,11 @@ func (t *DeleteTaskDocSectionTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -346,16 +333,13 @@ func (t *DeleteTaskDocSectionTool) InputSchema() map[string]interface{} {
 				"description": "是否级联删除子章节（默认false）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "doc_type", "section_id"},
+		"required": []string{"doc_type", "section_id"},
 	}
 }
 
 func (t *DeleteTaskDocSectionTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("delete_task_doc_section: %w", err)
-	}
-	taskID, err := shared.SafeGetString(arguments, "task_id")
+	// 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("delete_task_doc_section: %w", err)
 	}
@@ -399,11 +383,11 @@ func (t *SyncTaskDocSectionsTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -416,19 +400,15 @@ func (t *SyncTaskDocSectionsTool) InputSchema() map[string]interface{} {
 				"enum":        []string{"from_compiled", "to_compiled"},
 			},
 		},
-		"required": []string{"project_id", "task_id", "doc_type", "direction"},
+		"required": []string{"doc_type", "direction"},
 	}
 }
 
 func (t *SyncTaskDocSectionsTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
-	projectID, err := shared.SafeGetString(arguments, "project_id")
-	if err != nil || projectID == "" {
-		return "", fmt.Errorf("参数错误：project_id 是必需的字符串参数。请提供项目ID，例如：\"AI-Dev-Gov\"")
-	}
-
-	taskID, err := shared.SafeGetString(arguments, "task_id")
-	if err != nil || taskID == "" {
-		return "", fmt.Errorf("参数错误：task_id 是必需的字符串参数。请提供任务ID，例如：\"task_1759401721\"")
+	// 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(arguments, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("sync_task_doc_sections: %w", err)
 	}
 
 	docType, err := shared.SafeGetString(arguments, "doc_type")

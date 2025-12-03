@@ -26,11 +26,11 @@ func (t *GetTaskDocumentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"slot_key": map[string]interface{}{
 				"type":        "string",
@@ -43,7 +43,7 @@ func (t *GetTaskDocumentTool) InputSchema() map[string]interface{} {
 				"default":     false,
 			},
 		},
-		"required": []string{"project_id", "task_id", "slot_key"},
+		"required": []string{"slot_key"},
 	}
 }
 
@@ -52,12 +52,8 @@ func (t *GetTaskDocumentTool) Execute(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("get_task_document: %w", err)
-	}
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 1. 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("get_task_document: %w", err)
 	}
@@ -106,11 +102,11 @@ func (t *UpdateTaskDocumentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"slot_key": map[string]interface{}{
 				"type":        "string",
@@ -122,7 +118,7 @@ func (t *UpdateTaskDocumentTool) InputSchema() map[string]interface{} {
 				"description": "文档内容（Markdown 格式）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "slot_key", "content"},
+		"required": []string{"slot_key", "content"},
 	}
 }
 
@@ -131,12 +127,8 @@ func (t *UpdateTaskDocumentTool) Execute(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("update_task_document: %w", err)
-	}
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 1. 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("update_task_document: %w", err)
 	}
@@ -184,11 +176,11 @@ func (t *AppendTaskDocumentTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID",
+				"description": "任务ID（可选，缺失时从当前任务获取）",
 			},
 			"slot_key": map[string]interface{}{
 				"type":        "string",
@@ -204,7 +196,7 @@ func (t *AppendTaskDocumentTool) InputSchema() map[string]interface{} {
 				"description": "期望版本防并发（可选）",
 			},
 		},
-		"required": []string{"project_id", "task_id", "slot_key", "content"},
+		"required": []string{"slot_key", "content"},
 	}
 }
 
@@ -213,12 +205,8 @@ func (t *AppendTaskDocumentTool) Execute(
 	clientToken string,
 	apiClient *shared.APIClient,
 ) (string, error) {
-	// 1. 提取参数
-	projectID, err := shared.SafeGetString(args, "project_id")
-	if err != nil {
-		return "", fmt.Errorf("append_task_document: %w", err)
-	}
-	taskID, err := shared.SafeGetString(args, "task_id")
+	// 1. 使用带回退的方式获取 project_id 和 task_id
+	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("append_task_document: %w", err)
 	}
