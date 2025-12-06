@@ -15,9 +15,9 @@ import { UploadModal } from './components/UploadModal';
 import { useAudioService } from './services/audioService';
 import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, updateTaskDevice, getServicesStatus, ServicesStatus } from './api/client';
 import { authedApi } from './api/auth';
-import { login, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
+import { smartLogin, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
 import { TaskSummary, ChunkFlag } from './types';
-import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ApiOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { SyncPanel } from './components/SyncPanel';
 import { svnSync } from './api/svn';
@@ -28,12 +28,15 @@ import { ScopeUserManage } from './constants/permissions';
 import { UserProfile } from './components/UserProfile';
 import NoPermissionPage from './components/NoPermissionPage';
 import { TaskRefreshProvider } from './contexts/TaskRefreshContext';
+// 身份源相关组件
+import { IdentityProviderList } from './components/identity-provider';
+import LoginSuccessPage from './components/LoginSuccessPage';
 
 const { RangePicker } = DatePicker;
 
 const { Content, Header } = Layout;
 
-type ViewMode = 'meeting' | 'project' | 'user' | 'profile';
+type ViewMode = 'meeting' | 'project' | 'user' | 'profile' | 'idp';
 
 const MeetingView: React.FC<{ 
   tasks: TaskSummary[]; currentTask?: string; onSelectTask:(id:string)=>void; refreshTasks:()=>void;
@@ -185,6 +188,10 @@ const App: React.FC = () => {
   const [svnRunning, setSvnRunning] = useState(false);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [servicesStatus, setServicesStatus] = useState<ServicesStatus | null>(null);
+  
+  // 身份源权限检查
+  const { hasPermission } = usePermission();
+  const hasIdpReadPermission = hasPermission('idp.read');
   
   // 音频录制模式选择
   const [audioModalOpen, setAudioModalOpen] = useState(false);
@@ -443,6 +450,23 @@ const App: React.FC = () => {
   }
 
   if(!auth){
+    // 检查是否是 OIDC 登录成功回调
+    if (window.location.pathname === '/login/success' || window.location.search.includes('token=')) {
+      return (
+        <LoginSuccessPage 
+          onLoginSuccess={(authInfo) => {
+            setAuth(authInfo);
+            message.success('登录成功');
+            // 清理 URL 并重定向到首页
+            window.history.replaceState({}, document.title, '/');
+          }}
+          onNavigateHome={() => {
+            window.location.href = '/';
+          }}
+        />
+      );
+    }
+    
     const doLogin = async (e: React.FormEvent)=>{
       e.preventDefault();
       const form = e.target as HTMLFormElement;
@@ -451,7 +475,12 @@ const App: React.FC = () => {
       const password = String(fd.get('password')||'');
       if(!username || !password){ setLoginError('请输入用户名与密码'); return; }
       setLoggingIn(true); setLoginError(null);
-      try { const a = await login(username, password); setAuth(a); message.success('登录成功'); }
+      try { 
+        // 使用智能登录：先尝试 LDAP，失败后尝试本地认证
+        const a = await smartLogin(username, password); 
+        setAuth(a); 
+        message.success('登录成功'); 
+      }
       catch(err:any){ setLoginError(err?.response?.data?.error || err.message); }
       finally { setLoggingIn(false); }
     };
@@ -468,7 +497,7 @@ const App: React.FC = () => {
         </div>
         {loginError && <div style={{color:'#c00',fontSize:12}}>{loginError}</div>}
         <button disabled={loggingIn} style={{padding:'10px 12px',background:'#0266B3',color:'#fff',border:'none',borderRadius:4,cursor:'pointer'}}>{loggingIn?'登录中...':'登录'}</button>
-  <div style={{fontSize:12,color:'#666',textAlign:'center'}}>请输入已分配的账号与密码</div>
+        <div style={{fontSize:12,color:'#666',textAlign:'center'}}>支持本地账号或 LDAP 统一登录</div>
       </form>
     </div>;
   }
@@ -494,7 +523,13 @@ const App: React.FC = () => {
             size="small"
             value={viewMode}
             onChange={(v)=> setViewMode(v as ViewMode)}
-            options={[{label:'会议', value:'meeting'}, {label:'项目', value:'project'}, {label:'用户', value:'user'}]}
+            options={[
+              {label:'会议', value:'meeting'}, 
+              {label:'项目', value:'project'}, 
+              {label:'用户', value:'user'},
+              // 仅当有身份源读取权限时显示
+              ...(hasIdpReadPermission ? [{label:'身份源', value:'idp'}] : [])
+            ]}
           />
           {viewMode === 'project' && (
             <div style={{display:'flex',alignItems:'center',gap:12}}>
@@ -673,6 +708,13 @@ const App: React.FC = () => {
           <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
             <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height:'100%' }}>
               <UserProfile />
+            </div>
+          </Content>
+        )}
+        {viewMode === 'idp' && hasIdpReadPermission && (
+          <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
+            <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height:'100%' }}>
+              <IdentityProviderList />
             </div>
           </Content>
         )}

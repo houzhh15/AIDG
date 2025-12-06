@@ -2,8 +2,9 @@ package tools
 
 import (
 	"fmt"
-	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 	"net/url"
+
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // TaskSummaryTool 任务总结工具（统一处理）

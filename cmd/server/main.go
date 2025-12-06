@@ -36,6 +36,8 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/taskdocs"
 	executionplan "github.com/houzhh15/AIDG/cmd/server/internal/executionplan"
 	"github.com/houzhh15/AIDG/cmd/server/internal/handlers"
+	"github.com/houzhh15/AIDG/cmd/server/internal/idp"
+	idpsync "github.com/houzhh15/AIDG/cmd/server/internal/idp/sync"
 	"github.com/houzhh15/AIDG/cmd/server/internal/middleware"
 	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 	"github.com/houzhh15/AIDG/cmd/server/internal/prompt"
@@ -236,6 +238,35 @@ func main() {
 	}
 	appLogger.Info("resource manager ready")
 
+	// Initialize Identity Provider Manager
+	idpStoreDir := filepath.Join(baseDir, "identity_providers")
+	idpManager, err := idp.NewManager(idpStoreDir)
+	if err != nil {
+		appLogger.Warn("idp manager init failed, identity provider features disabled", "error", err)
+	} else {
+		appLogger.Info("idp manager ready", "count", idpManager.Count())
+	}
+
+	// Initialize IdP Sync Service
+	idpSyncLogsDir := filepath.Join(baseDir, "identity_providers", "sync_logs")
+	var idpSyncService *idpsync.Service
+	if idpManager != nil {
+		idpSyncService = idpsync.NewService(idpManager, userManager, idpSyncLogsDir)
+		idpSyncService.StartScheduler()
+		appLogger.Info("idp sync service ready")
+	}
+
+	// Initialize IdP Handler
+	var idpHandler *api.IdPHandler
+	if idpManager != nil {
+		if idpSyncService != nil {
+			idpHandler = api.NewIdPHandlerWithSync(idpManager, userManager, idpSyncService)
+		} else {
+			idpHandler = api.NewIdPHandler(idpManager, userManager)
+		}
+		appLogger.Info("idp handler ready")
+	}
+
 	// Initialize permission injector
 	meetingsRoot := cfg.Data.MeetingsDir
 	permissionInjector := services.NewPermissionInjector(baseDir, meetingsRoot)
@@ -280,7 +311,7 @@ func main() {
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler, tagHandler)
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler, tagHandler, idpHandler)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -315,6 +346,12 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	<-quit
 	appLogger.Info("shutdown signal received, shutting down server...")
+
+	// Shutdown IdP sync service
+	if idpSyncService != nil {
+		idpSyncService.StopScheduler()
+		appLogger.Info("idp sync scheduler stopped")
+	}
 
 	// Shutdown resource manager
 	resourceManager.Shutdown()
@@ -556,8 +593,14 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// 跳过不需要认证的路由：登录、健康检查、服务状态、OPTIONS请求、非API路由
-		if path == "/api/v1/login" || path == "/api/v1/health" || path == "/api/v1/services/status" || c.Request.Method == http.MethodOptions || !strings.HasPrefix(path, "/api/") {
+		// 跳过不需要认证的路由：登录、健康检查、服务状态、OPTIONS请求、非API路由、公开身份源列表、OIDC回调
+		if path == "/api/v1/login" ||
+			path == "/api/v1/health" ||
+			path == "/api/v1/services/status" ||
+			path == "/api/v1/identity-providers/public" ||
+			strings.HasPrefix(path, "/auth/") ||
+			c.Request.Method == http.MethodOptions ||
+			!strings.HasPrefix(path, "/api/") {
 			c.Next()
 			return
 		}
@@ -790,23 +833,32 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 	})
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler, idpHandler *api.IdPHandler) {
 	// ========== Environment Check ==========
 	r.GET("/api/v1/environment/status", func(c *gin.Context) {
 		envHandler.GetStatus(c.Writer, c.Request)
 	})
 
 	// ========== Authentication & Admin ==========
-	// Login
+	// Login (supports both local and IdP authentication)
 	r.POST("/api/v1/login", func(c *gin.Context) {
 		var cred struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
+			IdpID    string `json:"idp_id,omitempty"` // Optional: for IdP-based login
 		}
 		if err := c.ShouldBindJSON(&cred); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 			return
 		}
+
+		// Check if IdP login is requested
+		if cred.IdpID != "" && idpHandler != nil {
+			idpHandler.HandleLDAPLogin(c, cred.IdpID, cred.Username, cred.Password)
+			return
+		}
+
+		// Local authentication
 		u, err := userManager.Authenticate(cred.Username, cred.Password)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
@@ -815,6 +867,29 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 		token, _ := userManager.GenerateToken(u.Username)
 		c.JSON(http.StatusOK, gin.H{"token": token, "username": u.Username, "scopes": u.Scopes})
 	})
+
+	// ========== Identity Provider Routes ==========
+	if idpHandler != nil {
+		// Public routes (no authentication required)
+		r.GET("/api/v1/identity-providers/public", idpHandler.HandleListPublicIdPs)
+
+		// OIDC authentication routes (no authentication required)
+		r.GET("/auth/oidc/:idp_id/login", idpHandler.HandleOIDCLogin)
+		r.GET("/auth/callback", idpHandler.HandleOIDCCallback)
+
+		// Identity provider management routes (require idp.read/idp.write)
+		r.GET("/api/v1/identity-providers", idpHandler.HandleListIdPs)
+		r.GET("/api/v1/identity-providers/:id", idpHandler.HandleGetIdP)
+		r.POST("/api/v1/identity-providers", idpHandler.HandleCreateIdP)
+		r.PUT("/api/v1/identity-providers/:id", idpHandler.HandleUpdateIdP)
+		r.DELETE("/api/v1/identity-providers/:id", idpHandler.HandleDeleteIdP)
+		r.POST("/api/v1/identity-providers/test", idpHandler.HandleTestConnection)
+
+		// Sync routes (require idp.read/idp.write)
+		r.POST("/api/v1/identity-providers/:id/sync", idpHandler.HandleTriggerSync)
+		r.GET("/api/v1/identity-providers/:id/sync/status", idpHandler.HandleGetSyncStatus)
+		r.GET("/api/v1/identity-providers/:id/sync/logs", idpHandler.HandleGetSyncLogs)
+	}
 
 	// Admin reload
 	r.POST("/api/v1/admin/reload", func(c *gin.Context) {

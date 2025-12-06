@@ -2,8 +2,9 @@ package tools
 
 import (
 	"fmt"
-	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 	"strings"
+
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // GetExecutionPlanTool 获取执行计划工具

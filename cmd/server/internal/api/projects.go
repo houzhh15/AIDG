@@ -63,9 +63,10 @@ func hasProjectPermissionWithScopes(username, projectID string, userScopes inter
 		return false
 	}
 
-	// 检查用户是否有 user.manage 权限（可以看到所有项目）
+	// 检查用户是否有全局权限（可以看到所有项目）
+	// user.manage, project.admin, project.doc.read 都可以看到所有项目
 	for _, scope := range scopesSlice {
-		if scope == users.ScopeUserManage {
+		if scope == users.ScopeUserManage || scope == users.ScopeProjectAdmin || scope == users.ScopeProjectDocRead {
 			return true
 		}
 	}

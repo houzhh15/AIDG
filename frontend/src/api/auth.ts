@@ -45,7 +45,106 @@ export async function login(username: string, password: string): Promise<StoredA
   saveAuth(info); return info;
 }
 
+/**
+ * 智能登录：先尝试所有启用的 LDAP 身份源，最后尝试本地认证
+ * 任一成功即返回，全部失败则抛出最后一个错误
+ */
+export async function smartLogin(username: string, password: string): Promise<StoredAuth> {
+  // 获取公开的身份源列表
+  let ldapIdps: { id: string; name: string; type: string }[] = [];
+  try {
+    const res = await axios.get<{ success: boolean; data: any[] }>('/api/v1/identity-providers/public');
+    if (res.data.success && res.data.data) {
+      ldapIdps = res.data.data.filter(idp => idp.type === 'LDAP');
+    }
+  } catch {
+    // 获取身份源失败，直接尝试本地登录
+  }
+
+  // 依次尝试 LDAP 认证
+  for (const idp of ldapIdps) {
+    try {
+      const r = await axios.post<LoginResponse>('/api/v1/login', {
+        Username: username,
+        Password: password,
+        idp_id: idp.id,
+      });
+      const info: StoredAuth = { token: r.data.token, username: r.data.username, scopes: r.data.scopes };
+      saveAuth(info);
+      console.log(`[Auth] Login successful via LDAP: ${idp.name}`);
+      return info;
+    } catch (err) {
+      console.log(`[Auth] LDAP ${idp.name} auth failed, trying next...`);
+      // 继续尝试下一个
+    }
+  }
+
+  // 最后尝试本地认证
+  try {
+    const r = await axios.post<LoginResponse>('/api/v1/login', { Username: username, Password: password });
+    const info: StoredAuth = { token: r.data.token, username: r.data.username, scopes: r.data.scopes };
+    saveAuth(info);
+    console.log('[Auth] Login successful via local auth');
+    return info;
+  } catch (err: any) {
+    // 本地认证也失败，抛出错误
+    throw err;
+  }
+}
+
+/**
+ * 使用身份源登录（支持 LDAP 等外部认证）
+ * @param username 用户名
+ * @param password 密码
+ * @param idpId 身份源ID（可选，不传则使用本地认证）
+ */
+export async function loginWithIdP(username: string, password: string, idpId?: string): Promise<StoredAuth> {
+  const payload: { Username: string; Password: string; idp_id?: string } = {
+    Username: username,
+    Password: password,
+  };
+  if (idpId) {
+    payload.idp_id = idpId;
+  }
+  const r = await axios.post<LoginResponse>('/api/v1/login', payload);
+  const info: StoredAuth = { token: r.data.token, username: r.data.username, scopes: r.data.scopes };
+  saveAuth(info);
+  return info;
+}
+
+/**
+ * 从 JWT token 字符串解析用户信息并保存
+ * 用于 OIDC 回调后处理
+ * @param token JWT token 字符串
+ */
+export function saveAuthFromToken(token: string): StoredAuth {
+  // 解析 JWT payload（不验证签名，仅提取信息）
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid token format');
+  }
+  
+  try {
+    // Base64 URL decode
+    const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payloadJson = atob(payloadBase64);
+    const payload = JSON.parse(payloadJson);
+    
+    const info: StoredAuth = {
+      token: token,
+      username: payload.username || payload.sub || '',
+      scopes: payload.scopes || [],
+    };
+    
+    saveAuth(info);
+    return info;
+  } catch (e) {
+    throw new Error('Failed to parse token: ' + (e instanceof Error ? e.message : 'unknown error'));
+  }
+}
+
 export async function refreshToken(): Promise<StoredAuth> {
+
   const r = await authedApi.get<LoginResponse>('/me/token');
   const info: StoredAuth = { token: r.data.token, username: r.data.username, scopes: r.data.scopes };
   saveAuth(info); return info;

@@ -2,8 +2,9 @@ package tools
 
 import (
 	"fmt"
-	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 	"strings"
+
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // GetTaskDocSectionsTool 获取任务文档的章节列表

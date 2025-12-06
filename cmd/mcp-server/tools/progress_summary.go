@@ -3,8 +3,9 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 	"time"
+
+	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
 
 // ProgressSummaryTool 项目进展总结工具（统一处理）

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getUserProfile, UserProfileData } from '../api/permissions';
-import { onAuthChange } from '../api/auth';
+import { onAuthChange, loadAuth } from '../api/auth';
 
 /**
  * 权限上下文状态
@@ -59,6 +59,15 @@ export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
    * 获取用户权限
    */
   const fetchPermissions = useCallback(async () => {
+    // 如果没有登录，不发送请求
+    const auth = loadAuth();
+    if (!auth?.token) {
+      setPermissions([]);
+      setProfile(null);
+      setLoading(false);
+      return;
+    }
+
     // 检查缓存是否有效
     const now = Date.now();
     if (lastFetched && now - lastFetched < CACHE_TTL) {

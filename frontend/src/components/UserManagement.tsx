@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { User, getUsers, createUser, updateUserScopes, deleteUser, AVAILABLE_SCOPES } from '../api/users';
+import React, { useState, useEffect, useMemo } from 'react';
+import { User, UserSource, getUsers, createUser, updateUserScopes, deleteUser, disableUser, enableUser, AVAILABLE_SCOPES } from '../api/users';
 import UserProjectRolesPanel from './UserProjectRolesPanel';
 
 interface UserManagementProps {
@@ -15,6 +15,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [searchText, setSearchText] = useState('');
+  
+  // 新增筛选状态
+  const [filterSource, setFilterSource] = useState<UserSource | 'all'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'disabled'>('all');
 
   // 加载用户列表
   const loadUsers = async () => {
@@ -125,10 +129,75 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
     handleUpdateUserScopes(selectedUser.username, newScopes);
   };
 
+  // 禁用用户
+  const handleDisableUser = async (username: string) => {
+    if (!confirm(`确定要禁用用户 ${username} 吗？禁用后该用户将无法登录。`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await disableUser(username);
+
+      if (response.success) {
+        await loadUsers();
+        setError('');
+      } else {
+        setError(response.message || '禁用用户失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '禁用用户失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 启用用户
+  const handleEnableUser = async (username: string) => {
+    try {
+      setLoading(true);
+      const response = await enableUser(username);
+
+      if (response.success) {
+        await loadUsers();
+        setError('');
+      } else {
+        setError(response.message || '启用用户失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '启用用户失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 过滤用户列表
-  const filteredUsers = users.filter(user =>
-    user.username.toLowerCase().includes(searchText.toLowerCase())
-  );
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => {
+      // 名称搜索
+      if (searchText && !user.username.toLowerCase().includes(searchText.toLowerCase())) {
+        return false;
+      }
+      // 来源筛选
+      if (filterSource !== 'all') {
+        const userSource = user.source || 'local';
+        if (userSource !== filterSource) {
+          return false;
+        }
+      }
+      // 状态筛选
+      if (filterStatus !== 'all') {
+        const isDisabled = user.disabled === true;
+        if (filterStatus === 'active' && isDisabled) {
+          return false;
+        }
+        if (filterStatus === 'disabled' && !isDisabled) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [users, searchText, filterSource, filterStatus]);
 
   return (
     <div className={`user-management ${className}`}>
@@ -187,33 +256,117 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
             />
           </div>
 
+          {/* 筛选下拉框 */}
+          <div style={{ marginBottom: '10px', display: 'flex', gap: '8px' }}>
+            <select
+              value={filterSource}
+              onChange={(e) => setFilterSource(e.target.value as UserSource | 'all')}
+              style={{
+                flex: 1,
+                padding: '6px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '13px'
+              }}
+            >
+              <option value="all">全部来源</option>
+              <option value="local">本地用户</option>
+              <option value="external">外部用户</option>
+            </select>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value as 'all' | 'active' | 'disabled')}
+              style={{
+                flex: 1,
+                padding: '6px',
+                border: '1px solid #ddd',
+                borderRadius: '4px',
+                fontSize: '13px'
+              }}
+            >
+              <option value="all">全部状态</option>
+              <option value="active">正常</option>
+              <option value="disabled">已禁用</option>
+            </select>
+          </div>
+
           {loading && users.length === 0 ? (
             <div>加载中...</div>
           ) : (
             <div className="user-list">
-              {filteredUsers.map(user => (
-                <div
-                  key={user.username}
-                  className={`user-item ${selectedUser?.username === user.username ? 'selected' : ''}`}
-                  onClick={() => setSelectedUser(user)}
-                  style={{
-                    padding: '10px',
-                    cursor: 'pointer',
-                    backgroundColor: selectedUser?.username === user.username ? '#e3f2fd' : 'white',
-                    borderRadius: '4px',
-                    marginBottom: '5px',
-                    border: '1px solid #ddd'
-                  }}
-                >
-                  <div style={{ fontWeight: 'bold' }}>{user.username}</div>
-                  <div style={{ fontSize: '12px', color: '#666' }}>
-                    权限: {user.scopes.length} 个
+              {filteredUsers.map(user => {
+                const isExternal = user.source === 'external';
+                const isDisabled = user.disabled === true;
+                
+                return (
+                  <div
+                    key={user.username}
+                    className={`user-item ${selectedUser?.username === user.username ? 'selected' : ''}`}
+                    onClick={() => setSelectedUser(user)}
+                    style={{
+                      padding: '10px',
+                      cursor: 'pointer',
+                      backgroundColor: selectedUser?.username === user.username ? '#e3f2fd' : 'white',
+                      borderRadius: '4px',
+                      marginBottom: '5px',
+                      border: '1px solid #ddd',
+                      opacity: isDisabled ? 0.6 : 1
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontWeight: 'bold' }}>{user.username}</span>
+                      {isExternal && (
+                        <span style={{
+                          fontSize: '10px',
+                          padding: '1px 5px',
+                          backgroundColor: '#1890ff',
+                          color: 'white',
+                          borderRadius: '3px'
+                        }}>
+                          外部
+                        </span>
+                      )}
+                      {isDisabled && (
+                        <span style={{
+                          fontSize: '10px',
+                          padding: '1px 5px',
+                          backgroundColor: '#ff4d4f',
+                          color: 'white',
+                          borderRadius: '3px'
+                        }}>
+                          已禁用
+                        </span>
+                      )}
+                    </div>
+                    {user.fullname && (
+                      <div style={{ fontSize: '12px', color: '#333' }}>
+                        {user.fullname}
+                      </div>
+                    )}
+                    {isExternal && user.idp_name && (
+                      <div style={{ fontSize: '11px', color: '#666' }}>
+                        来源: {user.idp_name}
+                      </div>
+                    )}
+                    {user.email && (
+                      <div style={{ fontSize: '11px', color: '#666' }}>
+                        邮箱: {user.email}
+                      </div>
+                    )}
+                    <div style={{ fontSize: '11px', color: '#999' }}>
+                      权限: {user.scopes.length} 个
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#999' }}>
+                      创建时间: {new Date(user.created_at).toLocaleDateString()}
+                    </div>
+                    {user.last_login_at && (
+                      <div style={{ fontSize: '11px', color: '#999' }}>
+                        最后登录: {new Date(user.last_login_at).toLocaleString()}
+                      </div>
+                    )}
                   </div>
-                  <div style={{ fontSize: '11px', color: '#999' }}>
-                    创建时间: {new Date(user.created_at).toLocaleDateString()}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -224,26 +377,80 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
             <div className="user-details">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h3>用户权限设置: {selectedUser.username}</h3>
-                <button
-                  onClick={() => handleDeleteUser(selectedUser.username)}
-                  disabled={loading}
-                  style={{
-                    padding: '5px 10px',
-                    backgroundColor: '#dc3545',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  删除用户
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {/* 本地用户显示删除按钮 */}
+                  {selectedUser.source !== 'external' && (
+                    <button
+                      onClick={() => handleDeleteUser(selectedUser.username)}
+                      disabled={loading}
+                      style={{
+                        padding: '5px 10px',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      删除用户
+                    </button>
+                  )}
+                  {/* 外部用户显示禁用/启用按钮 */}
+                  {selectedUser.source === 'external' && (
+                    selectedUser.disabled ? (
+                      <button
+                        onClick={() => handleEnableUser(selectedUser.username)}
+                        disabled={loading}
+                        style={{
+                          padding: '5px 10px',
+                          backgroundColor: '#52c41a',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        启用用户
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleDisableUser(selectedUser.username)}
+                        disabled={loading}
+                        style={{
+                          padding: '5px 10px',
+                          backgroundColor: '#faad14',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        禁用用户
+                      </button>
+                    )
+                  )}
+                </div>
               </div>
 
               <div className="user-info" style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
                 <p><strong>用户名:</strong> {selectedUser.username}</p>
+                {selectedUser.fullname && <p><strong>姓名:</strong> {selectedUser.fullname}</p>}
+                {selectedUser.email && <p><strong>邮箱:</strong> {selectedUser.email}</p>}
+                <p><strong>来源:</strong> {selectedUser.source === 'external' ? '外部用户' : '本地用户'}</p>
+                {selectedUser.source === 'external' && selectedUser.idp_name && (
+                  <p><strong>身份源:</strong> {selectedUser.idp_name}</p>
+                )}
+                {selectedUser.disabled !== undefined && (
+                  <p><strong>状态:</strong> {selectedUser.disabled ? '已禁用' : '正常'}</p>
+                )}
                 <p><strong>创建时间:</strong> {new Date(selectedUser.created_at).toLocaleString()}</p>
                 <p><strong>更新时间:</strong> {new Date(selectedUser.updated_at).toLocaleString()}</p>
+                {selectedUser.last_login_at && (
+                  <p><strong>最后登录:</strong> {new Date(selectedUser.last_login_at).toLocaleString()}</p>
+                )}
+                {selectedUser.synced_at && (
+                  <p><strong>同步时间:</strong> {new Date(selectedUser.synced_at).toLocaleString()}</p>
+                )}
               </div>
 
               <div className="scope-settings">
