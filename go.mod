@@ -1,8 +1,6 @@
 module github.com/houzhh15/AIDG
 
-go 1.23.0
-
-toolchain go1.24.11
+go 1.22.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.5.0
@@ -15,7 +13,7 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.24.0
-	golang.org/x/sync v0.12.0
+	golang.org/x/sync v0.8.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )
