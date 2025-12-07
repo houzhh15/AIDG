@@ -527,6 +527,11 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 	meetingID := filepath.Base(o.cfg.OutputDir)
 	out := o.pathManager.GetChunkSegmentsPath(meetingID, chunkID)
 
+	// Defensive check: ensure degradationController is initialized
+	if o.degradationController == nil {
+		return "", fmt.Errorf("degradation controller not initialized")
+	}
+
 	// Use DegradationController to get active transcriber
 	transcriber := o.degradationController.GetTranscriber()
 
@@ -1879,12 +1884,14 @@ func (o *Orchestrator) InitForSingleASR() error {
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 	if o.state != StateCreated {
+		log.Printf("[InitForSingleASR] Invalid state: %s (expected StateCreated)", o.state)
 		return fmt.Errorf("invalid state for single ASR init: %s", o.state)
 	}
 
 	// Ensure runtime defaults are set and dependencies are available
 	o.cfg.ApplyRuntimeDefaults()
 	if err := o.cfg.ValidateCriticalDependencies(); err != nil {
+		log.Printf("[InitForSingleASR] Dependency validation failed: %v", err)
 		return err
 	}
 

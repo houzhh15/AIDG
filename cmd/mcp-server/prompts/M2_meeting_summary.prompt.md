@@ -14,6 +14,8 @@ arguments:
 - list_all_meetings
 - get_meeting_document
 - update_meeting_document
+- get_task_doc_sections
+- update_task_section
 
 ## 总结要求
 请用金字塔原理总结内容；明确出会议最终观点、论据、事实；
@@ -36,5 +38,6 @@ arguments:
 2.  get_meeting_document(meeting_id,polish) 获取润色后的会议记录（polish_all.md）。
 3.  （可选步骤）get_meeting_document(meeting_id,context) 获取会议背景（meeting_context.md）。
 4.  综合 polish_all.md 和 meeting_context.md 的信息，全面分析会议内容。
-5.  生成一份结构化的会议总结，参考总结要求。
-6.  update_meeting_document(content=生成的会议总结, meeting_id, summary) 将结果写回。
+5.  先使用 updata_meeting_document 提交所有的章节包括子章节。update_meeting_document(content=所有章节标题, meeting_id, summary) 
+6.  调用 get_meeting_doc_sections 获得章节信息
+7.  使用 update_meeting_section 更新各章节内容。但不要包含任何标题。

@@ -69,6 +69,21 @@ func NewDegradationController(
 // Returns:
 //   - whisper.WhisperTranscriber: The currently active transcriber
 func (dc *DegradationController) GetTranscriber() whisper.WhisperTranscriber {
+	// Defensive check: if healthChecker is nil, return current transcriber
+	if dc.healthChecker == nil {
+		dc.mu.RLock()
+		defer dc.mu.RUnlock()
+		if dc.currentTranscriber != nil {
+			return dc.currentTranscriber
+		}
+		// Fallback to primary if current is also nil
+		if dc.primaryTranscriber != nil {
+			return dc.primaryTranscriber
+		}
+		// Last resort: return fallback
+		return dc.fallbackTranscriber
+	}
+
 	status := dc.healthChecker.GetStatus()
 
 	dc.mu.Lock()

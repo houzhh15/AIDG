@@ -66,7 +66,7 @@ func (r *SlotRegistry) initTaskSlots() {
 	}
 }
 
-// initMeetingSlots 定义 meeting_info, polish, context, summary, topic, merged_all, polish_all, feature_list, architecture_design 九个会议文档槽位配置
+// initMeetingSlots 定义 meeting_info, polish, context, summary, topic, merged_all 六个会议文档槽位配置
 func (r *SlotRegistry) initMeetingSlots() {
 	r.meetingSlots = map[string]*SlotConfig{
 		"meeting_info": {
@@ -78,12 +78,13 @@ func (r *SlotRegistry) initMeetingSlots() {
 			ContentType:  "json",
 		},
 		"polish": {
-			Key:          "polish",
-			DisplayName:  "会议详细记录",
-			Description:  "会议的详细润色记录",
-			PathPattern:  "/api/v1/tasks/{meeting_id}/polish",
-			SupportedOps: []string{"GET"},
-			ContentType:  "markdown",
+			Key:           "polish",
+			DisplayName:   "润色记录",
+			Description:   "会议的完整润色记录",
+			PathPattern:   "/api/v1/meetings/{meeting_id}/docs/polish",
+			SupportedOps:  []string{"GET", "PUT"},
+			ContentType:   "markdown",
+			UseUnifiedAPI: true,
 		},
 		"context": {
 			Key:          "context",
@@ -117,31 +118,6 @@ func (r *SlotRegistry) initMeetingSlots() {
 			Description:  "会议的原始转录文本合并",
 			PathPattern:  "/api/v1/tasks/{meeting_id}/merged_all",
 			SupportedOps: []string{"GET"},
-			ContentType:  "markdown",
-		},
-		"polish_all": {
-			Key:           "polish_all",
-			DisplayName:   "润色合成记录",
-			Description:   "会议的完整润色合成记录",
-			PathPattern:   "/api/v1/meetings/{meeting_id}/docs/polish",
-			SupportedOps:  []string{"GET", "PUT"},
-			ContentType:   "markdown",
-			UseUnifiedAPI: true,
-		},
-		"feature_list": {
-			Key:          "feature_list",
-			DisplayName:  "特性列表",
-			Description:  "会议讨论的特性列表",
-			PathPattern:  "/api/v1/tasks/{meeting_id}/feature-list",
-			SupportedOps: []string{"GET", "PUT"},
-			ContentType:  "markdown",
-		},
-		"architecture_design": {
-			Key:          "architecture_design",
-			DisplayName:  "架构设计",
-			Description:  "会议产出的架构设计文档",
-			PathPattern:  "/api/v1/tasks/{meeting_id}/architecture-design",
-			SupportedOps: []string{"GET", "PUT"},
 			ContentType:  "markdown",
 		},
 	}

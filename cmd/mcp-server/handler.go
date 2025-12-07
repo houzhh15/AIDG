@@ -43,18 +43,25 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry.Register(&tools.GetMeetingDocumentTool{Registry: slotRegistry})
 	registry.Register(&tools.UpdateMeetingDocumentTool{Registry: slotRegistry})
 
+	// 会议章节管理工具 (2个)
+	registry.Register(&tools.GetMeetingDocSectionsTool{})
+	registry.Register(&tools.UpdateMeetingDocSectionTool{})
+	// SyncMeetingDocSectionsTool - 暂时屏蔽，后端 docslot 服务未实现 sync endpoint
+	// registry.Register(&tools.SyncMeetingDocSectionsTool{})
+
 	// 项目文档通用工具 (2个)
 	registry.Register(&tools.GetProjectDocumentTool{Registry: slotRegistry})
 	registry.Register(&tools.UpdateProjectDocumentTool{Registry: slotRegistry})
 
-	// 多层级文档内容工具 (2个)
-	registry.Register(&tools.ReadDocumentContentTool{})
-	registry.Register(&tools.WriteDocumentContentTool{})
+	// === 以下工具暂时屏蔽（代码保留但不注册） ===
+	// 多层级文档内容工具 (2个) - 暂时屏蔽
+	// registry.Register(&tools.ReadDocumentContentTool{})
+	// registry.Register(&tools.WriteDocumentContentTool{})
 
-	// 多层级文档结构工具 (3个)
-	registry.Register(&tools.GetHierarchicalDocumentsTool{})
-	registry.Register(&tools.AnalyzeDocumentRelationshipsTool{})
-	registry.Register(&tools.ManageDocumentReferenceTool{})
+	// 多层级文档结构工具 (3个) - 暂时屏蔽
+	// registry.Register(&tools.GetHierarchicalDocumentsTool{})
+	// registry.Register(&tools.AnalyzeDocumentRelationshipsTool{})
+	// registry.Register(&tools.ManageDocumentReferenceTool{})
 
 	// 任务管理工具 (7个)
 	registry.Register(&tools.ListProjectTasksTool{})
@@ -73,10 +80,10 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry.Register(&tools.DeleteTaskDocSectionTool{})
 	registry.Register(&tools.SyncTaskDocSectionsTool{})
 
-	// 项目进展和任务总结工具 (3个)
-	registry.Register(&tools.ProgressSummaryTool{})
+	// 项目进展和任务总结工具 - 暂时屏蔽 progress_summary 和 update_progress
+	// registry.Register(&tools.ProgressSummaryTool{})
 	registry.Register(&tools.TaskSummaryTool{})
-	registry.Register(&tools.UpdateProgressTool{})
+	// registry.Register(&tools.UpdateProgressTool{})
 
 	log.Printf("✅ [REGISTRY] 已注册 %d 个工具", len(registry.List()))
 

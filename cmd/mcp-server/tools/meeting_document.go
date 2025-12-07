@@ -16,7 +16,7 @@ func (t *GetMeetingDocumentTool) Name() string {
 }
 
 func (t *GetMeetingDocumentTool) Description() string {
-	return "获取会议的指定槽位文档内容。支持的槽位：meeting_info（会议信息）, polish（详细记录）, context（背景）, summary（总结）, topic（话题）, merged_all（原始转录）, polish_all（润色记录）, feature_list（特性列表）, architecture_design（架构设计）"
+	return "获取会议的指定槽位文档内容。支持的槽位：meeting_info（会议信息）, polish（润色记录）, context（背景）, summary（总结）, topic（话题）, merged_all（原始转录）"
 }
 
 func (t *GetMeetingDocumentTool) InputSchema() map[string]interface{} {
@@ -32,8 +32,7 @@ func (t *GetMeetingDocumentTool) InputSchema() map[string]interface{} {
 				"description": "文档槽位键名",
 				"enum": []string{
 					"meeting_info", "polish", "context", "summary",
-					"topic", "merged_all", "polish_all",
-					"feature_list", "architecture_design",
+					"topic", "merged_all",
 				},
 			},
 		},
@@ -81,7 +80,7 @@ func (t *UpdateMeetingDocumentTool) Name() string {
 }
 
 func (t *UpdateMeetingDocumentTool) Description() string {
-	return "更新会议的指定槽位文档内容。支持的槽位：summary（总结）, topic（话题）, polish_all（润色记录）, feature_list（特性列表）, architecture_design（架构设计）"
+	return "更新会议的指定槽位文档内容。支持的槽位：summary（总结）, topic（话题）, polish（润色记录）"
 }
 
 func (t *UpdateMeetingDocumentTool) InputSchema() map[string]interface{} {
@@ -96,8 +95,7 @@ func (t *UpdateMeetingDocumentTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "文档槽位键名",
 				"enum": []string{
-					"summary", "topic", "polish_all",
-					"feature_list", "architecture_design",
+					"summary", "topic", "polish",
 				},
 			},
 			"content": map[string]interface{}{
