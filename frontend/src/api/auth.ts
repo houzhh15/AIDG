@@ -3,6 +3,8 @@ import { message } from 'antd';
 
 export interface LoginResponse { token: string; username: string; scopes: string[]; }
 export interface StoredAuth { token: string; username: string; scopes: string[]; }
+export interface IdentityProvider { id: string; name: string; type: string; }
+export interface ApiErrorResponse { error: string; }
 
 const STORAGE_KEY = 'auth_info_v1';
 
@@ -51,9 +53,9 @@ export async function login(username: string, password: string): Promise<StoredA
  */
 export async function smartLogin(username: string, password: string): Promise<StoredAuth> {
   // 获取公开的身份源列表
-  let ldapIdps: { id: string; name: string; type: string }[] = [];
+  let ldapIdps: IdentityProvider[] = [];
   try {
-    const res = await axios.get<{ success: boolean; data: any[] }>('/api/v1/identity-providers/public');
+    const res = await axios.get<{ success: boolean; data: IdentityProvider[] }>('/api/v1/identity-providers/public');
     if (res.data.success && res.data.data) {
       ldapIdps = res.data.data.filter(idp => idp.type === 'LDAP');
     }
@@ -73,23 +75,18 @@ export async function smartLogin(username: string, password: string): Promise<St
       saveAuth(info);
       console.log(`[Auth] Login successful via LDAP: ${idp.name}`);
       return info;
-    } catch (err) {
+    } catch (err: unknown) {
       console.log(`[Auth] LDAP ${idp.name} auth failed, trying next...`);
       // 继续尝试下一个
     }
   }
 
   // 最后尝试本地认证
-  try {
-    const r = await axios.post<LoginResponse>('/api/v1/login', { Username: username, Password: password });
-    const info: StoredAuth = { token: r.data.token, username: r.data.username, scopes: r.data.scopes };
-    saveAuth(info);
-    console.log('[Auth] Login successful via local auth');
-    return info;
-  } catch (err: any) {
-    // 本地认证也失败，抛出错误
-    throw err;
-  }
+  const r = await axios.post<LoginResponse>('/api/v1/login', { Username: username, Password: password });
+  const info: StoredAuth = { token: r.data.token, username: r.data.username, scopes: r.data.scopes };
+  saveAuth(info);
+  console.log('[Auth] Login successful via local auth');
+  return info;
 }
 
 /**
@@ -161,7 +158,7 @@ authedApi.interceptors.request.use(cfg => {
 
 authedApi.interceptors.response.use(r=>r, (err: AxiosError)=>{
   if(err.response?.status === 401){ 
-    const errorData = err.response?.data as any;
+    const errorData = err.response?.data as ApiErrorResponse;
     const errorMsg = errorData?.error || '';
     
     // 只在真正的认证失败时清除登录状态
