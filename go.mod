@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.11
 
 require (
-	github.com/coreos/go-oidc/v3 v3.17.0
+	github.com/coreos/go-oidc/v3 v3.10.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-dedup/simhash v0.0.0-20170904020510-9ecaca7b509c
 	github.com/go-ldap/ldap/v3 v3.4.12
