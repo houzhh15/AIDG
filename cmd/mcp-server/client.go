@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"net/http"
 	"strings"
 
@@ -21,8 +22,18 @@ func NewAPIClient(baseURL string) *shared.APIClient {
 		baseURL = shared.DEFAULT_SERVER_BASE_URL
 	}
 
+	// 创建HTTP客户端，如果是HTTPS则跳过证书验证（容器内部通信）
+	httpClient := &http.Client{}
+	if strings.HasPrefix(baseURL, "https://") {
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // 容器内部通信，跳过证书验证
+			},
+		}
+	}
+
 	return &shared.APIClient{
 		BaseURL: strings.TrimSuffix(baseURL, "/"),
-		Client:  &http.Client{},
+		Client:  httpClient,
 	}
 }

@@ -57,6 +57,9 @@ services:
       - USERS_DIR=/app/data/users
       - MEETINGS_DIR=/app/data/meetings
       - AUDIT_LOGS_DIR=/app/data/audit_logs
+      # MCP Server URL: Must match SERVER_PROTOCOL and PORT
+      # For HTTP: http://localhost:8000
+      # For HTTPS: https://localhost:443 (or use SERVER_PORT variable)
       - MCP_SERVER_URL=${MCP_SERVER_URL:-http://localhost:8000}
       - MCP_PASSWORD=${MCP_PASSWORD:-dev-mcp-password}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:8000}
