@@ -21,6 +21,16 @@ cmd/*/mcp-server-v2
 go.work
 coverage.out
 
+# TLS/SSL Certificates (security)
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+certs/
+!docs/examples/*.crt
+!docs/examples/*.key
+
 # Node
 node_modules/
 npm-debug.log*

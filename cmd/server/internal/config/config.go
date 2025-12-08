@@ -18,8 +18,11 @@ type Config struct {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Env  string // dev, staging, production
-	Port string
+	Env      string // dev, staging, production
+	Port     string
+	Protocol string // http, https
+	TLSCert  string // TLS certificate file path
+	TLSKey   string // TLS private key file path
 }
 
 // DataConfig 数据目录配置
@@ -55,8 +58,11 @@ var GlobalConfig *Config
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
-			Env:  getEnv("ENV", "dev"),
-			Port: getEnv("PORT", "8000"),
+			Env:      getEnv("ENV", "dev"),
+			Port:     getEnv("PORT", "8000"),
+			Protocol: getEnv("SERVER_PROTOCOL", "http"),
+			TLSCert:  getEnv("TLS_CERT_FILE", ""),
+			TLSKey:   getEnv("TLS_KEY_FILE", ""),
 		},
 		Data: DataConfig{
 			ProjectsDir:  getEnv("PROJECTS_DIR", "./data/projects"),

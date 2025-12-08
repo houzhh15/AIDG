@@ -334,8 +334,24 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		appLogger.Info("server starting", "addr", serverAddr, "env", cfg.Server.Env)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		protocol := strings.ToLower(cfg.Server.Protocol)
+		appLogger.Info("server starting", "addr", serverAddr, "protocol", protocol, "env", cfg.Server.Env)
+		
+		var err error
+		if protocol == "https" {
+			// HTTPS mode
+			if cfg.Server.TLSCert == "" || cfg.Server.TLSKey == "" {
+				appLogger.Error("TLS certificate or key file not specified for HTTPS mode")
+				os.Exit(1)
+			}
+			appLogger.Info("starting HTTPS server", "cert", cfg.Server.TLSCert, "key", cfg.Server.TLSKey)
+			err = srv.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
+		} else {
+			// HTTP mode (default)
+			err = srv.ListenAndServe()
+		}
+		
+		if err != nil && err != http.ErrServerClosed {
 			appLogger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
