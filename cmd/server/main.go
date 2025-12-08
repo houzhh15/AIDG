@@ -336,7 +336,7 @@ func main() {
 	go func() {
 		protocol := strings.ToLower(cfg.Server.Protocol)
 		appLogger.Info("server starting", "addr", serverAddr, "protocol", protocol, "env", cfg.Server.Env)
-		
+
 		var err error
 		if protocol == "https" {
 			// HTTPS mode
@@ -350,7 +350,7 @@ func main() {
 			// HTTP mode (default)
 			err = srv.ListenAndServe()
 		}
-		
+
 		if err != nil && err != http.ErrServerClosed {
 			appLogger.Error("server failed", "error", err)
 			os.Exit(1)
