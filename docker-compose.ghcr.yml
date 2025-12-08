@@ -14,6 +14,13 @@
 #   docker-compose -f docker-compose.ghcr.yml pull
 #   docker-compose -f docker-compose.ghcr.yml up -d
 #
+# HTTPS Configuration:
+#   1. Generate certificates:
+#      ./scripts/generate-self-signed-cert.sh
+#   2. Set SERVER_PROTOCOL=https in environment
+#   3. Mount certificate files to container
+#   4. Use port 443 for HTTPS
+#
 # Version Strategy:
 #   - Development: Use 'latest' for automatic updates (IMAGE_TAG=latest)
 #   - Production: Pin to specific version (default: v0.1.1)
@@ -28,11 +35,17 @@ services:
     image: ghcr.io/houzhh15/aidg:${IMAGE_TAG:-latest}
     container_name: aidg-unified
     ports:
-      - "8000:8000"  # Web Server (Human Interface)
-      - "8081:8081"  # MCP Server (AI Interface)
+      # HTTP/HTTPS port (use 8000 for HTTP, 443 for HTTPS in production)
+      - "${SERVER_PORT:-8000}:${SERVER_PORT:-8000}"
+      # MCP Server port
+      - "8081:8081"
     environment:
       - ENV=development
-      - PORT=8000
+      - PORT=${SERVER_PORT:-8000}
+      # HTTPS Configuration (set SERVER_PROTOCOL=https to enable HTTPS)
+      - SERVER_PROTOCOL=${SERVER_PROTOCOL:-http}
+      - TLS_CERT_FILE=${TLS_CERT_FILE:-}
+      - TLS_KEY_FILE=${TLS_KEY_FILE:-}
       - MCP_HTTP_PORT=8081
       - LOG_LEVEL=debug
       - LOG_FORMAT=console
@@ -52,6 +65,9 @@ services:
       - ./data/users:/app/data/users
       - ./data/meetings:/app/data/meetings
       - ./data/audit_logs:/app/data/audit_logs
+      # Mount TLS certificates for HTTPS (uncomment and configure for HTTPS)
+      # - ./certs/server.crt:/app/certs/server.crt:ro
+      # - ./certs/server.key:/app/certs/server.key:ro
     networks:
       - aidg-network
     restart: unless-stopped
