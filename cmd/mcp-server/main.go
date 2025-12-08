@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -208,8 +210,17 @@ func readinessCheckHandler(cfg *config.MCPConfig) http.HandlerFunc {
 
 // checkBackendReachability 检查后端服务是否可达
 func checkBackendReachability(backendURL string) bool {
+	// 创建支持HTTPS的客户端（跳过证书验证，用于容器内部通信）
 	client := &http.Client{
 		Timeout: 3 * time.Second,
+	}
+	// 如果是HTTPS，跳过证书验证
+	if strings.HasPrefix(backendURL, "https://") {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
 	}
 	resp, err := client.Get(fmt.Sprintf("%s/api/v1/health", backendURL))
 	if err != nil {
