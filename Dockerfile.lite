@@ -95,6 +95,10 @@ COPY --from=frontend-builder --chown=aidg:aidg /app/frontend/dist /app/frontend/
 # Copy config directory with whisper models metadata
 COPY --chown=aidg:aidg config /app/config
 
+# Copy healthcheck script
+COPY --chown=aidg:aidg deployments/docker/healthcheck.sh /app/healthcheck.sh
+RUN chmod +x /app/healthcheck.sh
+
 # Copy supervisor config
 COPY --chown=aidg:aidg deployments/docker/supervisord.conf /etc/supervisord.conf
 
@@ -118,8 +122,7 @@ ENV ENV=production \
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8000/health && \
-        wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1
+    CMD /app/healthcheck.sh
 
 # Run with supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

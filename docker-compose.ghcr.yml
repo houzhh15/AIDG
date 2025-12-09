@@ -76,7 +76,9 @@ services:
       - aidg-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:8000/health && wget --no-verbose --tries=1 --spider http://localhost:8081/health"]
+      # Dynamic healthcheck that supports both HTTP and HTTPS
+      # The container's internal healthcheck.sh script will use SERVER_PROTOCOL
+      test: ["CMD", "sh", "-c", "[ \"${SERVER_PROTOCOL:-http}\" = \"https\" ] && wget --no-verbose --tries=1 --spider --no-check-certificate https://localhost:${SERVER_PORT:-8000}/health || wget --no-verbose --tries=1 --spider http://localhost:${SERVER_PORT:-8000}/health"]
       interval: 30s
       timeout: 5s
       retries: 3
