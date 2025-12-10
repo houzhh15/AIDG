@@ -82,18 +82,3 @@ html, body, #root {
 /* ChunkList 外层容器：在 App.tsx 内会设置 overflow:auto */
 
 /* RightPanel 外层容器：在 App.tsx 已设置 overflow:auto */
-
-/* 隐藏 Mermaid 的错误提示弹窗 */
-#d2h-675100,
-.mermaid-error-message,
-[id*="mermaid-error"],
-div[style*="position: fixed"][style*="bottom"],
-div[style*="z-index: 9999"] {
-  display: none !important;
-}
-
-/* 针对 Mermaid 在页面底部显示的错误提示 */
-body > div[style*="position: fixed"]:has([id*="mermaid"]),
-body > div[style*="position: fixed"]:has(text:contains("Syntax error")) {
-  display: none !important;
-}

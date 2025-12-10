@@ -12,17 +12,16 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
   useEffect(() => {
     // 监听并移除 Mermaid 在 body 中创建的错误提示元素
     const removeErrorElements = () => {
-      // 查找并移除所有可能的 Mermaid 错误提示元素
+      // 只查找特定的错误容器 ID（Mermaid错误提示的特征）
       const errorSelectors = [
-        'div[id*="d2h-"]',  // Mermaid 的错误容器 ID
-        'div[style*="position: fixed"][style*="z-index: 9999"]',
-        'div[style*="position: fixed"][style*="bottom"]'
+        'div[id^="d2h-"]'  // Mermaid 的错误容器 ID 前缀
       ];
       
       errorSelectors.forEach(selector => {
         document.querySelectorAll(selector).forEach(el => {
           const text = el.textContent || '';
-          if (text.includes('Syntax error') || text.includes('mermaid')) {
+          // 只有同时包含 "Syntax error" 才移除，避免误删
+          if (text.includes('Syntax error in text')) {
             el.remove();
           }
         });
@@ -35,8 +34,12 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
         mutation.addedNodes.forEach((node) => {
           if (node.nodeType === 1) { // Element node
             const element = node as Element;
+            // 检查元素ID和内容，只移除错误提示
+            const id = element.id || '';
             const text = element.textContent || '';
-            if (text.includes('Syntax error') || text.includes('mermaid')) {
+            
+            // 只移除明确的错误提示元素：ID以d2h-开头且包含"Syntax error in text"
+            if (id.startsWith('d2h-') && text.includes('Syntax error in text')) {
               element.remove();
             }
           }
@@ -44,10 +47,10 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
       });
     });
 
-    // 开始观察 body 的变化
+    // 开始观察 body 的直接子元素变化（错误提示通常添加到body下）
     observer.observe(document.body, {
       childList: true,
-      subtree: true
+      subtree: false  // 只观察body的直接子元素，不深入
     });
 
     // 覆盖 Mermaid 的全局错误处理，阻止错误弹窗
