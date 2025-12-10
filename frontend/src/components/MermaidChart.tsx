@@ -16,7 +16,7 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
       setError(null);
 
       try {
-        // 初始化 mermaid
+        // 初始化 mermaid，关闭错误提示弹窗
         mermaid.initialize({ 
           startOnLoad: true,
           theme: 'default',
@@ -34,7 +34,10 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
             lineColor: '#fa8c16',
             secondaryColor: '#fff7e6',
             tertiaryColor: '#fff1b8'
-          }
+          },
+          // 关键配置：禁用 Mermaid 的错误提示弹窗
+          suppressErrors: true,
+          logLevel: 'error'
         });
 
         // 生成唯一 ID
@@ -47,7 +50,7 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
           }
         }).catch((err) => {
           console.error('Mermaid render error:', err);
-          setError('图表渲染失败');
+          setError('图表语法错误，请检查Mermaid代码');
         });
       } catch (err) {
         console.error('Mermaid initialization error:', err);
