@@ -82,3 +82,14 @@ html, body, #root {
 /* ChunkList 外层容器：在 App.tsx 内会设置 overflow:auto */
 
 /* RightPanel 外层容器：在 App.tsx 已设置 overflow:auto */
+
+/* 隐藏 Mermaid 的错误提示弹窗 - 使用更精确的选择器 */
+div[id^="d2h-"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  pointer-events: none !important;
+}
