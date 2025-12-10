@@ -16,7 +16,7 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
       setError(null);
 
       try {
-        // 初始化 mermaid，关闭错误提示弹窗
+        // 初始化 mermaid，配置日志级别以减少错误提示
         mermaid.initialize({ 
           startOnLoad: true,
           theme: 'default',
@@ -35,9 +35,8 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
             secondaryColor: '#fff7e6',
             tertiaryColor: '#fff1b8'
           },
-          // 关键配置：禁用 Mermaid 的错误提示弹窗
-          suppressErrors: true,
-          logLevel: 'error'
+          // 设置日志级别为 fatal，只显示致命错误，抑制语法错误弹窗
+          logLevel: 'fatal'
         });
 
         // 生成唯一 ID
