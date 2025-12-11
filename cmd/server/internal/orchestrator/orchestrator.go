@@ -103,7 +103,8 @@ type Config struct {
 	WhisperMode           string // "http" (default) or "cli"
 	WhisperAPIURL         string // Whisper HTTP API endpoint (default: "http://whisper:8082")
 	WhisperModel          string
-	WhisperSegments       string // e.g. "20s"; empty or "0" -> do not pass --segments
+	WhisperTemperature    float64 // Temperature for sampling (0.0-1.0, default: 0.0 for deterministic output)
+	WhisperSegments       string  // e.g. "20s"; empty or "0" -> do not pass --segments
 	DeviceDefault         string
 	DiarizationBackend    string // "pyannote" (default) or "speechbrain"
 	DiarizationScriptPath string // PyAnnote diarization script path (default: "/app/scripts/pyannote_diarize.py")
@@ -507,9 +508,9 @@ type Orchestrator struct {
 	healthTicker *time.Ticker
 }
 
-// RunSingleASR runs whisper once on an existing chunk wav with a provided model and segment length (in seconds string like "20s")
+// RunSingleASR runs whisper once on an existing chunk wav with a provided model, segment length, and temperature
 // It does not mutate orchestrator config. Returns path to generated segments json.
-func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model string, segLen string) (string, error) {
+func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model string, segLen string, temperature float64) (string, error) {
 	if model == "" {
 		model = o.cfg.WhisperModel
 	}
@@ -544,8 +545,9 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 	// For other transcribers, use normal flow
 	// Prepare transcription options
 	opts := &whisper.TranscribeOptions{
-		Model:    model,
-		Language: "", // Auto-detect
+		Model:       model,
+		Language:    "", // Auto-detect
+		Temperature: temperature, // Use provided temperature instead of config
 	}
 
 	// Call transcriber
@@ -1063,10 +1065,11 @@ func (o *Orchestrator) asrWorker(ctx context.Context) {
 
 			// 构造TranscribeOptions
 			opts := &whisper.TranscribeOptions{
-				Model:    o.cfg.WhisperModel,
-				Language: "", // 自动检测
-				Prompt:   "",
-				Timeout:  10 * time.Minute,
+				Model:       o.cfg.WhisperModel,
+				Language:    "", // 自动检测
+				Temperature: o.cfg.WhisperTemperature,
+				Prompt:      "",
+				Timeout:     10 * time.Minute,
 			}
 
 			// 调用Transcriber.Transcribe()

@@ -225,8 +225,9 @@ func HandleASROnce(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 		var body struct {
-			Model    string `json:"model"`
-			Segments string `json:"segments"`
+			Model       string  `json:"model"`
+			Segments    string  `json:"segments"`
+			Temperature float64 `json:"temperature"` // Whisper sampling temperature (0.0-1.0)
 		}
 		_ = c.ShouldBindJSON(&body)
 		wavPath := filepath.Join(t.Cfg.OutputDir, fmt.Sprintf("chunk_%s.wav", cid))
@@ -251,7 +252,7 @@ func HandleASROnce(reg *meetings.Registry) gin.HandlerFunc {
 			}
 			log.Printf("[HandleASROnce] Orchestrator initialized successfully")
 		}
-		segPath, err := orch.RunSingleASR(ctx, wavPath, body.Model, body.Segments)
+		segPath, err := orch.RunSingleASR(ctx, wavPath, body.Model, body.Segments, body.Temperature)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

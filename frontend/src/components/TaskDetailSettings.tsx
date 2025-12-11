@@ -99,6 +99,7 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
       
       const formValues = {
         whisper_model: currentModel,
+        whisper_temperature: initial?.whisper_temperature !== undefined ? initial.whisper_temperature : 0.0,
         whisper_segments: initial?.whisper_segments || '15s',
         product_line: initial?.product_line,
         meeting_time: meetingTime,
@@ -219,6 +220,20 @@ export const TaskDetailSettings: React.FC<Props> = ({ open, onClose, taskId, ini
               下载模型
             </Button>
           </div>
+          <Form.Item 
+            label="Temperature" 
+            name="whisper_temperature" 
+            tooltip="控制采样随机性(0.0-1.0)。较低值(如0.0)更确定，可减少重复和幻觉；较高值增加随机性。推荐0.0以获得最稳定的转录结果"
+            initialValue={0.0}
+          >
+            <Input 
+              type="number" 
+              placeholder="0.0" 
+              min={0} 
+              max={1} 
+              step={0.1}
+            />
+          </Form.Item>
           <Form.Item label="Segments" name="whisper_segments" tooltip="如 20s; 为空或0表示不加 --segments">
             <Input placeholder="20s" allowClear />
           </Form.Item>

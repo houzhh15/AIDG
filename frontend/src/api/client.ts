@@ -105,8 +105,8 @@ export async function updateSegments(taskId: string, chunkId: string, data: Segm
   await api.put(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/segments`, data);
 }
 
-export async function asrOnce(taskId: string, chunkId: string, model: string, segments: string){
-  const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/asr_once`, { model, segments });
+export async function asrOnce(taskId: string, chunkId: string, model: string, segments: string, temperature: number = 0.0){
+  const r = await api.post(`/tasks/${encodeURIComponent(taskId)}/chunks/${chunkId}/asr_once`, { model, segments, temperature });
   return r.data;
 }
 

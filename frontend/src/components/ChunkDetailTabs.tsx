@@ -21,6 +21,7 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
   const [markdownMode, setMarkdownMode] = useState<{[k:string]:boolean}>({ polish: true });
   const [asrModel,setAsrModel] = useState('');
   const [asrSeg,setAsrSeg] = useState<number>(20);
+  const [asrTemperature,setAsrTemperature] = useState<number>(0.0);
   const [asrLoading,setAsrLoading] = useState(false);
   const isSegments = active === 'segments';
   const allowWrite = !!canWriteMeeting;
@@ -58,7 +59,7 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     try {
   // asrSeg 为 0 时，发送字符串 "0"，后端将跳过 --segments 参数
   const segStr = asrSeg === 0 ? '0' : `${asrSeg}s`;
-      await asrOnce(taskId, chunkId, asrModel, segStr);
+      await asrOnce(taskId, chunkId, asrModel, segStr, asrTemperature);
       message.success('ASR完成, 重新加载segments');
       load(true);
     } catch(e:any){ message.error(e.message); }
@@ -220,6 +221,21 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
             }}
             addonAfter="s"
             disabled={!allowWrite}
+          />
+          <InputNumber
+            size="small"
+            style={{ width:100 }}
+            min={0}
+            max={1}
+            step={0.1}
+            value={asrTemperature}
+            onChange={v=>{
+              if(v === null || v === undefined) { setAsrTemperature(0.0); return; }
+              setAsrTemperature(v);
+            }}
+            addonBefore="Temp"
+            disabled={!allowWrite}
+            placeholder="0.0"
           />
           <Button
             size="small"
