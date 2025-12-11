@@ -98,6 +98,22 @@ func (g *GoWhisperImpl) Transcribe(ctx context.Context, audioPath string, option
 		}
 	}
 
+	// Add temperature field (default 0.0 to reduce hallucinations/repetitions)
+	temperature := 0.0
+	if options != nil && options.Temperature > 0 {
+		temperature = options.Temperature
+	}
+	if err := writer.WriteField("temperature", fmt.Sprintf("%.1f", temperature)); err != nil {
+		return nil, fmt.Errorf("failed to write temperature field: %w", err)
+	}
+
+	// Add optional prompt field to provide context
+	if options != nil && options.Prompt != "" {
+		if err := writer.WriteField("prompt", options.Prompt); err != nil {
+			return nil, fmt.Errorf("failed to write prompt field: %w", err)
+		}
+	}
+
 	// Close writer to finalize multipart data
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)

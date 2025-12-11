@@ -107,6 +107,12 @@ type TranscribeOptions struct {
 	// Default: ""
 	Prompt string
 
+	// Temperature controls sampling randomness (0.0-1.0).
+	// Lower values (e.g., 0.0) are more deterministic and reduce hallucinations/repetitions.
+	// Higher values increase randomness. Use 0.0 to minimize repetition issues.
+	// Default: 0.0 (most deterministic, recommended for production)
+	Temperature float64
+
 	// Timeout overrides the default transcription timeout.
 	// Default: 120 seconds (2 minutes)
 	Timeout time.Duration

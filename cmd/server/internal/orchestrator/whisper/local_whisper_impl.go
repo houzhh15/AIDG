@@ -86,9 +86,21 @@ func (l *LocalWhisperImpl) Transcribe(ctx context.Context, audioPath string, opt
 	// Build CLI arguments - program path should NOT be in args array
 	args := []string{"transcribe", model, audioPath, "--format", "json"}
 
+	// Add temperature parameter (default 0.0 to reduce hallucinations/repetitions)
+	temperature := 0.0
+	if options != nil && options.Temperature > 0 {
+		temperature = options.Temperature
+	}
+	args = append(args, "--temperature", fmt.Sprintf("%.1f", temperature))
+
 	// Add optional language parameter
 	if options != nil && options.Language != "" {
 		args = append(args, "--language", options.Language)
+	}
+
+	// Add optional prompt parameter to provide context
+	if options != nil && options.Prompt != "" {
+		args = append(args, "--prompt", options.Prompt)
 	}
 
 	// Execute command with context timeout
