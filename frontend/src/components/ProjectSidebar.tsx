@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Layout, List, Button, Typography, Space, Modal, Form, Input, Popconfirm, message, Tag, Tooltip, Dropdown, type MenuProps } from 'antd';
-import { PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, HistoryOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, HistoryOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { ProjectSummary, listProjects, createProject, deleteProject, patchProject } from '../api/projects';
 
 interface Props {
@@ -88,6 +88,18 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
 
   const toggleCollapsed = () => setCollapsed((prev) => !prev);
 
+  const confirmDelete = (project: ProjectSummary) => {
+    Modal.confirm({
+      title: '确认删除项目',
+      icon: <ExclamationCircleOutlined />,
+      content: `确定要删除项目 "${project.name}" 吗？此操作无法撤销。`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => handleDelete(project.id),
+    });
+  };
+
   const getContextMenuItems = (project: ProjectSummary): MenuProps['items'] => [
     {
       key: 'copy-id',
@@ -106,7 +118,7 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
       icon: <DeleteOutlined />,
       label: '删除项目',
       danger: true,
-      onClick: () => handleDelete(project.id),
+      onClick: () => confirmDelete(project),
     },
     {
       type: 'divider',
