@@ -1,0 +1,12 @@
+{
+  "prompt_id": "prompt_1765850298",
+  "name": "sections",
+  "description": "当出现响应超长错误时使用",
+  "content": "响应长度超长了，请使用章节级编辑标准流程 ：\n- 1. 先使用 updata_task_document 提交所有的章节包括子章节。\n- 2. 调用 get_task_doc_sections 获得章节信息\n- 3. 使用 update_task_section更新章节内容。但不要包含任何标题。",
+  "scope": "global",
+  "visibility": "public",
+  "owner": "houzhh",
+  "version": 1,
+  "created_at": "2025-12-16T09:58:18.826442+08:00",
+  "updated_at": "2025-12-16T09:58:18.826442+08:00"
+}

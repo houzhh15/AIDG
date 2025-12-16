@@ -530,23 +530,22 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 
 	// Defensive check: ensure degradationController is initialized
 	if o.degradationController == nil {
-		return "", fmt.Errorf("degradation controller not initialized")
+		log.Printf("[RunSingleASR] DegradationController not initialized, initializing now...")
+		// Directly initialize the degradation controller without changing state
+		if err := o.ensureDegradationController(); err != nil {
+			return "", fmt.Errorf("failed to initialize degradation controller: %w", err)
+		}
+		log.Printf("[RunSingleASR] DegradationController initialized successfully")
 	}
 
 	// Use DegradationController to get active transcriber
 	transcriber := o.degradationController.GetTranscriber()
 
-	// Check if transcriber is LocalWhisperImpl - use direct file output
-	if transcriber.Name() == "local-whisper" {
-		log.Printf("[RunSingleASR] Using LocalWhisper direct file output")
-		return o.runLocalWhisperDirectOutput(ctx, chunkWav, model, out)
-	}
-
-	// For other transcribers, use normal flow
+	// For all transcribers, use normal flow with proper JSON parsing
 	// Prepare transcription options
 	opts := &whisper.TranscribeOptions{
 		Model:       model,
-		Language:    "", // Auto-detect
+		Language:    "",          // Auto-detect
 		Temperature: temperature, // Use provided temperature instead of config
 	}
 
@@ -576,7 +575,7 @@ func (o *Orchestrator) RunSingleASR(ctx context.Context, chunkWav string, model 
 }
 
 // runLocalWhisperDirectOutput runs local whisper and writes output directly to file
-func (o *Orchestrator) runLocalWhisperDirectOutput(ctx context.Context, chunkWav, model, outputPath string) (string, error) {
+func (o *Orchestrator) runLocalWhisperDirectOutput(ctx context.Context, chunkWav, model, outputPath string, temperature float64) (string, error) {
 	// Get whisper program path
 	programPath := os.Getenv("WHISPER_PROGRAM_PATH")
 	if programPath == "" {
@@ -592,6 +591,8 @@ func (o *Orchestrator) runLocalWhisperDirectOutput(ctx context.Context, chunkWav
 
 	// Build CLI arguments
 	args := []string{"transcribe", model, chunkWav, "--format", "json"}
+	// Add temperature parameter (default 0.0 if not specified)
+	args = append(args, "--temperature", fmt.Sprintf("%.1f", temperature))
 
 	// Execute command
 	cmd := exec.CommandContext(ctx, programPath, args...)
@@ -1884,6 +1885,7 @@ func (o *Orchestrator) PrepareResume() error {
 // This is a lightweight initialization that sets up transcribers and health checking
 // without starting background workers.
 func (o *Orchestrator) InitForSingleASR() error {
+	log.Printf("[InitForSingleASR] START - current state: %s", o.state)
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 	if o.state != StateCreated {
@@ -1897,6 +1899,7 @@ func (o *Orchestrator) InitForSingleASR() error {
 		log.Printf("[InitForSingleASR] Dependency validation failed: %v", err)
 		return err
 	}
+	log.Printf("[InitForSingleASR] Dependencies validated, creating transcribers...")
 
 	// 1. 创建Primary Transcriber (same logic as Start method)
 	var primaryTranscriber whisper.WhisperTranscriber
@@ -1971,6 +1974,90 @@ func (o *Orchestrator) InitForSingleASR() error {
 
 	// Note: We don't start the health checker or workers for single ASR operations
 	o.state = StateRunning
+	log.Printf("[InitForSingleASR] COMPLETE - state set to Running, degradationController: %v", o.degradationController != nil)
+	return nil
+}
+
+// ensureDegradationController initializes the degradation controller if not already initialized.
+// This is a helper method for RunSingleASR when working with existing orchestrators.
+func (o *Orchestrator) ensureDegradationController() error {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+
+	if o.degradationController != nil {
+		return nil // Already initialized
+	}
+
+	log.Printf("[ensureDegradationController] Initializing degradation controller...")
+
+	// Ensure runtime defaults are set
+	o.cfg.ApplyRuntimeDefaults()
+
+	// 1. Create Primary Transcriber
+	var primaryTranscriber whisper.WhisperTranscriber
+	whisperMode := strings.ToLower(o.cfg.WhisperMode)
+	if whisperMode == "" {
+		whisperMode = "http"
+	}
+
+	switch whisperMode {
+	case "http", "go-whisper":
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[ensureDegradationController] Using GoWhisper HTTP mode (API=%s)", apiURL)
+	case "faster-whisper":
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[ensureDegradationController] Using FasterWhisper HTTP mode (API=%s)", apiURL)
+	case "cli", "local-whisper":
+		programPath := os.Getenv("WHISPER_PROGRAM_PATH")
+		if programPath == "" {
+			programPath = "/app/bin/whisper/whisper"
+		}
+		modelDir := "./models/whisper"
+		var err error
+		primaryTranscriber, err = whisper.NewLocalWhisperImpl(programPath, modelDir)
+		if err != nil {
+			return fmt.Errorf("failed to create LocalWhisperImpl: %w", err)
+		}
+		log.Printf("[ensureDegradationController] Using LocalWhisper CLI mode (program=%s, modelDir=%s)", programPath, modelDir)
+	default:
+		apiURL := o.cfg.WhisperAPIURL
+		if apiURL == "" {
+			apiURL = "http://whisper:8082"
+		}
+		primaryTranscriber = whisper.NewGoWhisperImpl(apiURL)
+		log.Printf("[ensureDegradationController] WhisperMode unspecified, defaulting to GoWhisper HTTP (API=%s)", apiURL)
+	}
+
+	// 2. Create Fallback Transcriber
+	fallbackTranscriber := whisper.NewMockTranscriber()
+
+	// 3. Create HealthChecker
+	checkInterval := o.cfg.HealthCheckInterval
+	if checkInterval == 0 {
+		checkInterval = 5 * time.Minute
+	}
+	failThreshold := o.cfg.HealthCheckFailThreshold
+	if failThreshold == 0 {
+		failThreshold = 3
+	}
+	o.healthChecker = health.NewHealthChecker(primaryTranscriber, checkInterval, failThreshold)
+
+	// 4. Create DegradationController
+	o.degradationController = degradation.NewDegradationController(
+		primaryTranscriber,
+		fallbackTranscriber,
+		o.healthChecker,
+	)
+	log.Printf("[ensureDegradationController] DegradationController created successfully")
+
 	return nil
 }
 

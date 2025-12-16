@@ -139,7 +139,7 @@ func (t *UpdateTaskDocSectionTool) Name() string {
 }
 
 func (t *UpdateTaskDocSectionTool) Description() string {
-	return "局部章节正文更新（标题保持不变），支持 expected_version 并发防护。优先用于细粒度修改，代替全文覆盖 update_task_document。"
+	return "局部章节正文更新（标题保持不变）。expected_version参数可选：如不提供则使用最后写入赢策略；如提供则启用乐观锁校验。优先用于细粒度修改，代替全文覆盖。"
 }
 
 func (t *UpdateTaskDocSectionTool) InputSchema() map[string]interface{} {
@@ -169,7 +169,7 @@ func (t *UpdateTaskDocSectionTool) InputSchema() map[string]interface{} {
 			},
 			"expected_version": map[string]interface{}{
 				"type":        "number",
-				"description": "期望版本号（用于版本冲突检测，可选）",
+				"description": "期望版本号（可选）。不提供时使用最后写入赢策略；提供时启用乐观锁，版本不匹配则失败",
 			},
 		},
 		"required": []string{"doc_type", "section_id", "content"},
@@ -204,11 +204,15 @@ func (t *UpdateTaskDocSectionTool) Execute(arguments map[string]interface{}, cli
 	body := map[string]interface{}{
 		"content": content,
 	}
-	if expectedVersion, ok := arguments["expected_version"].(float64); ok {
+
+	// 如果LLM提供了expected_version，则使用它；否则不传递，后端将采用"最后写入赢"策略
+	if expectedVersion, ok := arguments["expected_version"].(float64); ok && expectedVersion > 0 {
 		body["expected_version"] = int(expectedVersion)
 	}
 
-	return shared.CallAPI(apiClient, "PUT", fmt.Sprintf("/api/v1/projects/%s/tasks/%s/%s/sections/%s", projectID, taskID, docType, sectionID), body, clientToken)
+	// 直接调用，不再自动重试（因为LLM很难正确管理版本号）
+	putURL := fmt.Sprintf("/api/v1/projects/%s/tasks/%s/%s/sections/%s", projectID, taskID, docType, sectionID)
+	return shared.CallAPI(apiClient, "PUT", putURL, body, clientToken)
 }
 
 // InsertTaskDocSectionTool 在任务文档中插入新章节

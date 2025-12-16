@@ -229,7 +229,12 @@ func HandleASROnce(reg *meetings.Registry) gin.HandlerFunc {
 			Segments    string  `json:"segments"`
 			Temperature float64 `json:"temperature"` // Whisper sampling temperature (0.0-1.0)
 		}
-		_ = c.ShouldBindJSON(&body)
+		if err := c.ShouldBindJSON(&body); err != nil {
+			log.Printf("[HandleASROnce] Failed to bind JSON: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request body: %v", err)})
+			return
+		}
+		log.Printf("[HandleASROnce] Request params - model: %s, segments: %s, temperature: %.2f", body.Model, body.Segments, body.Temperature)
 		wavPath := filepath.Join(t.Cfg.OutputDir, fmt.Sprintf("chunk_%s.wav", cid))
 		if _, err := os.Stat(wavPath); err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "chunk wav not found"})
@@ -241,6 +246,7 @@ func HandleASROnce(reg *meetings.Registry) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		orch := t.Orch
+		log.Printf("[HandleASROnce] Task orchestrator status - orch != nil: %v", orch != nil)
 		if orch == nil { // ephemeral orchestrator (no recording workers)
 			log.Printf("[HandleASROnce] Creating ephemeral orchestrator for task %s", id)
 			orch = orchestrator.New(t.Cfg)
@@ -251,12 +257,17 @@ func HandleASROnce(reg *meetings.Registry) gin.HandlerFunc {
 				return
 			}
 			log.Printf("[HandleASROnce] Orchestrator initialized successfully")
+		} else {
+			log.Printf("[HandleASROnce] Using existing task orchestrator")
 		}
+		log.Printf("[HandleASROnce] About to call RunSingleASR - wavPath: %s, model: %s, segments: %s, temperature: %.2f", wavPath, body.Model, body.Segments, body.Temperature)
 		segPath, err := orch.RunSingleASR(ctx, wavPath, body.Model, body.Segments, body.Temperature)
 		if err != nil {
+			log.Printf("[HandleASROnce] RunSingleASR failed: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		log.Printf("[HandleASROnce] RunSingleASR succeeded - segPath: %s", segPath)
 		c.JSON(http.StatusOK, gin.H{"segments_json": filepath.Base(segPath)})
 	}
 }

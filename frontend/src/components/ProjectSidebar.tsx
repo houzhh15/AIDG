@@ -133,6 +133,7 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
+        overflow: 'hidden',
       }}
     >
       <div
@@ -159,13 +160,12 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
           />
         </Tooltip>
       </div>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <div className="scroll-region" style={{ flex: 1, minHeight: 0 }}>
-          <List
-            size="small"
-            dataSource={projects}
-            loading={loading}
-            renderItem={p => (
+      <div className="scroll-region" style={{ flex: 1, minHeight: 0 }}>
+        <List
+          size="small"
+          dataSource={projects}
+          loading={loading}
+          renderItem={p => (
               <Dropdown
                 menu={{ items: getContextMenuItems(p) }}
                 trigger={['contextMenu']}
@@ -246,8 +246,8 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
                 </Dropdown>
               )}
             />
-        </div>
-        {!collapsed && (
+      </div>
+      {!collapsed && (
           <div
             style={{
               borderTop: '1px solid #eee',
@@ -268,7 +268,6 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
             </Space>
           </div>
         )}
-      </div>
       <Modal
         title={editing ? '编辑项目' : '创建项目'}
         open={modalOpen}

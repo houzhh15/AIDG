@@ -65,7 +65,10 @@ services:
   aidg:
     # Use pre-built image from GitHub Container Registry
     # Set IMAGE_TAG to use specific version: IMAGE_TAG=v0.1.15 docker-compose -f docker-compose.deps.yml up -d
-    image: ghcr.io/houzhh15/aidg:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    image: aidg-aidg:lite-test
     container_name: aidg-unified
     environment:
       # 依赖服务配置（符合 task_1760229132 设计）

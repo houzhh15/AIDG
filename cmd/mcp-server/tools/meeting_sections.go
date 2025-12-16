@@ -65,7 +65,7 @@ func (t *UpdateMeetingDocSectionTool) Name() string {
 }
 
 func (t *UpdateMeetingDocSectionTool) Description() string {
-	return "局部章节正文更新（标题保持不变），支持 expected_version 并发防护。优先用于细粒度修改，代替全文覆盖 update_meeting_document。"
+	return "局部章节正文更新（标题保持不变）。expected_version参数可选：如不提供则使用最后写入赢策略；如提供则启用乐观锁校验。优先用于细粒度修改，代替全文覆盖。"
 }
 
 func (t *UpdateMeetingDocSectionTool) InputSchema() map[string]interface{} {
@@ -91,7 +91,7 @@ func (t *UpdateMeetingDocSectionTool) InputSchema() map[string]interface{} {
 			},
 			"expected_version": map[string]interface{}{
 				"type":        "number",
-				"description": "期望版本号（用于版本冲突检测，可选）",
+				"description": "期望版本号（可选）。不提供时使用最后写入赢策略；提供时启用乐观锁，版本不匹配则失败",
 			},
 		},
 		"required": []string{"meeting_id", "slot_key", "section_id", "content"},
@@ -130,11 +130,15 @@ func (t *UpdateMeetingDocSectionTool) Execute(arguments map[string]interface{}, 
 	body := map[string]interface{}{
 		"content": content,
 	}
-	if expectedVersion, ok := arguments["expected_version"].(float64); ok {
+
+	// 如果LLM提供了expected_version，则使用它；否则不传递，后端将采用"最后写入赢"策略
+	if expectedVersion, ok := arguments["expected_version"].(float64); ok && expectedVersion > 0 {
 		body["expected_version"] = int(expectedVersion)
 	}
 
-	return shared.CallAPI(apiClient, "PUT", fmt.Sprintf("/api/v1/meetings/%s/docs/%s/sections/%s", meetingID, slotKey, sectionID), body, clientToken)
+	// 直接调用，不再自动重试（因为LLM很难正确管理版本号）
+	putURL := fmt.Sprintf("/api/v1/meetings/%s/docs/%s/sections/%s", meetingID, slotKey, sectionID)
+	return shared.CallAPI(apiClient, "PUT", putURL, body, clientToken)
 }
 
 // SyncMeetingDocSectionsTool 同步会议文档的章节（与 compiled.md 双向同步）

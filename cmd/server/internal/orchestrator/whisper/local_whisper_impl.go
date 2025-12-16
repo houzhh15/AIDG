@@ -115,12 +115,31 @@ func (l *LocalWhisperImpl) Transcribe(ctx context.Context, audioPath string, opt
 	fmt.Printf("[LocalWhisper] OK - Output length: %d bytes\n", len(output))
 	fmt.Printf("[LocalWhisper] First 500 chars: %s\n", string(output[:min(len(output), 500)]))
 
+	// Filter out non-JSON prefix (e.g., "Setting temperature to: 0")
+	// Find the first line that starts with '{' and keep everything from there
+	var jsonOutput []byte
+	lines := bytes.Split(output, []byte("\n"))
+	jsonStarted := false
+	for _, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		// Once we find the first '{', include all subsequent lines
+		if !jsonStarted && bytes.HasPrefix(trimmed, []byte("{")) {
+			jsonStarted = true
+		}
+		if jsonStarted {
+			jsonOutput = append(jsonOutput, line...)
+			jsonOutput = append(jsonOutput, '\n')
+		}
+	}
+
+	fmt.Printf("[LocalWhisper] Filtered to %d bytes of JSON (started at first '{}')\n", len(jsonOutput))
+
 	// Parse multiple JSON objects from output (not strict JSONL, objects are pretty-printed)
 	// Strategy: Use json.Decoder to parse multiple JSON values from the byte stream
 	var result TranscriptionResult
 	result.Segments = []TranscriptionSegment{}
 
-	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder := json.NewDecoder(bytes.NewReader(jsonOutput))
 	for {
 		var segment TranscriptionSegment
 		if err := decoder.Decode(&segment); err != nil {
