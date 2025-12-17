@@ -20,6 +20,7 @@ const (
 	ScopeProjectDocRead  = "project.doc.read"  // 项目文档读取（特性列表、架构设计、技术设计、文档管理、项目状态等）
 	ScopeProjectDocWrite = "project.doc.write" // 项目文档编辑（特性列表、架构设计、技术设计、文档管理、项目状态等）
 	ScopeProjectAdmin    = "project.admin"     // 项目全局管理（创建/全局配置）
+	ScopeProjectDelete   = "project.delete"    // 项目删除（允许删除项目和任务）
 
 	// 任务权限
 	ScopeTaskRead        = "task.read"
@@ -53,7 +54,7 @@ const (
 )
 
 var allScopes = []string{
-	ScopeProjectDocRead, ScopeProjectDocWrite, ScopeProjectAdmin,
+	ScopeProjectDocRead, ScopeProjectDocWrite, ScopeProjectAdmin, ScopeProjectDelete,
 	ScopeTaskRead, ScopeTaskWrite, ScopeTaskPlanApprove,
 	ScopeMeetingRead, ScopeMeetingWrite,
 	ScopeUserManage,

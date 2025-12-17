@@ -6,9 +6,10 @@ import { ProjectSummary, listProjects, createProject, deleteProject, patchProjec
 interface Props {
   current?: string;
   onSelect: (id: string)=>void;
+  scopes?: string[];
 }
 
-export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
+export const ProjectSidebar: React.FC<Props> = ({ current, onSelect, scopes = [] }) => {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -88,6 +89,8 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
 
   const toggleCollapsed = () => setCollapsed((prev) => !prev);
 
+  const canDelete = scopes.includes('project.delete');
+
   const confirmDelete = (project: ProjectSummary) => {
     Modal.confirm({
       title: '确认删除项目',
@@ -118,6 +121,7 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
       icon: <DeleteOutlined />,
       label: '删除项目',
       danger: true,
+      disabled: !canDelete,
       onClick: () => confirmDelete(project),
     },
     {
@@ -248,8 +252,8 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect }) => {
                     {!collapsed && (
                       <div style={{ display:'flex', flexDirection:'column', gap:4 }} onClick={e=>e.stopPropagation()}>
                         <Button size="small" icon={<EditOutlined />} onClick={()=>openEdit(p)} />
-                        <Popconfirm title="确认删除?" onConfirm={()=>handleDelete(p.id)}>
-                          <Button size="small" danger icon={<DeleteOutlined />} />
+                        <Popconfirm title="确认删除?" onConfirm={()=>handleDelete(p.id)} disabled={!canDelete}>
+                          <Button size="small" danger icon={<DeleteOutlined />} disabled={!canDelete} />
                         </Popconfirm>
                       </div>
                     )}

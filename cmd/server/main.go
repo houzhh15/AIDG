@@ -655,6 +655,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 			"project.doc.read":  true, // 项目文档读取（允许查看项目列表）
 			"project.doc.write": true, // 项目文档写入（全局编辑）
 			"project.admin":     true, // 项目全局管理（创建/全局配置）
+			"project.delete":    true, // 项目删除（允许删除项目和任务）
 			"feature.read":      true, // 旧版特性读取（向后兼容）
 			"feature.write":     true, // 旧版特性写入（向后兼容）
 		}

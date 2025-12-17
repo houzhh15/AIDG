@@ -36,9 +36,10 @@ export interface ChangePasswordRequest {
   new_password: string;
 }
 
-// 全局权限：仅包含跨项目的权限
+// 全局权限:仅包含跨项目的权限
 export const AVAILABLE_SCOPES = [
   { value: 'project.admin', label: '项目管理 - 创建与全局配置' },
+  { value: 'project.delete', label: '项目删除 - 允许删除项目和任务' },
   { value: 'user.manage', label: '用户管理' },
   { value: 'meeting.read', label: '会议记录 - 读取' },
   { value: 'meeting.write', label: '会议记录 - 写入' },

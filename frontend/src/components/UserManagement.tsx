@@ -126,6 +126,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ className = '' }) => {
       ? [...selectedUser.scopes, scope]
       : selectedUser.scopes.filter(s => s !== scope);
 
+    // 乐观更新UI
+    setSelectedUser({ ...selectedUser, scopes: newScopes });
+    setUsers(users.map(u => u.username === selectedUser.username ? { ...u, scopes: newScopes } : u));
+
+    // 调用API更新
     handleUpdateUserScopes(selectedUser.username, newScopes);
   };
 

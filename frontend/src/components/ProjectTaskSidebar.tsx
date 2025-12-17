@@ -28,9 +28,10 @@ interface Props {
   onTaskSelect: (taskId: string) => void;
   collapsed?: boolean;
   onCollapse?: (collapsed: boolean) => void;
+  scopes?: string[];
 }
 
-const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSelect, collapsed = false, onCollapse }) => {
+const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSelect, collapsed = false, onCollapse, scopes = [] }) => {
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -42,6 +43,8 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [timeRangeFilter, setTimeRangeFilter] = useState<TimeRangeFilter | undefined>();
   const { triggerRefresh } = useTaskRefresh();
+
+  const canDelete = scopes.includes('project.delete');
 
   useEffect(() => {
     if (projectId) {
@@ -331,6 +334,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                           icon: <DeleteOutlined />,
                           label: '删除任务',
                           danger: true,
+                          disabled: !canDelete,
                         },
                       ],
                       onClick: ({ key }) => {

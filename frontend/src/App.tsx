@@ -636,10 +636,14 @@ const App: React.FC = () => {
         )}
         {viewMode === 'project' && (
           <>
-            <ProjectSidebar current={currentProject} onSelect={(projectId) => {
-              setCurrentProject(projectId);
-              setCurrentProjectTask(undefined); // 重置任务选择
-            }} />
+            <ProjectSidebar 
+              current={currentProject} 
+              onSelect={(projectId) => {
+                setCurrentProject(projectId);
+                setCurrentProjectTask(undefined); // 重置任务选择
+              }}
+              scopes={auth?.scopes || []}
+            />
             {currentProject && hasProjectPermission && !permissionLoading && (
               <ProjectTaskSidebar 
                 projectId={currentProject}
@@ -647,6 +651,7 @@ const App: React.FC = () => {
                 onTaskSelect={setCurrentProjectTask}
                 collapsed={projectTaskSidebarCollapsed}
                 onCollapse={setProjectTaskSidebarCollapsed}
+                scopes={auth?.scopes || []}
               />
             )}
             <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
