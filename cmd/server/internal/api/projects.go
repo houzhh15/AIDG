@@ -282,11 +282,16 @@ func HandleDeleteProject(reg *projects.ProjectRegistry) gin.HandlerFunc {
 
 // HandleListProjectTasks GET /api/v1/projects/:id/tasks
 // 获取项目的任务列表，支持搜索查询和时间范围筛选
+// 查询参数:
+//   - q: 搜索关键词
+//   - time_range: 时间筛选 (today, week, month)
+//   - fuzzy: 是否启用模糊搜索 (true/false，默认false)
 func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
-		query := c.Query("q")              // 搜索查询
-		timeRange := c.Query("time_range") // 时间筛选: today, week, month
+		query := c.Query("q")                     // 搜索查询
+		timeRange := c.Query("time_range")        // 时间筛选: today, week, month
+		fuzzySearch := c.Query("fuzzy") == "true" // 模糊搜索开关，默认关闭
 
 		// Verify project exists
 		if reg.Get(projectID) == nil {
@@ -344,10 +349,15 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 
 		originalCount := len(taskList)
 
-		// 如果有搜索查询，使用 SimHash 语义搜索 + 字符串搜索（OR 关系）
+		// 如果有搜索查询，根据 fuzzySearch 参数决定搜索模式
+		// fuzzySearch=true: 使用 SimHash 语义搜索 + 字符串搜索（OR 关系）
+		// fuzzySearch=false: 仅使用字符串搜索
 		if query != "" {
 			searchStart := time.Now()
-			queryHash := simhash.CalculateSimHash(query)
+			var queryHash uint64
+			if fuzzySearch {
+				queryHash = simhash.CalculateSimHash(query)
+			}
 			queryLower := strings.ToLower(query)
 
 			// 存储匹配结果及其距离（distance用于排序）
@@ -359,7 +369,7 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			}
 			matches := []matchedTask{}
 
-			// 遍历所有任务，同时使用 SimHash 和字符串搜索
+			// 遍历所有任务
 			for _, task := range taskList {
 				name, nameOk := task["name"].(string)
 				if !nameOk || name == "" {
@@ -371,41 +381,45 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 				// 检查字符串包含
 				stringMatch := strings.Contains(nameLower, queryLower)
 
-				// 检查 SimHash 语义匹配
+				// 检查 SimHash 语义匹配（仅在 fuzzySearch=true 时启用）
 				simhashMatch := false
 				hammingDist := 999 // 默认最大距离
 
-				if simhashValue, hasSimhash := task["simhash"]; hasSimhash {
-					// 处理 simhash 字段的多种类型（json可能序列化为float64）
-					var taskHash uint64
-					validHash := false
+				if fuzzySearch {
+					if simhashValue, hasSimhash := task["simhash"]; hasSimhash {
+						// 处理 simhash 字段的多种类型（json可能序列化为float64）
+						var taskHash uint64
+						validHash := false
 
-					switch v := simhashValue.(type) {
-					case uint64:
-						taskHash = v
-						validHash = true
-					case float64:
-						taskHash = uint64(v)
-						validHash = true
-					case int64:
-						taskHash = uint64(v)
-						validHash = true
-					case int:
-						taskHash = uint64(v)
-						validHash = true
-					}
+						switch v := simhashValue.(type) {
+						case uint64:
+							taskHash = v
+							validHash = true
+						case float64:
+							taskHash = uint64(v)
+							validHash = true
+						case int64:
+							taskHash = uint64(v)
+							validHash = true
+						case int:
+							taskHash = uint64(v)
+							validHash = true
+						}
 
-					if validHash {
-						// 计算汉明距离
-						hammingDist = simhash.HammingDistance(queryHash, taskHash)
-						// 如果距离在阈值内，视为语义匹配
-						if hammingDist <= simhash.SIMHASH_THRESHOLD {
-							simhashMatch = true
+						if validHash {
+							// 计算汉明距离
+							hammingDist = simhash.HammingDistance(queryHash, taskHash)
+							// 如果距离在阈值内，视为语义匹配
+							if hammingDist <= simhash.SIMHASH_THRESHOLD {
+								simhashMatch = true
+							}
 						}
 					}
 				}
 
-				// OR 关系：满足任一条件即加入结果
+				// 匹配逻辑：
+				// fuzzySearch=true: OR 关系，满足任一条件即加入结果
+				// fuzzySearch=false: 仅字符串匹配
 				if stringMatch || simhashMatch {
 					matchType := "string"
 					if stringMatch && simhashMatch {
@@ -487,8 +501,12 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 					simhashCount++
 				}
 			}
-			fmt.Printf("INFO: Hybrid search for query=%q in project %s: matched=%d (both=%d, string=%d, simhash=%d), elapsed=%v\n",
-				query, projectID, len(matches), bothCount, stringCount, simhashCount, searchElapsed)
+			searchMode := "exact"
+			if fuzzySearch {
+				searchMode = "fuzzy"
+			}
+			fmt.Printf("INFO: Task search (mode=%s) for query=%q in project %s: matched=%d (both=%d, string=%d, simhash=%d), elapsed=%v\n",
+				searchMode, query, projectID, len(matches), bothCount, stringCount, simhashCount, searchElapsed)
 		}
 
 		// 如果有时间范围筛选，按updated_at字段过滤

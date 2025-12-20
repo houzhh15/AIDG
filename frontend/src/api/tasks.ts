@@ -65,14 +65,21 @@ const BASE_URL = '/projects';
 export type TimeRangeFilter = 'today' | 'week' | 'month';
 
 // 获取项目任务列表
+// 参数:
+//   - projectId: 项目ID
+//   - query: 搜索关键词
+//   - timeRange: 时间筛选范围
+//   - fuzzy: 是否启用模糊搜索（SimHash语义搜索），默认false
 export async function getProjectTasks(
   projectId: string, 
   query?: string,
-  timeRange?: TimeRangeFilter
+  timeRange?: TimeRangeFilter,
+  fuzzy?: boolean
 ): Promise<ApiResponse<ProjectTask[]>> {
   const params = new URLSearchParams();
   if (query) params.append('q', query);
   if (timeRange) params.append('time_range', timeRange);
+  if (fuzzy) params.append('fuzzy', 'true');
   const response = await authedApi.get<ApiResponse<ProjectTask[]>>(`${BASE_URL}/${projectId}/tasks?${params.toString()}`);
   return response.data;
 }

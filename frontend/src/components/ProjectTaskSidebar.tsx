@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse, Tooltip, Row, Col } from 'antd';
+import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse, Tooltip, Row, Col, Switch } from 'antd';
 import type { MenuProps } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask } from '../api/tasks';
@@ -41,6 +41,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [assigneeFilter, setAssigneeFilter] = useState<string | undefined>();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [fuzzySearch, setFuzzySearch] = useState<boolean>(false); // 模糊搜索开关，默认关闭
   const [timeRangeFilter, setTimeRangeFilter] = useState<TimeRangeFilter | undefined>();
   const { triggerRefresh } = useTaskRefresh();
 
@@ -51,13 +52,13 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       loadTasks();
       loadUsers();
     }
-  }, [projectId, searchQuery, timeRangeFilter]);
+  }, [projectId, searchQuery, timeRangeFilter, fuzzySearch]);
 
   const loadTasks = async () => {
     if (!projectId) return;
     setLoading(true);
     try {
-      const result = await getProjectTasks(projectId, searchQuery || undefined, timeRangeFilter);
+      const result = await getProjectTasks(projectId, searchQuery || undefined, timeRangeFilter, fuzzySearch);
       setTasks(result.data || []);
     } catch (error: any) {
       // 对403权限错误不显示提示，让无权限页面处理
@@ -263,6 +264,16 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
             size="small"
             allowClear
           />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title="启用模糊搜索会使用语义相似度匹配，可以找到名称相近的任务">
+              <span style={{ fontSize: 12, color: '#666' }}>模糊搜索</span>
+            </Tooltip>
+            <Switch
+              size="small"
+              checked={fuzzySearch}
+              onChange={setFuzzySearch}
+            />
+          </div>
           <Select
             placeholder="按更新时间筛选"
             allowClear
