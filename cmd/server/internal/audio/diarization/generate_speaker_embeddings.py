@@ -31,6 +31,8 @@
 
 依赖: pyannote.audio torch soundfile numpy huggingface_hub
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -48,9 +50,8 @@ import soundfile as sf
 
 try:
     import torch
-    from pyannote.audio import Model, Inference
 except Exception as e:
-    print(json.dumps({"error": f"pyannote/torch not available: {e}"}, ensure_ascii=False))
+    print(json.dumps({"error": f"torch not available: {e}"}, ensure_ascii=False))
     sys.exit(1)
 
 
@@ -115,6 +116,49 @@ def parse_args():
     p.add_argument("--intra-clean-min-segments", type=int, default=3, help="每个说话人至少保留的片段数，避免过度清理")
     p.add_argument("--intra-clean-max-iter", type=int, default=2, help="最大迭代清理轮次")
     return p.parse_args()
+
+
+def _find_local_hf_cache_root() -> str:
+    """Best-effort locate a HuggingFace cache root directory.
+
+    Priority:
+      1) $HF_HOME if points to an existing dir
+      2) $TRANSFORMERS_CACHE if points to an existing dir
+      3) Search upwards from this file for a 'models/huggingface' directory
+    """
+    for key in ("HF_HOME", "TRANSFORMERS_CACHE"):
+        v = os.getenv(key)
+        if v and os.path.isdir(v):
+            return v
+
+    here = Path(__file__).resolve()
+    for parent in list(here.parents)[:12]:
+        cand = parent / "models" / "huggingface"
+        if cand.is_dir():
+            return str(cand)
+    return ""
+
+
+def _repo_id_to_cache_dirname(repo_id: str) -> str:
+    # 'pyannote/embedding' -> 'models--pyannote--embedding'
+    return "models--" + repo_id.replace("/", "--")
+
+
+def _resolve_hf_snapshot_dir(repo_id: str, cache_root: str) -> str:
+    """Resolve a repo_id to a local snapshot directory inside HF hub cache."""
+    if not repo_id or not cache_root:
+        return ""
+    hub_root = Path(cache_root) / "hub"
+    model_root = hub_root / _repo_id_to_cache_dirname(repo_id)
+    snapshots = model_root / "snapshots"
+    if not snapshots.is_dir():
+        return ""
+
+    snap_dirs = [p for p in snapshots.iterdir() if p.is_dir()]
+    if not snap_dirs:
+        return ""
+    snap_dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return str(snap_dirs[0])
 
 
 def resolve_device(pref: str) -> str:
@@ -189,6 +233,31 @@ def maybe_offline_env(args):
 
 
 def load_embedding_model(args):
+    cache_dir_explicit = args.cache_dir is not None
+
+    # Default cache dir if not provided
+    if args.cache_dir is None:
+        found = _find_local_hf_cache_root()
+        if found:
+            args.cache_dir = found
+
+    # NOTE: pyannote.audio's Model.from_pretrained may ignore cache_dir/local_files_only
+    # in some versions and rely on HuggingFace environment variables.
+    # Ensure they point to the discovered cache root so offline mode can work reliably.
+    if args.cache_dir and os.path.isdir(args.cache_dir):
+        os.environ.setdefault("HF_HOME", args.cache_dir)
+        os.environ.setdefault("TRANSFORMERS_CACHE", args.cache_dir)
+        os.environ.setdefault("TORCH_HOME", args.cache_dir)
+        hub_cache = str(Path(args.cache_dir) / "hub")
+        os.environ.setdefault("HF_HUB_CACHE", hub_cache)
+        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", hub_cache)
+
+    # Import pyannote AFTER environment variables are finalized.
+    try:
+        from pyannote.audio import Model
+    except Exception as e:
+        raise RuntimeError(f"pyannote.audio not available: {e}")
+
     # 尝试本地目录或在线
     if os.path.isdir(args.embedding_model):
         cfg = Path(args.embedding_model)
@@ -203,11 +272,12 @@ def load_embedding_model(args):
     if args.offline:
         # 设定 HF_HUB_OFFLINE 避免网络请求
         os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
         try:
             model = Model.from_pretrained(
                 args.embedding_model,
                 use_auth_token=None,  # 离线模式不使用token
-                cache_dir=args.cache_dir,
+                cache_dir=args.cache_dir if cache_dir_explicit else None,
                 local_files_only=True,
             )
             return model
@@ -217,7 +287,11 @@ def load_embedding_model(args):
     
     # 在线模式：正常加载 (HF 缓存会复用; 若网络问题会抛异常)
     try:
-        model = Model.from_pretrained(args.embedding_model, use_auth_token=args.hf_token, cache_dir=args.cache_dir)
+        model = Model.from_pretrained(
+            args.embedding_model,
+            use_auth_token=args.hf_token,
+            cache_dir=args.cache_dir if cache_dir_explicit else None,
+        )
     except Exception as e:
         raise RuntimeError(f"嵌入模型加载失败: {e}")
     return model
@@ -349,7 +423,7 @@ def main():
 
     if not os.path.isfile(args.audio):
         print(json.dumps({"error": f"音频不存在: {args.audio}"}, ensure_ascii=False))
-        return
+        sys.exit(1)
     segments = load_speakers_json(args.speakers_json)
     if not segments:
         # When no segments available, create empty embeddings file instead of failing
@@ -373,14 +447,14 @@ def main():
         wav_path = ensure_wav_mono_16k(args.audio)
     except Exception as e:
         print(json.dumps({"error": f"音频转换失败: {e}"}, ensure_ascii=False))
-        return
+        sys.exit(1)
 
     # 读转换后的 wav (float32)
     try:
         waveform, sr = sf.read(wav_path)
     except Exception as e:
         print(json.dumps({"error": f"读取转换后音频失败: {e}"}, ensure_ascii=False))
-        return
+        sys.exit(1)
     if waveform.ndim > 1:
         waveform = waveform.mean(axis=1)
     if waveform.dtype != np.float32:
@@ -394,7 +468,13 @@ def main():
         model = load_embedding_model(args)
     except Exception as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        return
+        sys.exit(1)
+
+    try:
+        from pyannote.audio import Inference
+    except Exception as e:
+        print(json.dumps({"error": f"pyannote.audio not available: {e}"}, ensure_ascii=False))
+        sys.exit(1)
     device_str = resolve_device(args.device)
     # 将字符串转换为 torch.device
     try:
@@ -837,7 +917,7 @@ def main():
             json.dump(out, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(json.dumps({"error": f"写入失败: {e}"}, ensure_ascii=False))
-        return
+        sys.exit(1)
 
     # 同时打印摘要到 stdout (不含完整向量)
     summary = {

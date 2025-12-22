@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -480,6 +481,20 @@ func (c *DependencyClient) GenerateEmbeddings(ctx context.Context, audioPath, sp
 		env["HUGGINGFACE_TOKEN"] = opts.HFToken
 		slog.Debug("[DependencyClient] Hugging Face token configured for embedding")
 	}
+	// Propagate HuggingFace cache-related environment variables for local execution.
+	// This is especially important in offline mode where the model must exist in cache.
+	if v := os.Getenv("HF_HOME"); strings.TrimSpace(v) != "" {
+		env["HF_HOME"] = v
+	}
+	if v := os.Getenv("TRANSFORMERS_CACHE"); strings.TrimSpace(v) != "" {
+		env["TRANSFORMERS_CACHE"] = v
+	}
+	if v := os.Getenv("TORCH_HOME"); strings.TrimSpace(v) != "" {
+		env["TORCH_HOME"] = v
+	}
+	if opts.EnableOffline {
+		env["HF_HUB_OFFLINE"] = "1"
+	}
 
 	// Construct command request
 	req := CommandRequest{
@@ -527,7 +542,18 @@ func (c *DependencyClient) GenerateEmbeddings(ctx context.Context, audioPath, sp
 			"output_path", outputPath,
 			"error", err.Error(),
 		)
-		return fmt.Errorf("embedding output file not created: %w", err)
+		truncate := func(s string, max int) string {
+			if max <= 0 || len(s) <= max {
+				return s
+			}
+			return s[:max] + "...<truncated>"
+		}
+		return fmt.Errorf(
+			"embedding output file not created: %w (stdout=%q, stderr=%q)",
+			err,
+			truncate(resp.Stdout, 2000),
+			truncate(resp.Stderr, 2000),
+		)
 	} else if fi.Size() == 0 {
 		slog.Warn("[DependencyClient] embedding output file is empty",
 			"output_path", outputPath,
