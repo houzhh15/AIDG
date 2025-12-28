@@ -3,7 +3,7 @@
  * 与任务文档 (TaskDocuments.tsx) 保持相同的 UI 风格
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { Spin, Button, message, Space, Empty } from 'antd';
+import { Spin, Button, message, Space, Empty, Modal } from 'antd';
 import {
   FileTextOutlined,
   EditOutlined,
@@ -44,6 +44,7 @@ const ProjectDocument: React.FC<Props> = ({
   const [version, setVersion] = useState(0);
   const [loading, setLoading] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [editorHasUnsavedChanges, setEditorHasUnsavedChanges] = useState(false);
   
   const { triggerRefreshFor } = useTaskRefresh();
 
@@ -89,11 +90,30 @@ const ProjectDocument: React.FC<Props> = ({
         <ProjectDocSectionEditor
           projectId={projectId}
           slot={slot}
-          onCancel={() => setIsEditMode(false)}
+          onCancel={() => {
+            // 如果有未保存的更改，弹出确认对话框
+            if (editorHasUnsavedChanges) {
+              Modal.confirm({
+                title: '未保存的更改',
+                content: '当前有未保存的更改，关闭将丢失这些更改。确认关闭吗？',
+                okText: '确认关闭',
+                cancelText: '继续编辑',
+                okType: 'danger',
+                onOk: () => {
+                  setIsEditMode(false);
+                  setEditorHasUnsavedChanges(false);
+                }
+              });
+            } else {
+              setIsEditMode(false);
+            }
+          }}
           onSave={() => {
             loadDocument();
             triggerRefreshFor('project-document');
+            setEditorHasUnsavedChanges(false);
           }}
+          onUnsavedChanges={setEditorHasUnsavedChanges}
         />
       </div>
     );

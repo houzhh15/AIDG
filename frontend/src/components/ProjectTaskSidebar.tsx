@@ -38,6 +38,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const [form] = Form.useForm();
+  const [formDirty, setFormDirty] = useState(false); // 追踪表单是否被修改
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [assigneeFilter, setAssigneeFilter] = useState<string | undefined>();
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -83,12 +84,14 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const handleCreate = () => {
     setEditingTask(null);
     form.resetFields();
+    setFormDirty(false);
     setModalVisible(true);
   };
 
   const handleEdit = (task: ProjectTask) => {
     setEditingTask(task);
     form.setFieldsValue(task);
+    setFormDirty(false);
     setModalVisible(true);
   };
 
@@ -106,6 +109,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
         message.success('任务创建成功');
       }
       
+      setFormDirty(false);
       setModalVisible(false);
       loadTasks();
       // 触发任务统计数据刷新
@@ -425,7 +429,23 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
         title={editingTask ? '编辑任务' : '创建任务'}
         open={modalVisible}
         onOk={handleSubmit}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          if (formDirty) {
+            Modal.confirm({
+              title: '未保存的更改',
+              content: '当前有未保存的更改，关闭将丢失这些更改。确认关闭吗？',
+              okText: '确认关闭',
+              cancelText: '继续编辑',
+              okType: 'danger',
+              onOk: () => {
+                setFormDirty(false);
+                setModalVisible(false);
+              }
+            });
+          } else {
+            setModalVisible(false);
+          }
+        }}
         width={1000}
         okText={editingTask ? '更新' : '创建'}
         cancelText="取消"
@@ -434,6 +454,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
           form={form}
           layout="vertical"
           preserve={false}
+          onValuesChange={() => setFormDirty(true)}
         >
           <Row gutter={24}>
             {/* 左侧: 基本信息 */}

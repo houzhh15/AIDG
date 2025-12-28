@@ -1,0 +1,17 @@
+# file_converter/requirements.txt
+# 轻量级文件转换依赖，无任何 ML 库
+
+# Web 框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# 文件转换库
+pdfplumber==0.10.3          # PDF 文本/表格提取
+python-pptx==0.6.23         # PPTX 解析
+python-docx==1.1.0          # DOCX 解析
+openpyxl==3.1.2             # Excel 解析
+
+# 测试依赖（可选，仅开发环境）
+# pytest==7.4.3
+# httpx==0.25.2

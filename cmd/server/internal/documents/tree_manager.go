@@ -69,15 +69,16 @@ func (m *DocumentTreeManager) CreateNode(req CreateNodeRequest) (*DocMetaEntry, 
 	now := time.Now()
 
 	meta := &DocMetaEntry{
-		ID:        nodeID,
-		ParentID:  req.ParentID,
-		Title:     req.Title,
-		Type:      req.Type,
-		Level:     level,
-		Position:  position,
-		Version:   1,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         nodeID,
+		ParentID:   req.ParentID,
+		Title:      req.Title,
+		Type:       req.Type,
+		Level:      level,
+		Position:   position,
+		Version:    1,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		ImportMeta: req.ImportMeta, // 保存文件导入元数据
 	}
 
 	// 验证层级

@@ -16,9 +16,10 @@ interface Props {
   initialSectionTitle?: string  // 新增：初始选中的章节标题（将根据标题查找ID）
   onCancel?: () => void
   onSave?: () => void  // 新增：保存成功后的回调
+  onUnsavedChanges?: (hasChanges: boolean) => void  // 新增：通知父组件是否有未保存的更改
 }
 
-const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSectionId, initialSectionTitle, onCancel, onSave: onSaveCallback }) => {
+const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSectionId, initialSectionTitle, onCancel, onSave: onSaveCallback, onUnsavedChanges }) => {
   const [sections, setSections] = useState<SectionMeta | null>(null)
   const [currentSectionId, setCurrentSectionId] = useState<string | null>(null)
   const [sectionContent, setSectionContent] = useState<SectionContent | null>(null)
@@ -29,6 +30,13 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
   
   // 获取刷新函数
   const { triggerRefreshForMultiple } = useTaskRefresh()
+
+  // 通知父组件 hasUnsavedChanges 的变化
+  useEffect(() => {
+    if (onUnsavedChanges) {
+      onUnsavedChanges(hasUnsavedChanges)
+    }
+  }, [hasUnsavedChanges, onUnsavedChanges])
 
   // 加载章节列表
   useEffect(() => {
@@ -276,9 +284,34 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
   }
 
   const handleCancel = () => {
-    setHasUnsavedChanges(false) // 重置未保存状态
-    if (onCancel) {
-      onCancel()
+    // 如果有未保存的更改，提示用户
+    if (hasUnsavedChanges) {
+      Modal.confirm({
+        title: '未保存的更改',
+        content: '当前有未保存的更改，关闭将丢失这些更改。是否要保存？',
+        okText: '保存',
+        cancelText: '不保存',
+        onOk: async () => {
+          // 保存后关闭
+          await handleSave()
+          setHasUnsavedChanges(false)
+          if (onCancel) {
+            onCancel()
+          }
+        },
+        onCancel: () => {
+          // 不保存，直接关闭
+          setHasUnsavedChanges(false)
+          if (onCancel) {
+            onCancel()
+          }
+        }
+      })
+    } else {
+      // 没有未保存的更改，直接关闭
+      if (onCancel) {
+        onCancel()
+      }
     }
   }
 

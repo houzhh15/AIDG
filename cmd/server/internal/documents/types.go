@@ -19,15 +19,16 @@ const (
 
 // DocMetaEntry 文档节点元数据
 type DocMetaEntry struct {
-	ID        string       `json:"id"`
-	ParentID  *string      `json:"parent_id"`
-	Title     string       `json:"title"`
-	Type      DocumentType `json:"type"`
-	Level     int          `json:"level"`
-	Position  int          `json:"position"`
-	Version   int          `json:"version"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	CreatedAt time.Time    `json:"created_at"`
+	ID         string       `json:"id"`
+	ParentID   *string      `json:"parent_id"`
+	Title      string       `json:"title"`
+	Type       DocumentType `json:"type"`
+	Level      int          `json:"level"`
+	Position   int          `json:"position"`
+	Version    int          `json:"version"`
+	UpdatedAt  time.Time    `json:"updated_at"`
+	CreatedAt  time.Time    `json:"created_at"`
+	ImportMeta *ImportMeta  `json:"import_meta,omitempty"` // 文件导入元数据
 }
 
 // DocumentTreeDTO 文档树数据传输对象
@@ -38,10 +39,29 @@ type DocumentTreeDTO struct {
 
 // CreateNodeRequest 创建节点请求
 type CreateNodeRequest struct {
-	ParentID *string      `json:"parent_id"`
-	Title    string       `json:"title"`
-	Type     DocumentType `json:"type"`
-	Content  string       `json:"content"`
+	ParentID   *string      `json:"parent_id"`
+	Title      string       `json:"title"`
+	Type       DocumentType `json:"type"`
+	Content    string       `json:"content"`
+	ImportMeta *ImportMeta  `json:"import_meta,omitempty"`
+}
+
+// ImportMeta 文件导入元数据
+type ImportMeta struct {
+	SourceType       string `json:"source_type"`       // "file_import"
+	OriginalFilename string `json:"original_filename"` // 原始文件名
+	FileSize         int64  `json:"file_size"`         // 文件大小 (bytes)
+	ContentType      string `json:"content_type"`      // "markdown" | "svg"
+}
+
+// ImportFileResponse 文件导入响应
+type ImportFileResponse struct {
+	Success          bool     `json:"success"`
+	Content          string   `json:"content"`
+	OriginalFilename string   `json:"original_filename"`
+	FileSize         int64    `json:"file_size"`
+	ContentType      string   `json:"content_type"`
+	Warnings         []string `json:"warnings"`
 }
 
 // MoveNodeRequest 移动节点请求

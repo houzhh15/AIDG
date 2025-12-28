@@ -42,10 +42,12 @@ const PromptsEditorModal: React.FC<PromptsEditorModalProps> = ({
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [arguments_, setArguments] = useState<PromptArgument[]>([]);
+  const [formDirty, setFormDirty] = useState(false); // 追踪表单是否被修改
 
   // 初始化表单
   useEffect(() => {
     if (visible) {
+      setFormDirty(false); // 重置修改状态
       if (mode === 'edit' && initialPrompt) {
         form.setFieldsValue({
           name: initialPrompt.name,
@@ -70,6 +72,7 @@ const PromptsEditorModal: React.FC<PromptsEditorModalProps> = ({
       ...arguments_,
       { name: '', description: '', required: false },
     ]);
+    setFormDirty(true);
   };
 
   // 删除参数
@@ -77,6 +80,7 @@ const PromptsEditorModal: React.FC<PromptsEditorModalProps> = ({
     const newArguments = [...arguments_];
     newArguments.splice(index, 1);
     setArguments(newArguments);
+    setFormDirty(true);
   };
 
   // 更新参数
@@ -88,6 +92,7 @@ const PromptsEditorModal: React.FC<PromptsEditorModalProps> = ({
     const newArguments = [...arguments_];
     newArguments[index] = { ...newArguments[index], [field]: value };
     setArguments(newArguments);
+    setFormDirty(true);
   };
 
   // 提交表单
@@ -147,13 +152,33 @@ const PromptsEditorModal: React.FC<PromptsEditorModalProps> = ({
     <Modal
       title={mode === 'create' ? '创建 Prompt' : '编辑 Prompt'}
       open={visible}
-      onCancel={onClose}
+      onCancel={() => {
+        if (formDirty) {
+          Modal.confirm({
+            title: '未保存的更改',
+            content: '当前有未保存的更改，关闭将丢失这些更改。确认关闭吗？',
+            okText: '确认关闭',
+            cancelText: '继续编辑',
+            okType: 'danger',
+            onOk: () => {
+              setFormDirty(false);
+              onClose();
+            }
+          });
+        } else {
+          onClose();
+        }
+      }}
       onOk={handleSubmit}
       confirmLoading={loading}
       width={800}
       destroyOnClose
     >
-      <Form form={form} layout="vertical">
+      <Form 
+        form={form} 
+        layout="vertical"
+        onValuesChange={() => setFormDirty(true)}
+      >
         <Form.Item
           label="Name"
           name="name"

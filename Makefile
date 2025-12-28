@@ -16,6 +16,8 @@ install:
 	go mod verify
 	@echo "Installing frontend dependencies..."
 	cd frontend && npm ci
+	@echo "Installing file converter dependencies..."
+	pip install -r file_converter/requirements.txt -q
 
 # 开发构建
 build:
@@ -47,6 +49,8 @@ dev:
 			echo "Loading .env file..."; \
 			set -a; source .env; set +a; \
 		fi; \
+		echo "Starting file converter on :5002..."; \
+		cd file_converter && uvicorn main:app --host 0.0.0.0 --port 5002 --reload &\
 		echo "Starting server on :8000..."; \
 		ENV=development \
 		JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars \

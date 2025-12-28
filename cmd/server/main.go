@@ -1375,7 +1375,8 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	unifiedDocsGroup := r.Group("/api/v1")
 	api.RegisterUnifiedDocRoutes(unifiedDocsGroup, unifiedDocSvc)
 
-	// ========== Documents API (20 endpoints) ==========
+	// ========== Documents API (21 endpoints) ==========
+	r.POST("/api/v1/projects/:id/documents/import", docHandler.ImportFile) // 新增：文件导入
 	r.POST("/api/v1/projects/:id/documents/nodes", docHandler.CreateNode)
 	r.GET("/api/v1/projects/:id/documents/tree", docHandler.GetTree)
 	r.PUT("/api/v1/projects/:id/documents/nodes/:node_id/move", docHandler.MoveNode)

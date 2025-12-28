@@ -32,6 +32,8 @@ import {
   ReferenceContextType,
   ReferenceContextOption
 } from './documents';
+import SvgViewer from './documents/SvgViewer';
+import { ImportMeta } from '../api/documents';
 
 const { Title } = Typography;
 const { TabPane } = Tabs;
@@ -180,6 +182,12 @@ const REFERENCE_SOURCE_META: Record<ReferenceSourceValue, ReferenceSourceMeta> =
     description: '会议总结文档 (meeting_summary)',
     documentType: 'meeting',
     requiresContext: 'meeting'
+  },
+  file_import: {
+    group: 'task',
+    label: '文件导入',
+    description: '从本地文件导入内容 (PDF/PPT/DOC/EXCEL/SVG)',
+    documentType: 'background'
   }
 };
 
@@ -324,6 +332,7 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
   const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
   const [documentVersion, setDocumentVersion] = useState(1);
   const [currentDocumentTitle, setCurrentDocumentTitle] = useState<string>('');
+  const [currentImportMeta, setCurrentImportMeta] = useState<ImportMeta | null>(null); // SVG等文件导入元数据
   
   // 树视图状态
   const [treeData, setTreeData] = useState<DocumentTreeNode[]>([]);
@@ -460,12 +469,14 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
     const availableKeys = new Set(Object.keys(referenceLoaders) as ReferenceSourceValue[]);
 
     (Object.entries(REFERENCE_SOURCE_META) as Array<[ReferenceSourceValue, ReferenceSourceMeta]>).forEach(([value, meta]) => {
+      // file_import 不需要 loader，始终可用
+      const isDisabled = value === 'file_import' ? false : !availableKeys.has(value);
       groups[meta.group].options.push({
         value,
         label: meta.label,
         description: meta.description,
         documentType: meta.documentType,
-        disabled: !availableKeys.has(value),
+        disabled: isDisabled,
         contextType: meta.requiresContext
       });
     });
@@ -1860,7 +1871,7 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
   const handleAddNode = async (parentId: string, payload: AddNodePayload): Promise<void> => {
     try {
   const { default: documentsAPI } = await import('../api/documents');
-  const { title, type, referenceSource, referenceContext } = payload;
+  const { title, type, referenceSource, referenceContext, importedContent, importMeta } = payload;
       
       // 为新节点生成默认标题和内容
       const defaultTitles: Record<DocumentType, string> = {
@@ -1890,7 +1901,16 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
       let finalTitle = trimmedTitle || defaultTitles[effectiveType] || '新文档';
       let finalContent = defaultContents[effectiveType];
 
-      if (referenceSource) {
+      // 如果是文件导入，使用导入的内容
+      if (referenceSource === 'file_import' && importedContent) {
+        finalContent = importedContent;
+        if (!trimmedTitle && importMeta?.original_filename) {
+          // 如果没有指定标题，使用文件名（去掉扩展名）
+          const filename = importMeta.original_filename;
+          const dotIndex = filename.lastIndexOf('.');
+          finalTitle = dotIndex > 0 ? filename.substring(0, dotIndex) : filename;
+        }
+      } else if (referenceSource) {
         const loader = referenceLoaders[referenceSource];
         if (loader) {
           try {
@@ -1924,7 +1944,8 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
         parent_id: (parentId === 'root' || parentId === '') ? undefined : parentId,
         title: finalTitle,
         type: effectiveType as any, // 临时解决类型不匹配问题
-        content: finalContent
+        content: finalContent,
+        import_meta: importMeta // 传递文件导入元数据
       });
 
       // 重新加载树数据以反映新节点
@@ -2287,6 +2308,7 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
       setMarkdownContent(result.content);
       setDocumentVersion(resolvedVersion);
       setCurrentDocumentId(documentId);
+      setCurrentImportMeta(result.meta?.import_meta ?? null); // 设置文件导入元数据
       const metaTitle = result.meta?.title?.trim() ?? '';
       if (metaTitle) {
         console.log('[DEBUG] Setting document title for:', documentId, 'title:', metaTitle);
@@ -2312,6 +2334,7 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
         setMarkdownContent('');
         setDocumentVersion(1);
         setSelectedTreeKeys([]);
+        setCurrentImportMeta(null);
       } else {
         message.error('加载文档内容失败: ' + (e?.message || e?.response?.data?.error || '未知错误'));
       }
@@ -2361,6 +2384,7 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
         return (
           <div style={{ ...sidebarPanelStyle, flex: 1, padding: 0 }}>
             <EnhancedTreeView
+              projectId={projectId}
               treeData={treeData}
               selectedKeys={selectedTreeKeys}
               expandedKeys={expandedTreeKeys}
@@ -2599,17 +2623,28 @@ const DocumentManagementSystem: React.FC<DocumentManagementSystemProps> = ({
                 flexDirection: 'column'
               }}
             >
-              <MarkdownEditor
-                value={markdownContent}
-                onChange={setMarkdownContent}
-                onSave={handleMarkdownSave}
-                loading={loading}
-                height={editorHeight}
-                showPreview
-                showToolbar
-                placeholder={currentDocumentId ? `编辑文档 ${currentDocumentTitle || currentDocumentId}...` : '请先选择要编辑的文档'}
-                readOnly={!currentDocumentId}
-              />
+              {/* 根据文件类型选择渲染 SVG 查看器或 Markdown 编辑器 */}
+              {currentImportMeta?.content_type === 'svg' ? (
+                <SvgViewer
+                  content={markdownContent}
+                  originalFilename={currentImportMeta.original_filename}
+                  title={currentDocumentTitle}
+                  showToolbar
+                  height={editorHeight}
+                />
+              ) : (
+                <MarkdownEditor
+                  value={markdownContent}
+                  onChange={setMarkdownContent}
+                  onSave={handleMarkdownSave}
+                  loading={loading}
+                  height={editorHeight}
+                  showPreview
+                  showToolbar
+                  placeholder={currentDocumentId ? `编辑文档 ${currentDocumentTitle || currentDocumentId}...` : '请先选择要编辑的文档'}
+                  readOnly={!currentDocumentId}
+                />
+              )}
               {renderDocumentOverlay()}
             </div>
           </div>

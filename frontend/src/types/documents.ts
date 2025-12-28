@@ -3,6 +3,14 @@
 
 export type DocumentType = 'feature_list' | 'architecture' | 'tech_design' | 'background' | 'requirements' | 'meeting' | 'task';
 
+// 文件导入元数据
+export interface ImportMeta {
+  source_type: 'file_import';
+  original_filename: string;
+  file_size: number;
+  content_type: 'markdown' | 'svg';
+}
+
 export interface DocMetaEntry {
   id: string;
   parent_id?: string;
@@ -12,6 +20,7 @@ export interface DocMetaEntry {
   position: number;
   version: number;
   updated_at: string;
+  import_meta?: ImportMeta;  // 文件导入元数据
 }
 
 export interface DocumentTreeNode extends DocMetaEntry {

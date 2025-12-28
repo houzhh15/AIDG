@@ -1,16 +1,29 @@
 package documents
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// getFileConverterURL 获取文件转换服务URL，支持环境变量配置
+func getFileConverterURL() string {
+	if url := os.Getenv("FILE_CONVERTER_URL"); url != "" {
+		return url
+	}
+	return "http://localhost:5002"
+}
 
 // Handler 文档API处理器
 type Handler struct {
@@ -68,6 +81,99 @@ func (h *Handler) getOrCreateManager(projectID string) (*DocumentTreeManager, er
 	h.refManagers[projectID] = NewReferenceManager(manager.index)
 
 	return manager, nil
+}
+
+// 支持的文件扩展名
+var supportedExtensions = map[string]bool{
+	"pdf": true, "ppt": true, "pptx": true,
+	"doc": true, "docx": true,
+	"xls": true, "xlsx": true,
+	"svg": true,
+}
+
+// 最大文件大小：20MB
+const maxFileSize = 20 * 1024 * 1024
+
+// ImportFile 文件导入处理器 POST /api/v1/projects/:id/documents/import
+func (h *Handler) ImportFile(c *gin.Context) {
+	// 解析 multipart form
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "文件上传失败: " + err.Error(),
+			"code":  "UPLOAD_ERROR",
+		})
+		return
+	}
+	defer file.Close()
+
+	filename := header.Filename
+	fileSize := header.Size
+
+	// 校验文件大小
+	if fileSize > maxFileSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": fmt.Sprintf("文件大小超过限制（最大 %dMB）", maxFileSize/(1024*1024)),
+			"code":  "FILE_TOO_LARGE",
+		})
+		return
+	}
+
+	// 获取文件扩展名
+	ext := ""
+	if idx := strings.LastIndex(filename, "."); idx != -1 {
+		ext = strings.ToLower(filename[idx+1:])
+	}
+
+	// 校验文件格式
+	if !supportedExtensions[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "不支持的文件格式。支持: pdf, ppt, pptx, doc, docx, xls, xlsx, svg",
+			"code":  "UNSUPPORTED_FORMAT",
+		})
+		return
+	}
+
+	// SVG 文件直接读取内容返回
+	if ext == "svg" {
+		content, err := readFileContent(file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "读取 SVG 文件失败: " + err.Error(),
+				"code":  "READ_ERROR",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, ImportFileResponse{
+			Success:          true,
+			Content:          content,
+			OriginalFilename: filename,
+			FileSize:         fileSize,
+			ContentType:      "svg",
+			Warnings:         []string{},
+		})
+		return
+	}
+
+	// 其他格式调用 Python 转换服务
+	result, err := callConversionService(file, filename, ext)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "文件转换失败: " + err.Error(),
+			"code":  "CONVERSION_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, ImportFileResponse{
+		Success:          true,
+		Content:          result.Content,
+		OriginalFilename: filename,
+		FileSize:         fileSize,
+		ContentType:      "markdown",
+		Warnings:         result.Warnings,
+	})
 }
 
 // CreateNode 创建文档节点 POST /api/v1/projects/:id/documents/nodes
@@ -1069,4 +1175,94 @@ func (h *Handler) GetDocumentContentInternal(projectID, docID string) (map[strin
 			"version": meta.Version,
 		},
 	}, nil
+}
+
+// ================== 文件导入辅助函数 ==================
+
+// readFileContent 读取文件内容为字符串
+func readFileContent(file interface{ Read([]byte) (int, error) }) (string, error) {
+	content := make([]byte, 0, 1024*1024) // 预分配 1MB
+	buf := make([]byte, 32*1024)          // 32KB 缓冲区
+
+	for {
+		n, err := file.Read(buf)
+		if n > 0 {
+			content = append(content, buf[:n]...)
+		}
+		if err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			return "", err
+		}
+	}
+
+	return string(content), nil
+}
+
+// conversionResult Python 转换服务返回结果
+type conversionResult struct {
+	Content  string   `json:"content"`
+	Warnings []string `json:"warnings"`
+}
+
+// callConversionService 调用 Python 文件转换服务
+func callConversionService(file interface{ Read([]byte) (int, error) }, filename, ext string) (*conversionResult, error) {
+	// 读取文件内容
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, file.(io.Reader)); err != nil {
+		return nil, fmt.Errorf("读取文件失败: %w", err)
+	}
+
+	// 创建 multipart form
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("创建 form 失败: %w", err)
+	}
+
+	if _, err := io.Copy(part, &buf); err != nil {
+		return nil, fmt.Errorf("写入文件数据失败: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("关闭 writer 失败: %w", err)
+	}
+
+	// 调用转换服务（支持环境变量配置）
+	baseURL := getFileConverterURL()
+	conversionURL := fmt.Sprintf("%s/convert/%s", baseURL, ext)
+	req, err := http.NewRequest("POST", conversionURL, &body)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	// 使用带超时的 HTTP 客户端
+	client := &http.Client{
+		Timeout: 60 * time.Second, // 文件转换可能需要较长时间
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		// 提供更友好的错误信息
+		if strings.Contains(err.Error(), "connection refused") {
+			return nil, fmt.Errorf("文件转换服务未启动。请确保已运行 'make dev' 或手动启动转换服务 (cd file_converter && uvicorn main:app --port 5002)")
+		}
+		return nil, fmt.Errorf("调用转换服务失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("转换服务返回错误 (%d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result conversionResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("解析转换结果失败: %w", err)
+	}
+
+	return &result, nil
 }

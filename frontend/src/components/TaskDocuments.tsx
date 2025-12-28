@@ -80,6 +80,8 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
     docType: null,
     sectionTitle: null,
   });
+  // 追踪章节编辑器是否有未保存的更改
+  const [sectionEditorHasUnsavedChanges, setSectionEditorHasUnsavedChanges] = useState(false);
 
   // MCP资源添加弹窗状态
   const [mcpResourceModal, setMcpResourceModal] = useState<{
@@ -1477,7 +1479,24 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
       <Modal
         title={`编辑章节 - ${sectionEditorModal.docType === 'requirements' ? '需求文档' : sectionEditorModal.docType === 'design' ? '设计文档' : '测试文档'}`}
         open={sectionEditorModal.visible}
-        onCancel={() => setSectionEditorModal({ visible: false, docType: null, sectionTitle: null })}
+        onCancel={() => {
+          // 如果有未保存的更改，弹出确认对话框
+          if (sectionEditorHasUnsavedChanges) {
+            Modal.confirm({
+              title: '未保存的更改',
+              content: '当前有未保存的更改，关闭将丢失这些更改。确认关闭吗？',
+              okText: '确认关闭',
+              cancelText: '继续编辑',
+              okType: 'danger',
+              onOk: () => {
+                setSectionEditorModal({ visible: false, docType: null, sectionTitle: null });
+                setSectionEditorHasUnsavedChanges(false);
+              }
+            });
+          } else {
+            setSectionEditorModal({ visible: false, docType: null, sectionTitle: null });
+          }
+        }}
         width="90%"
         style={{ top: 20 }}
         footer={null}
@@ -1491,13 +1510,18 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
               taskId={taskId}
               docType={sectionEditorModal.docType}
               initialSectionTitle={sectionEditorModal.sectionTitle || undefined}
-              onCancel={() => setSectionEditorModal({ visible: false, docType: null, sectionTitle: null })}
+              onCancel={() => {
+                setSectionEditorModal({ visible: false, docType: null, sectionTitle: null });
+                setSectionEditorHasUnsavedChanges(false);
+              }}
               onSave={() => {
                 if (sectionEditorModal.docType) {
                   reloadDocument(sectionEditorModal.docType);
                 }
                 setSectionEditorModal({ visible: false, docType: null, sectionTitle: null });
+                setSectionEditorHasUnsavedChanges(false);
               }}
+              onUnsavedChanges={setSectionEditorHasUnsavedChanges}
             />
           </div>
         )}

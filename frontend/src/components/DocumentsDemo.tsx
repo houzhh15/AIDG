@@ -297,6 +297,7 @@ const DocumentsDemo: React.FC = () => {
         <TabPane tab="增强树视图" key="tree">
           <Card title="T-M1-07增强: 增强树视图" size="small">
             <EnhancedTreeView
+              projectId="demo-project"
               treeData={mockTreeData}
               selectedKeys={[]}
               expandedKeys={['root1']}

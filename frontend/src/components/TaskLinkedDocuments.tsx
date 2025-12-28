@@ -281,6 +281,7 @@ const TaskLinkedDocuments: React.FC<TaskLinkedDocumentsProps> = ({ projectId, ta
           关联文档结构
         </Typography.Title>
         <EnhancedTreeView
+          projectId={projectId}
           treeData={treeData}
           selectedKeys={selectedKeys}
           expandedKeys={expandedKeys}

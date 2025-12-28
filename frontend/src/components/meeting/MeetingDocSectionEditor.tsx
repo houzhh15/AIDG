@@ -26,6 +26,7 @@ interface Props {
   initialSectionTitle?: string;
   onCancel?: () => void;
   onSave?: () => void;
+  onUnsavedChanges?: (hasChanges: boolean) => void; // 新增：通知父组件是否有未保存的更改
 }
 
 const MeetingDocSectionEditor: React.FC<Props> = ({ 
@@ -34,7 +35,8 @@ const MeetingDocSectionEditor: React.FC<Props> = ({
   initialSectionId, 
   initialSectionTitle, 
   onCancel, 
-  onSave: onSaveCallback 
+  onSave: onSaveCallback,
+  onUnsavedChanges
 }) => {
   const [sections, setSections] = useState<SectionMeta | null>(null);
   const [currentSectionId, setCurrentSectionId] = useState<string | null>(null);
@@ -45,6 +47,13 @@ const MeetingDocSectionEditor: React.FC<Props> = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const { triggerRefreshFor } = useTaskRefresh();
+
+  // 通知父组件 hasUnsavedChanges 的变化
+  useEffect(() => {
+    if (onUnsavedChanges) {
+      onUnsavedChanges(hasUnsavedChanges);
+    }
+  }, [hasUnsavedChanges, onUnsavedChanges]);
 
   // 构造一个完整的 SectionContent 对象（用于编辑器）
   const makeSectionContent = (id: string, title: string, content: string, level: number): SectionContent => ({
@@ -229,9 +238,34 @@ const MeetingDocSectionEditor: React.FC<Props> = ({
   };
 
   const handleCancel = () => {
-    setHasUnsavedChanges(false);
-    if (onCancel) {
-      onCancel();
+    // 如果有未保存的更改，提示用户
+    if (hasUnsavedChanges) {
+      Modal.confirm({
+        title: '未保存的更改',
+        content: '当前有未保存的更改，关闭将丢失这些更改。是否要保存？',
+        okText: '保存',
+        cancelText: '不保存',
+        onOk: async () => {
+          // 保存后关闭
+          await handleSave();
+          setHasUnsavedChanges(false);
+          if (onCancel) {
+            onCancel();
+          }
+        },
+        onCancel: () => {
+          // 不保存，直接关闭
+          setHasUnsavedChanges(false);
+          if (onCancel) {
+            onCancel();
+          }
+        }
+      });
+    } else {
+      // 没有未保存的更改，直接关闭
+      if (onCancel) {
+        onCancel();
+      }
     }
   };
 

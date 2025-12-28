@@ -22,6 +22,7 @@ export interface DocMetaEntry {
   version: number
   updated_at: string
   created_at: string
+  import_meta?: ImportMeta  // 文件导入元数据（SVG等）
 }
 
 // 文档树节点
@@ -73,6 +74,25 @@ export interface CreateNodeRequest {
   title: string
   type: DocumentType
   content: string
+  import_meta?: ImportMeta
+}
+
+// 文件导入元数据
+export interface ImportMeta {
+  source_type: 'file_import'
+  original_filename: string
+  file_size: number
+  content_type: 'markdown' | 'svg'
+}
+
+// 文件导入响应
+export interface ImportFileResponse {
+  success: boolean
+  content: string
+  original_filename: string
+  file_size: number
+  content_type: 'markdown' | 'svg'
+  warnings: string[]
 }
 
 // 移动节点请求
@@ -111,6 +131,22 @@ export interface UpdateContentRequest {
 
 // Documents API
 export const documentsAPI = {
+  // 文件导入
+  async importFile(projectId: string, file: File): Promise<ImportFileResponse> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await apiClient.post(
+      `/projects/${projectId}/documents/import`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    )
+    return response.data
+  },
+
   // 节点管理
   async createNode(projectId: string, request: CreateNodeRequest): Promise<{ node: DocMetaEntry }> {
     const response = await apiClient.post(`/projects/${projectId}/documents/nodes`, request)
