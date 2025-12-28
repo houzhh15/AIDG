@@ -12,6 +12,8 @@
 !go.sum
 !frontend/
 !frontend/**
+!file_converter/
+!file_converter/**
 !deployments/docker/supervisord.conf
 !tmp/
 !tmp/pyannote/
