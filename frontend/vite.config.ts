@@ -53,6 +53,18 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       host: true, // Listen on all addresses for Docker support
       proxy: {
+        // OCR and file converter APIs -> Python service
+        '/api/ocr': {
+          target: env.VITE_FILE_CONVERTER_URL || 'http://localhost:5002',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+        '/api/convert': {
+          target: env.VITE_FILE_CONVERTER_URL || 'http://localhost:5002',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+        // Other APIs -> Go backend
         '/api': {
           target: env.VITE_API_BASE_URL || 'http://localhost:8000',
           changeOrigin: true,

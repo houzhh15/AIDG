@@ -91,6 +91,12 @@ var supportedExtensions = map[string]bool{
 	"svg": true,
 }
 
+// 支持的图片扩展名（OCR 识别）
+var imageExtensions = map[string]bool{
+	"png": true, "jpg": true, "jpeg": true,
+	"bmp": true, "tiff": true, "tif": true,
+}
+
 // 最大文件大小：20MB
 const maxFileSize = 20 * 1024 * 1024
 
@@ -110,6 +116,13 @@ func (h *Handler) ImportFile(c *gin.Context) {
 	filename := header.Filename
 	fileSize := header.Size
 
+	// 获取 OCR 参数
+	enableOcr := c.PostForm("enable_ocr") == "true"
+	ocrLang := c.PostForm("ocr_lang")
+	if ocrLang == "" {
+		ocrLang = "chi_sim+eng"
+	}
+
 	// 校验文件大小
 	if fileSize > maxFileSize {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
@@ -125,10 +138,10 @@ func (h *Handler) ImportFile(c *gin.Context) {
 		ext = strings.ToLower(filename[idx+1:])
 	}
 
-	// 校验文件格式
-	if !supportedExtensions[ext] {
+	// 校验文件格式（添加图片格式支持）
+	if !supportedExtensions[ext] && !imageExtensions[ext] {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "不支持的文件格式。支持: pdf, ppt, pptx, doc, docx, xls, xlsx, svg",
+			"error": "不支持的文件格式。支持: pdf, ppt, pptx, doc, docx, xls, xlsx, svg, png, jpg, jpeg, bmp, tiff",
 			"code":  "UNSUPPORTED_FORMAT",
 		})
 		return
@@ -157,7 +170,7 @@ func (h *Handler) ImportFile(c *gin.Context) {
 	}
 
 	// 其他格式调用 Python 转换服务
-	result, err := callConversionService(file, filename, ext)
+	result, err := callConversionService(file, filename, ext, enableOcr, ocrLang)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "文件转换失败: " + err.Error(),
@@ -173,6 +186,9 @@ func (h *Handler) ImportFile(c *gin.Context) {
 		FileSize:         fileSize,
 		ContentType:      "markdown",
 		Warnings:         result.Warnings,
+		OcrUsed:          result.OcrUsed,
+		OcrPages:         result.OcrPages,
+		OcrLang:          result.OcrLang,
 	})
 }
 
@@ -1204,10 +1220,13 @@ func readFileContent(file interface{ Read([]byte) (int, error) }) (string, error
 type conversionResult struct {
 	Content  string   `json:"content"`
 	Warnings []string `json:"warnings"`
+	OcrUsed  bool     `json:"ocr_used"`
+	OcrPages int      `json:"ocr_pages"`
+	OcrLang  string   `json:"ocr_lang"`
 }
 
 // callConversionService 调用 Python 文件转换服务
-func callConversionService(file interface{ Read([]byte) (int, error) }, filename, ext string) (*conversionResult, error) {
+func callConversionService(file interface{ Read([]byte) (int, error) }, filename, ext string, enableOcr bool, ocrLang string) (*conversionResult, error) {
 	// 读取文件内容
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, file.(io.Reader)); err != nil {
@@ -1227,13 +1246,31 @@ func callConversionService(file interface{ Read([]byte) (int, error) }, filename
 		return nil, fmt.Errorf("写入文件数据失败: %w", err)
 	}
 
+	// 添加 OCR 参数
+	if enableOcr {
+		if err := writer.WriteField("enable_ocr", "true"); err != nil {
+			return nil, fmt.Errorf("写入 enable_ocr 失败: %w", err)
+		}
+	}
+	if ocrLang != "" {
+		if err := writer.WriteField("ocr_lang", ocrLang); err != nil {
+			return nil, fmt.Errorf("写入 ocr_lang 失败: %w", err)
+		}
+	}
+
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("关闭 writer 失败: %w", err)
 	}
 
 	// 调用转换服务（支持环境变量配置）
 	baseURL := getFileConverterURL()
-	conversionURL := fmt.Sprintf("%s/convert/%s", baseURL, ext)
+	// 图片格式使用 /convert/image 端点，其他格式使用通用 /convert 端点
+	var conversionURL string
+	if ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp" || ext == "tiff" || ext == "tif" {
+		conversionURL = fmt.Sprintf("%s/convert/image", baseURL)
+	} else {
+		conversionURL = fmt.Sprintf("%s/convert", baseURL)
+	}
 	req, err := http.NewRequest("POST", conversionURL, &body)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)

@@ -83,6 +83,7 @@ services:
       - ./data/audit_logs:/app/data/audit_logs
       - ./data:/data
       - ./models:/models:ro
+      - ./models/tessdata:/usr/share/tessdata
       - ./bin/whisper:/app/bin/whisper:ro
     networks:
       - aidg-network

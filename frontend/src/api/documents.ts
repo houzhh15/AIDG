@@ -93,6 +93,15 @@ export interface ImportFileResponse {
   file_size: number
   content_type: 'markdown' | 'svg'
   warnings: string[]
+  ocr_used?: boolean
+  ocr_pages?: number
+  ocr_lang?: string
+}
+
+// 文件导入选项
+export interface ImportFileOptions {
+  enableOcr?: boolean
+  ocrLang?: string
 }
 
 // 移动节点请求
@@ -132,9 +141,15 @@ export interface UpdateContentRequest {
 // Documents API
 export const documentsAPI = {
   // 文件导入
-  async importFile(projectId: string, file: File): Promise<ImportFileResponse> {
+  async importFile(projectId: string, file: File, options?: ImportFileOptions): Promise<ImportFileResponse> {
     const formData = new FormData()
     formData.append('file', file)
+    if (options?.enableOcr !== undefined) {
+      formData.append('enable_ocr', String(options.enableOcr))
+    }
+    if (options?.ocrLang) {
+      formData.append('ocr_lang', options.ocrLang)
+    }
     const response = await apiClient.post(
       `/projects/${projectId}/documents/import`,
       formData,

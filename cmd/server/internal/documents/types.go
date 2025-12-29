@@ -62,6 +62,9 @@ type ImportFileResponse struct {
 	FileSize         int64    `json:"file_size"`
 	ContentType      string   `json:"content_type"`
 	Warnings         []string `json:"warnings"`
+	OcrUsed          bool     `json:"ocr_used,omitempty"`
+	OcrPages         int      `json:"ocr_pages,omitempty"`
+	OcrLang          string   `json:"ocr_lang,omitempty"`
 }
 
 // MoveNodeRequest 移动节点请求

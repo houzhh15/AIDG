@@ -71,9 +71,20 @@ RUN apk add --no-cache \
     tzdata \
     supervisor \
     wget \
+    # OCR dependencies
+    tesseract-ocr \
+    poppler-utils \
     # Build dependencies for Python packages (will be removed later)
     && pip install --no-cache-dir --upgrade pip \
     && rm -rf /var/cache/apk/*
+
+# Create tessdata directory and download English language pack
+RUN mkdir -p /usr/share/tessdata && \
+    wget -q -O /usr/share/tessdata/eng.traineddata \
+    https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+
+# Set Tesseract data path
+ENV TESSDATA_PREFIX=/usr/share/tessdata
 
 # Install Python dependencies for file_converter
 COPY file_converter/requirements.txt /tmp/file_converter_requirements.txt

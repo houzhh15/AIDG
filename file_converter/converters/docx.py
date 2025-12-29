@@ -1,11 +1,11 @@
 """
 file_converter/converters/docx.py
-DOCX 文件转换器 - 使用 python-docx 提取文档内容
+DOCX 文件转换器 - 使用 python-docx 提取文档内容，支持嵌入图片 OCR
 """
 
 import io
 import logging
-from typing import BinaryIO, List
+from typing import BinaryIO, List, Optional
 
 from docx import Document
 from docx.shared import Pt
@@ -24,6 +24,7 @@ class DocxConverter(BaseConverter):
     - 保留段落、列表、表格结构
     - 加粗、斜体转换为 Markdown 语法
     - 图片标注为 [图片略]
+    - 支持嵌入图片 OCR 识别
     """
     
     supported_extensions = ["docx", "doc"]
@@ -39,36 +40,47 @@ class DocxConverter(BaseConverter):
         'Title': 1, 'Subtitle': 2,
     }
     
-    def convert(self, file: BinaryIO, filename: str) -> ConversionResult:
+    def convert(
+        self, 
+        file: BinaryIO, 
+        filename: str,
+        enable_ocr: bool = False,
+        ocr_lang: Optional[str] = None
+    ) -> ConversionResult:
         """将 DOCX 转换为 Markdown"""
         warnings: List[str] = []
         content_parts: List[str] = []
+        ocr_count = 0
         
         try:
             doc = Document(file)
-            logger.info(f"Processing DOCX: {filename}")
+            logger.info(f"Processing DOCX: {filename}, enable_ocr={enable_ocr}")
             
             # 处理段落
             for para in doc.paragraphs:
                 para_md = self._process_paragraph(para)
                 if para_md:
                     content_parts.append(para_md)
+                
+                # 检查段落中的图片
+                if enable_ocr:
+                    images = para._element.xpath('.//w:drawing')
+                    if images:
+                        ocr_text = self._ocr_paragraph_images(para, warnings, ocr_lang)
+                        if ocr_text:
+                            content_parts.append(f"> [图片文字] {ocr_text}")
+                            ocr_count += 1
+                        else:
+                            content_parts.append("[图片略]")
+                else:
+                    if para._element.xpath('.//w:drawing'):
+                        content_parts.append("[图片略]")
             
             # 处理表格
             for table in doc.tables:
                 table_md = self._table_to_markdown(table)
                 if table_md:
                     content_parts.append(table_md)
-            
-            # 检查图片（通过检查内联形状）
-            has_images = False
-            for para in doc.paragraphs:
-                if para._element.xpath('.//w:drawing'):
-                    has_images = True
-                    break
-            
-            if has_images:
-                warnings.append("文档包含图片，已跳过")
         
         except Exception as e:
             logger.error(f"DOCX conversion failed: {filename}, error: {e}")
@@ -79,7 +91,54 @@ class DocxConverter(BaseConverter):
         if not content.strip():
             warnings.append("DOCX 未提取到任何内容")
         
-        return ConversionResult(content=content, warnings=warnings)
+        if ocr_count > 0:
+            warnings.append(f"使用 OCR 识别了 {ocr_count} 张图片")
+        
+        return ConversionResult(
+            content=content, 
+            warnings=warnings,
+            ocr_used=ocr_count > 0,
+            ocr_pages=ocr_count
+        )
+    
+    def _ocr_paragraph_images(
+        self, 
+        para, 
+        warnings: List[str],
+        ocr_lang: Optional[str] = None
+    ) -> str:
+        """对段落中的图片进行 OCR"""
+        try:
+            from file_converter.ocr.engine import get_ocr_engine
+            from docx.opc.constants import RELATIONSHIP_TYPE as RT
+            
+            ocr_engine = get_ocr_engine()
+            if not ocr_engine.is_available():
+                return ""
+            
+            # 尝试获取图片数据
+            for run in para.runs:
+                if run._element.xpath('.//w:drawing'):
+                    # 获取内联图片
+                    for inline in run._element.xpath('.//a:blip/@r:embed', 
+                        namespaces={'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                                    'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}):
+                        try:
+                            # 获取图片二进制
+                            image_part = para.part.related_parts.get(inline)
+                            if image_part:
+                                image_blob = image_part.blob
+                                text = ocr_engine.recognize(image_blob, lang=ocr_lang)
+                                if text.strip():
+                                    return text.strip()
+                        except Exception as e:
+                            logger.warning(f"Failed to extract image from DOCX: {e}")
+            
+            return ""
+        
+        except Exception as e:
+            logger.warning(f"Failed to OCR image in DOCX: {e}")
+            return ""
     
     def _process_paragraph(self, para) -> str:
         """处理段落"""

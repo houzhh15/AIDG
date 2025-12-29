@@ -30,6 +30,7 @@ services:
       - users_data:/app/data/users
       - meetings_data:/app/data/meetings
       - audit_logs_data:/app/data/audit_logs
+      - tessdata:/usr/share/tessdata
     networks:
       - aidg-network
     healthcheck:
@@ -60,4 +61,6 @@ volumes:
   meetings_data:
     driver: local
   audit_logs_data:
+    driver: local
+  tessdata:
     driver: local

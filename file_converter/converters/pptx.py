@@ -1,11 +1,11 @@
 """
 file_converter/converters/pptx.py
-PPTX 文件转换器 - 使用 python-pptx 提取幻灯片内容
+PPTX 文件转换器 - 使用 python-pptx 提取幻灯片内容，支持嵌入图片 OCR
 """
 
 import io
 import logging
-from typing import BinaryIO, List
+from typing import BinaryIO, List, Optional
 
 from pptx import Presentation
 from pptx.util import Pt
@@ -24,23 +24,34 @@ class PptxConverter(BaseConverter):
     - 提取文本框内容
     - 备注以引用块格式附加
     - 图片/图表标注为 [图片/图表略]
+    - 支持嵌入图片 OCR 识别
     """
     
     supported_extensions = ["pptx", "ppt"]
     
-    def convert(self, file: BinaryIO, filename: str) -> ConversionResult:
+    def convert(
+        self, 
+        file: BinaryIO, 
+        filename: str,
+        enable_ocr: bool = False,
+        ocr_lang: Optional[str] = None
+    ) -> ConversionResult:
         """将 PPTX 转换为 Markdown"""
         warnings: List[str] = []
         content_parts: List[str] = []
+        ocr_count = 0
         
         try:
             prs = Presentation(file)
             total_slides = len(prs.slides)
-            logger.info(f"Processing PPTX: {filename}, {total_slides} slides")
+            logger.info(f"Processing PPTX: {filename}, {total_slides} slides, enable_ocr={enable_ocr}")
             
             for slide_num, slide in enumerate(prs.slides, 1):
-                slide_content = self._process_slide(slide, slide_num, warnings)
+                slide_content, slide_ocr_count = self._process_slide(
+                    slide, slide_num, warnings, enable_ocr, ocr_lang
+                )
                 content_parts.append(slide_content)
+                ocr_count += slide_ocr_count
         
         except Exception as e:
             logger.error(f"PPTX conversion failed: {filename}, error: {e}")
@@ -51,11 +62,27 @@ class PptxConverter(BaseConverter):
         if not content.strip():
             warnings.append("PPTX 未提取到任何内容")
         
-        return ConversionResult(content=content, warnings=warnings)
+        if ocr_count > 0:
+            warnings.append(f"使用 OCR 识别了 {ocr_count} 张图片")
+        
+        return ConversionResult(
+            content=content, 
+            warnings=warnings,
+            ocr_used=ocr_count > 0,
+            ocr_pages=ocr_count
+        )
     
-    def _process_slide(self, slide, slide_num: int, warnings: List[str]) -> str:
-        """处理单个幻灯片"""
+    def _process_slide(
+        self, 
+        slide, 
+        slide_num: int, 
+        warnings: List[str],
+        enable_ocr: bool = False,
+        ocr_lang: Optional[str] = None
+    ) -> tuple:
+        """处理单个幻灯片，返回 (内容, OCR图片数)"""
         parts: List[str] = []
+        ocr_count = 0
         
         # 提取标题
         title = self._get_slide_title(slide)
@@ -65,7 +92,10 @@ class PptxConverter(BaseConverter):
             parts.append(f"## Slide {slide_num}")
         
         # 提取文本内容
-        text_content = self._extract_text_content(slide, warnings)
+        text_content, slide_ocr_count = self._extract_text_content(
+            slide, warnings, enable_ocr, ocr_lang
+        )
+        ocr_count += slide_ocr_count
         if text_content:
             parts.append(text_content)
         
@@ -77,7 +107,7 @@ class PptxConverter(BaseConverter):
                 if line.strip():
                     parts.append(f"> {line.strip()}")
         
-        return "\n\n".join(parts)
+        return "\n\n".join(parts), ocr_count
     
     def _get_slide_title(self, slide) -> str:
         """获取幻灯片标题"""
@@ -93,11 +123,17 @@ class PptxConverter(BaseConverter):
         
         return ""
     
-    def _extract_text_content(self, slide, warnings: List[str]) -> str:
-        """提取幻灯片文本内容"""
+    def _extract_text_content(
+        self, 
+        slide, 
+        warnings: List[str],
+        enable_ocr: bool = False,
+        ocr_lang: Optional[str] = None
+    ) -> tuple:
+        """提取幻灯片文本内容，返回 (内容, OCR图片数)"""
         lines: List[str] = []
-        has_image = False
         has_chart = False
+        ocr_count = 0
         
         for shape in slide.shapes:
             # 跳过标题（已单独处理）
@@ -106,7 +142,16 @@ class PptxConverter(BaseConverter):
             
             # 检查图片
             if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
-                has_image = True
+                if enable_ocr:
+                    # 尝试 OCR 识别图片
+                    ocr_text = self._ocr_shape_image(shape, warnings, ocr_lang)
+                    if ocr_text:
+                        lines.append(f"\n> [图片文字] {ocr_text}")
+                        ocr_count += 1
+                    else:
+                        lines.append("\n[图片略]")
+                else:
+                    lines.append("\n[图片略]")
                 continue
             
             # 检查图表
@@ -127,13 +172,36 @@ class PptxConverter(BaseConverter):
                 if table_md:
                     lines.append(table_md)
         
-        # 添加图片/图表标记
-        if has_image:
-            lines.append("\n[图片略]")
+        # 添加图表标记
         if has_chart:
             lines.append("\n[图表略]")
         
-        return "\n".join(lines)
+        return "\n".join(lines), ocr_count
+    
+    def _ocr_shape_image(
+        self, 
+        shape, 
+        warnings: List[str],
+        ocr_lang: Optional[str] = None
+    ) -> str:
+        """对形状中的图片进行 OCR"""
+        try:
+            from file_converter.ocr.engine import get_ocr_engine
+            
+            # 获取图片二进制数据
+            image_blob = shape.image.blob
+            
+            # OCR 识别
+            ocr_engine = get_ocr_engine()
+            if not ocr_engine.is_available():
+                return ""
+            
+            text = ocr_engine.recognize(image_blob, lang=ocr_lang)
+            return text.strip()
+        
+        except Exception as e:
+            logger.warning(f"Failed to OCR image in PPTX: {e}")
+            return ""
     
     def _process_paragraph(self, paragraph) -> str:
         """处理段落，转换格式"""

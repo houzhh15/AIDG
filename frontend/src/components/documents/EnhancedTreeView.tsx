@@ -173,6 +173,10 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
   // 文件导入相关状态
   const [importedContent, setImportedContent] = useState<string>('');
   const [importMeta, setImportMeta] = useState<ImportMeta | null>(null);
+  
+  // OCR 相关状态
+  const [enableOcr, setEnableOcr] = useState<boolean>(false);
+  const [selectedOcrLang, setSelectedOcrLang] = useState<string>('chi_sim+eng');
 
   // 文件导入始终可用，所以 hasReferenceOptions 总为 true
   const hasReferenceOptions = true;
@@ -823,7 +827,7 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
             <Form.Item
               label="上传文件"
               required
-              tooltip="支持 PDF、PPT、DOC、EXCEL、SVG 文件，最大20MB"
+              tooltip="支持 PDF、PPT、DOC、EXCEL、SVG、图片格式，最大20MB。启用 OCR 可识别扫描件和图片中的文字。"
             >
               <FileUploadArea
                 projectId={projectId}
@@ -831,6 +835,10 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
                   setImportedContent(content);
                   setImportMeta(meta);
                 }}
+                enableOcr={enableOcr}
+                selectedOcrLang={selectedOcrLang}
+                onEnableOcrChange={setEnableOcr}
+                onOcrLangChange={setSelectedOcrLang}
               />
               {importMeta && (
                 <div style={{ marginTop: 8, fontSize: 12, color: '#52c41a' }}>

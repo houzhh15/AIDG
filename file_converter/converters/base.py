@@ -5,7 +5,7 @@ file_converter/converters/base.py
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List, BinaryIO
+from typing import List, BinaryIO, Optional
 
 
 @dataclass
@@ -13,6 +13,8 @@ class ConversionResult:
     """转换结果数据类"""
     content: str                          # 转换后的 Markdown 内容
     warnings: List[str] = field(default_factory=list)  # 转换警告信息
+    ocr_used: bool = False                # 是否使用了 OCR
+    ocr_pages: int = 0                    # OCR 处理的页数
 
 
 class BaseConverter(ABC):
@@ -26,13 +28,21 @@ class BaseConverter(ABC):
     supported_extensions: List[str] = []
     
     @abstractmethod
-    def convert(self, file: BinaryIO, filename: str) -> ConversionResult:
+    def convert(
+        self, 
+        file: BinaryIO, 
+        filename: str,
+        enable_ocr: bool = False,
+        ocr_lang: Optional[str] = None
+    ) -> ConversionResult:
         """
         将文件转换为 Markdown 格式
         
         Args:
             file: 文件二进制流
             filename: 原始文件名（用于日志和警告信息）
+            enable_ocr: 是否启用 OCR 识别
+            ocr_lang: OCR 识别语言（如 chi_sim+eng）
             
         Returns:
             ConversionResult: 包含转换后内容和警告信息的结果对象

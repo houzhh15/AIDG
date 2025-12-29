@@ -50,7 +50,7 @@ dev:
 			set -a; source .env; set +a; \
 		fi; \
 		echo "Starting file converter on :5002..."; \
-		cd file_converter && uvicorn main:app --host 0.0.0.0 --port 5002 --reload &\
+		PYTHONPATH=$$PWD uvicorn file_converter.main:app --host 0.0.0.0 --port 5002 --reload &\
 		echo "Starting server on :8000..."; \
 		ENV=development \
 		JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars \

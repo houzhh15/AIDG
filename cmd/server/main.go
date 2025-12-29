@@ -91,6 +91,64 @@ func (a *sectionServiceAdapter) GetSection(projectID, taskID, docType, sectionID
 	}, nil
 }
 
+// proxyToFileConverter 代理请求到 file_converter 服务
+func proxyToFileConverter(c *gin.Context) {
+	// 获取 file_converter 服务地址
+	baseURL := os.Getenv("FILE_CONVERTER_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:5002"
+	}
+
+	// 构建目标 URL，移除 /api 或 /api/v1 前缀
+	targetPath := c.Request.URL.Path
+	if strings.HasPrefix(targetPath, "/api/v1/ocr/") {
+		targetPath = strings.Replace(targetPath, "/api/v1/ocr/", "/ocr/", 1)
+	} else if strings.HasPrefix(targetPath, "/api/ocr/") {
+		targetPath = strings.Replace(targetPath, "/api/ocr/", "/ocr/", 1)
+	}
+
+	targetURL := baseURL + targetPath
+	if c.Request.URL.RawQuery != "" {
+		targetURL += "?" + c.Request.URL.RawQuery
+	}
+
+	// 创建代理请求
+	proxyReq, err := http.NewRequest(c.Request.Method, targetURL, c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建代理请求失败"})
+		return
+	}
+
+	// 复制请求头（排除 Host）
+	for key, values := range c.Request.Header {
+		if key != "Host" {
+			for _, value := range values {
+				proxyReq.Header.Add(key, value)
+			}
+		}
+	}
+
+	// 发送请求
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "file_converter 服务不可用: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	// 复制响应头
+	for key, values := range resp.Header {
+		for _, value := range values {
+			c.Header(key, value)
+		}
+	}
+
+	// 返回响应
+	c.Status(resp.StatusCode)
+	io.Copy(c.Writer, resp.Body)
+}
+
 func main() {
 	logInstance, err := logger.Init(logger.Config{
 		Level:       os.Getenv("LOG_LEVEL"),
@@ -609,12 +667,14 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// 跳过不需要认证的路由：登录、健康检查、服务状态、OPTIONS请求、非API路由、公开身份源列表、OIDC回调
+		// 跳过不需要认证的路由：登录、健康检查、服务状态、OPTIONS请求、非API路由、公开身份源列表、OIDC回调、OCR语言API
 		if path == "/api/v1/login" ||
 			path == "/api/v1/health" ||
 			path == "/api/v1/services/status" ||
 			path == "/api/v1/identity-providers/public" ||
 			strings.HasPrefix(path, "/auth/") ||
+			strings.HasPrefix(path, "/api/ocr/") ||
+			strings.HasPrefix(path, "/api/v1/ocr/") ||
 			c.Request.Method == http.MethodOptions ||
 			!strings.HasPrefix(path, "/api/") {
 			c.Next()
@@ -1377,6 +1437,15 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 
 	// ========== Documents API (21 endpoints) ==========
 	r.POST("/api/v1/projects/:id/documents/import", docHandler.ImportFile) // 新增：文件导入
+
+	// OCR API 代理到 file_converter 服务（同时支持 /api/ocr 和 /api/v1/ocr）
+	r.GET("/api/ocr/languages", proxyToFileConverter)
+	r.POST("/api/ocr/languages/:lang/download", proxyToFileConverter)
+	r.GET("/api/ocr/languages/:lang/download-status", proxyToFileConverter)
+	r.GET("/api/v1/ocr/languages", proxyToFileConverter)
+	r.POST("/api/v1/ocr/languages/:lang/download", proxyToFileConverter)
+	r.GET("/api/v1/ocr/languages/:lang/download-status", proxyToFileConverter)
+
 	r.POST("/api/v1/projects/:id/documents/nodes", docHandler.CreateNode)
 	r.GET("/api/v1/projects/:id/documents/tree", docHandler.GetTree)
 	r.PUT("/api/v1/projects/:id/documents/nodes/:node_id/move", docHandler.MoveNode)
