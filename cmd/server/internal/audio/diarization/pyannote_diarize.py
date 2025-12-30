@@ -106,8 +106,15 @@ def main():
             pipeline = Pipeline.from_pretrained(cfg)
         else:
             # Online load; HF hub will reuse cache if available
-            # Note: Pipeline.from_pretrained() uses HF_TOKEN env var, not token parameter
-            pipeline = Pipeline.from_pretrained(args.pipeline, cache_dir=args.cache_dir)
+            # Handle API compatibility: pyannote.pipeline 3.0.1 uses 'use_auth_token',
+            # while newer versions use environment variables
+            try:
+                # Try with use_auth_token parameter (for older pyannote.pipeline 3.0.1)
+                pipeline = Pipeline.from_pretrained(args.pipeline, use_auth_token=args.hf_token, cache_dir=args.cache_dir)
+            except TypeError:
+                # Fallback: Pipeline doesn't accept token parameter, uses env vars
+                # This happens with newer pyannote versions
+                pipeline = Pipeline.from_pretrained(args.pipeline, cache_dir=args.cache_dir)
         # Select device
         device = resolve_device(args.device)
         try:
