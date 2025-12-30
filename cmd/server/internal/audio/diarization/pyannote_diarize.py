@@ -61,6 +61,12 @@ def main():
     if not args.hf_token and not args.offline and not is_local_pipeline:
         print(json.dumps({"segments": [], "error": "missing HF token"}))
         return
+    
+    # Set HF token via environment variable for pyannote.audio Pipeline
+    # Pipeline.from_pretrained() doesn't accept token parameter directly
+    if args.hf_token:
+        os.environ["HF_TOKEN"] = args.hf_token
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = args.hf_token
 
     try:
         # Ensure input is WAV mono 16k for robust decoding
@@ -100,7 +106,8 @@ def main():
             pipeline = Pipeline.from_pretrained(cfg)
         else:
             # Online load; HF hub will reuse cache if available
-            pipeline = Pipeline.from_pretrained(args.pipeline, token=args.hf_token, cache_dir=args.cache_dir)
+            # Note: Pipeline.from_pretrained() uses HF_TOKEN env var, not token parameter
+            pipeline = Pipeline.from_pretrained(args.pipeline, cache_dir=args.cache_dir)
         # Select device
         device = resolve_device(args.device)
         try:
