@@ -276,7 +276,7 @@ def load_embedding_model(args):
         try:
             model = Model.from_pretrained(
                 args.embedding_model,
-                use_auth_token=None,  # 离线模式不使用token
+                token=None,  # 离线模式不使用token
                 cache_dir=args.cache_dir if cache_dir_explicit else None,
                 local_files_only=True,
             )
@@ -289,7 +289,7 @@ def load_embedding_model(args):
     try:
         model = Model.from_pretrained(
             args.embedding_model,
-            use_auth_token=args.hf_token,
+            token=args.hf_token,
             cache_dir=args.cache_dir if cache_dir_explicit else None,
         )
     except Exception as e:

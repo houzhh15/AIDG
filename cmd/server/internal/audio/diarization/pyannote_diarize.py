@@ -89,7 +89,7 @@ def main():
             except Exception as e:
                 raise RuntimeError(f"offline mode requires huggingface_hub installed: {e}")
             # In offline mode, don't use token to avoid any network calls
-            local_dir = snapshot_download(args.pipeline, local_files_only=True, use_auth_token=None, cache_dir=args.cache_dir)
+            local_dir = snapshot_download(args.pipeline, local_files_only=True, token=None, cache_dir=args.cache_dir)
             cfg = os.path.join(local_dir, "config.yaml")
             if not os.path.isfile(cfg):
                 # Fallback: pick the first *.yml|*.yaml under the snapshot
@@ -100,7 +100,7 @@ def main():
             pipeline = Pipeline.from_pretrained(cfg)
         else:
             # Online load; HF hub will reuse cache if available
-            pipeline = Pipeline.from_pretrained(args.pipeline, use_auth_token=args.hf_token, cache_dir=args.cache_dir)
+            pipeline = Pipeline.from_pretrained(args.pipeline, token=args.hf_token, cache_dir=args.cache_dir)
         # Select device
         device = resolve_device(args.device)
         try:
