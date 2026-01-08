@@ -64,9 +64,11 @@ def main():
     
     # Set HF token via environment variable for pyannote.audio Pipeline
     # Pipeline.from_pretrained() doesn't accept token parameter directly
+    # For huggingface_hub compatibility, also set the old env var names
     if args.hf_token:
         os.environ["HF_TOKEN"] = args.hf_token
         os.environ["HUGGING_FACE_HUB_TOKEN"] = args.hf_token
+        os.environ["HUGGINGFACE_TOKEN"] = args.hf_token  # Legacy support
 
     try:
         # Ensure input is WAV mono 16k for robust decoding
@@ -95,7 +97,8 @@ def main():
             except Exception as e:
                 raise RuntimeError(f"offline mode requires huggingface_hub installed: {e}")
             # In offline mode, don't use token to avoid any network calls
-            local_dir = snapshot_download(args.pipeline, local_files_only=True, token=None, cache_dir=args.cache_dir)
+            # Use environment variables for authentication to avoid API compatibility issues
+            local_dir = snapshot_download(args.pipeline, local_files_only=True, cache_dir=args.cache_dir)
             cfg = os.path.join(local_dir, "config.yaml")
             if not os.path.isfile(cfg):
                 # Fallback: pick the first *.yml|*.yaml under the snapshot
@@ -106,15 +109,9 @@ def main():
             pipeline = Pipeline.from_pretrained(cfg)
         else:
             # Online load; HF hub will reuse cache if available
-            # Handle API compatibility: pyannote.pipeline 3.0.1 uses 'use_auth_token',
-            # while newer versions use environment variables
-            try:
-                # Try with use_auth_token parameter (for older pyannote.pipeline 3.0.1)
-                pipeline = Pipeline.from_pretrained(args.pipeline, use_auth_token=args.hf_token, cache_dir=args.cache_dir)
-            except TypeError:
-                # Fallback: Pipeline doesn't accept token parameter, uses env vars
-                # This happens with newer pyannote versions
-                pipeline = Pipeline.from_pretrained(args.pipeline, cache_dir=args.cache_dir)
+            # pyannote.audio 3.1.1 doesn't accept token parameter
+            # Must use environment variables (already set above if args.hf_token exists)
+            pipeline = Pipeline.from_pretrained(args.pipeline, cache_dir=args.cache_dir)
         # Select device
         device = resolve_device(args.device)
         try:

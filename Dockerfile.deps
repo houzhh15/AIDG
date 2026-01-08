@@ -25,12 +25,14 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 # Install PyAnnote with compatible PyTorch versions
 # torch 2.8.0 is compatible with numpy 1.26.4 and pyannote.audio 3.1.1
 # NumPy must be <2.0 to avoid compatibility issues
+# Force huggingface_hub to a version that supports token parameter (not use_auth_token)
 RUN pip install --no-cache-dir \
     'numpy<2' \
     torch==2.8.0 \
     torchaudio==2.8.0 \
     'pyannote.audio==3.1.1' \
-    matplotlib
+    matplotlib && \
+    pip install --upgrade --force-reinstall huggingface_hub==0.25.0
 
 # Copy PyAnnote scripts from actual source location
 COPY cmd/server/internal/audio/diarization/*.py /app/scripts/

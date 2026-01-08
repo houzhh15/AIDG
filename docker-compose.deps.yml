@@ -35,9 +35,12 @@ services:
       - ./config:/app/config:ro  # 挂载整个 config 目录（与 build-deps-service.sh 一致）
       - ./models/huggingface:/models/huggingface
     environment:
+      # 不使用HF_HUB_OFFLINE,让pyannote自动尝试使用缓存
+      # 如果缓存存在,不会触发网络请求
       - LOG_LEVEL=info
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
       - HF_HOME=/models/huggingface
+      - HF_HUB_CACHE=/models/huggingface/hub  # HuggingFace Hub 缓存目录
       - TRANSFORMERS_CACHE=/models/huggingface  # Transformers 缓存目录
       - TORCH_HOME=/models/huggingface  # PyTorch 缓存目录
     # 仅暴露内部端口，不映射到宿主机
@@ -68,6 +71,7 @@ services:
     image: ghcr.io/houzhh15/aidg:${IMAGE_TAG:-latest}
     container_name: aidg-unified
     environment:
+      - ENABLE_OFFLINE=true  # 禁用离线模式，允许 PyAnnote 下载模型
       # 依赖服务配置（符合 task_1760229132 设计）
       - DEPENDENCY_MODE=remote
       - DEPS_SERVICE_URL=http://aidg-deps-service:8080

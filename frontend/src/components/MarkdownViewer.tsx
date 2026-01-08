@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Modal, Button } from 'antd';
@@ -245,7 +247,8 @@ const MarkdownViewer: React.FC<Props> = ({
   const markdownContent = React.useMemo(() => {
     return (
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           // 为标题添加id属性以支持锚点跳转，并添加编辑按钮
           h1: createHeadingWithEditButton(1),
