@@ -36,6 +36,8 @@ services:
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
       # HF_HUB_CACHE 是 PyAnnote 模型的唯一必需环境变量
       - HF_HUB_CACHE=/models/huggingface/hub
+      # 离线模式：使用本地缓存的模型，不访问网络
+      - HF_HUB_OFFLINE=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
       interval: 10s
