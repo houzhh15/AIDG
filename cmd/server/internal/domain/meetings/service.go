@@ -227,6 +227,19 @@ func overrideDependencyConfig(cfg *orchestrator.Config) {
 		cfg.DependencySharedVolume = vol
 	}
 
+	// Override PythonBinaryPath from environment (for local conda environments)
+	if pythonPath := strings.TrimSpace(os.Getenv("PYTHON_PATH")); pythonPath != "" {
+		cfg.PythonBinaryPath = pythonPath
+	}
+
+	// Override script paths from environment (for local development)
+	if scriptPath := strings.TrimSpace(os.Getenv("DIARIZATION_SCRIPT_PATH")); scriptPath != "" {
+		cfg.DiarizationScriptPath = scriptPath
+	}
+	if scriptPath := strings.TrimSpace(os.Getenv("EMBEDDING_SCRIPT_PATH")); scriptPath != "" {
+		cfg.EmbeddingScriptPath = scriptPath
+	}
+
 	// Override WhisperMode from environment
 	if mode := strings.TrimSpace(os.Getenv("WHISPER_MODE")); mode != "" {
 		cfg.WhisperMode = mode
