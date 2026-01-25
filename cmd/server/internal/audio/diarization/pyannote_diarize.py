@@ -203,10 +203,12 @@ def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
         kwargs.pop('token', None)
         return original_hf_hub_download(*args, **kwargs)
     
-    def patched_torch_load(*args, **kwargs):
+    def patched_torch_load(f, *args, **kwargs):
         # Force weights_only=False for older checkpoints (PyTorch 2.6+ compatibility)
-        kwargs['weights_only'] = False
-        return original_torch_load(*args, **kwargs)
+        # This is required for pyannote models which contain non-standard globals
+        if 'weights_only' not in kwargs:
+            kwargs['weights_only'] = False
+        return original_torch_load(f, *args, **kwargs)
     
     # Apply patches BEFORE importing pyannote or its dependencies
     huggingface_hub.hf_hub_download = patched_hf_hub_download
@@ -264,6 +266,16 @@ def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
         try:
             import lightning_fabric.utilities.cloud_io
             lightning_fabric.utilities.cloud_io.torch.load = patched_torch_load
+        except:
+            pass
+        
+        # Also patch torch module directly for any remaining references
+        torch.load = patched_torch_load
+        
+        # Patch pytorch_lightning if it was imported
+        try:
+            import pytorch_lightning.utilities.cloud_io
+            pytorch_lightning.utilities.cloud_io.torch.load = patched_torch_load
         except:
             pass
         

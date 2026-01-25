@@ -46,9 +46,15 @@ type WhisperModelsMetadata struct {
 // loadWhisperModelsMetadata loads the static whisper models configuration from JSON file
 func loadWhisperModelsMetadata() (*WhisperModelsMetadata, error) {
 	// Try to load from config directory
+	// In Docker, CONFIG_PATH should be set to /app/config
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
-		configPath = "./config"
+		// Default to /app/config for Docker, fallback to ./config for local development
+		if _, err := os.Stat("/app/config"); err == nil {
+			configPath = "/app/config"
+		} else {
+			configPath = "./config"
+		}
 	}
 
 	jsonPath := filepath.Join(configPath, "whisper_models.json")

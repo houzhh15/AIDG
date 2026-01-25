@@ -105,6 +105,7 @@ services:
       - ../../data/audit_logs:/app/data/audit_logs
       - ../../data:/data
       - ../../models:/models:ro
+      - ../../config:/app/config:ro
     depends_on:
       whisper:
         condition: service_started

@@ -43,7 +43,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
+# Note: build/ directory is used for Dockerfiles and docker-compose configs, not Python build
+# Only ignore Python-specific build artifacts
+*.egg-info/build/
 develop-eggs/
 dist/
 downloads/
