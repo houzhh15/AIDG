@@ -1709,10 +1709,39 @@ func initDependencyClient(cfg Config) (*dependency.DependencyClient, error) {
 
 	sharedVolume := cfg.DependencySharedVolume
 	if sharedVolume == "" {
+		// 首先尝试从环境变量获取
+		sharedVolume = os.Getenv("DEPENDENCY_SHARED_VOLUME")
+	}
+	if sharedVolume == "" {
 		// 【修复】PathManager 需要 baseDir (如 "/app/data"),而不是 meeting 目录
-		// OutputDir 格式: /app/data/meetings/{meeting_id}
-		// 需要提取: /app/data
-		sharedVolume = filepath.Dir(filepath.Dir(cfg.OutputDir)) // 提取 baseDir
+		// OutputDir 格式可能是:
+		// - /app/data/meetings/{meeting_id}  (Docker)
+		// - data/meetings/{meeting_id}        (本地相对路径)
+		// - /path/to/AIDG/data/meetings/{meeting_id} (本地绝对路径)
+		// 策略: 寻找包含 "meetings" 的父目录，如果找不到则使用 OutputDir 的父目录
+		absOutputDir, err := filepath.Abs(cfg.OutputDir)
+		if err != nil {
+			absOutputDir = cfg.OutputDir
+		}
+		
+		// 向上查找，直到找到包含 "meetings" 子目录的目录
+		dir := absOutputDir
+		for {
+			parent := filepath.Dir(dir)
+			if parent == dir || parent == "." || parent == "/" {
+				// 到达文件系统根目录或无法继续，使用 data 的父目录
+				// 假设: OutputDir 是 .../data/meetings/xxx
+				sharedVolume = filepath.Dir(filepath.Dir(cfg.OutputDir))
+				break
+			}
+			// 检查当前目录是否包含 meetings 子目录
+			if filepath.Base(dir) == "meetings" {
+				// 找到 meetings 目录，父目录就是我们要的 baseDir (例如 /app/data)
+				sharedVolume = filepath.Dir(dir)
+				break
+			}
+			dir = parent
+		}
 	}
 
 	timeout := cfg.DependencyTimeout
