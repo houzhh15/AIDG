@@ -1,0 +1,11 @@
+# PyAnnote diarization and speaker embedding dependencies
+# Install: pip install -r scripts/pyannote-requirements.txt
+
+pyannote.audio>=3.1.0
+torch>=2.0.0
+librosa>=0.10.0
+soundfile>=0.12.0
+huggingface-hub>=0.20.0
+pyyaml>=6.0.0
+numpy>=1.24.0
+speechbrain>=0.5.14

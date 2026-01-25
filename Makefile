@@ -18,6 +18,8 @@ install:
 	cd frontend && npm ci
 	@echo "Installing file converter dependencies..."
 	pip install -r file_converter/requirements.txt -q
+	@echo "Installing pyannote dependencies (for local dev)..."
+	pip install -r scripts/pyannote-requirements.txt -q
 
 # 开发构建
 build:
@@ -57,6 +59,8 @@ dev:
 		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars \
 		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword! \
 		DEPENDENCY_SHARED_VOLUME=./data \
+		DIARIZATION_SCRIPT_PATH=./cmd/server/internal/audio/diarization/pyannote_diarize.py \
+		EMBEDDING_SCRIPT_PATH=./cmd/server/internal/audio/diarization/generate_speaker_embeddings.py \
 		go run ./cmd/server & \
 		echo "Starting MCP server on :8081..."; \
 		ENV=development go run ./cmd/mcp-server & \
