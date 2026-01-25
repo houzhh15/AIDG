@@ -56,6 +56,7 @@ dev:
 		JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars \
 		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars \
 		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword! \
+		DEPENDENCY_SHARED_VOLUME=./data \
 		go run ./cmd/server & \
 		echo "Starting MCP server on :8081..."; \
 		ENV=development go run ./cmd/mcp-server & \
