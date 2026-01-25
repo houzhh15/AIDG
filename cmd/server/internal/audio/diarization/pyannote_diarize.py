@@ -206,7 +206,7 @@ def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
     def patched_torch_load(f, *args, **kwargs):
         # Force weights_only=False for older checkpoints (PyTorch 2.6+ compatibility)
         # This is required for pyannote models which contain non-standard globals
-        if 'weights_only' not in kwargs:
+        if 'weights_only' not in kwargs or kwargs.get('weights_only') is None:
             kwargs['weights_only'] = False
         return original_torch_load(f, *args, **kwargs)
     
@@ -214,6 +214,22 @@ def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
     huggingface_hub.hf_hub_download = patched_hf_hub_download
     huggingface_hub.file_download.hf_hub_download = patched_hf_hub_download
     torch.load = patched_torch_load
+    
+    # CRITICAL: Patch lightning_fabric BEFORE importing pyannote
+    # pyannote uses lightning_fabric.utilities.cloud_io._load which calls torch.load
+    try:
+        import lightning_fabric.utilities.cloud_io as cloud_io
+        original_cloud_io_load = cloud_io._load
+        
+        def patched_cloud_io_load(path_or_url, map_location=None, weights_only=None):
+            # Force weights_only=False for pyannote model compatibility
+            if weights_only is None:
+                weights_only = False
+            return original_cloud_io_load(path_or_url, map_location=map_location, weights_only=weights_only)
+        
+        cloud_io._load = patched_cloud_io_load
+    except Exception as e:
+        print(f"Warning: Could not patch lightning_fabric: {e}", file=sys.stderr)
     
     try:
         # Import snapshot_download for verification (after patching)
@@ -248,10 +264,8 @@ def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
         for mod in pyannote_modules:
             del sys.modules[mod]
         
-        # Also clear lightning_fabric if it was imported
-        lightning_modules = [k for k in sys.modules.keys() if k.startswith('lightning')]
-        for mod in lightning_modules:
-            del sys.modules[mod]
+        # Do NOT clear lightning modules - we've already patched them above
+        # and we want to keep our patches in place
         
         from pyannote.audio import Pipeline as _Pipeline
         Pipeline = _Pipeline
@@ -262,11 +276,19 @@ def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
         pyannote.audio.core.pipeline.hf_hub_download = patched_hf_hub_download
         pyannote.audio.core.model.hf_hub_download = patched_hf_hub_download
         
-        # Patch lightning_fabric's torch.load reference
+        # Re-apply patches to lightning_fabric after pyannote import
+        # (pyannote might have re-imported with different references)
         try:
-            import lightning_fabric.utilities.cloud_io
-            lightning_fabric.utilities.cloud_io.torch.load = patched_torch_load
-        except:
+            import lightning_fabric.utilities.cloud_io as cloud_io_module
+            cloud_io_module._load = patched_cloud_io_load
+            cloud_io_module.torch.load = patched_torch_load
+        except Exception:
+            pass
+        
+        # Also patch pyannote.audio.core.model's pl_load reference directly
+        try:
+            pyannote.audio.core.model.pl_load = patched_cloud_io_load
+        except Exception:
             pass
         
         # Also patch torch module directly for any remaining references
