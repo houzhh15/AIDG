@@ -262,7 +262,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
         </Button>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Input
-            placeholder="搜索任务名"
+            placeholder="搜索任务名或负责人"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             size="small"

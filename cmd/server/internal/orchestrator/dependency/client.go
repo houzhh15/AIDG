@@ -353,6 +353,18 @@ func (c *DependencyClient) RunDiarization(ctx context.Context, audioPath, output
 		return fmt.Errorf("failed to write diarization output: %w", err)
 	}
 
+	// Check if the output contains an error field (pyannote script may exit 0 but report error in JSON)
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(resp.Stdout), &result); err == nil {
+		if errMsg, ok := result["error"].(string); ok && errMsg != "" {
+			slog.Error("[DependencyClient] speaker diarization returned error in JSON",
+				"audio_path", audioPath,
+				"error", errMsg,
+			)
+			return fmt.Errorf("speaker diarization error: %s", errMsg)
+		}
+	}
+
 	slog.Info("[DependencyClient] speaker diarization completed successfully",
 		"audio_path", audioPath,
 		"output_path", outputPath,

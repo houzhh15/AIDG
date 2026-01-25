@@ -1,0 +1,56 @@
+# 生产部署 - Lite 方案
+# 用途：生产环境快速部署，仅基础功能
+# 包含：仅主服务（server + mcp-server + file_converter）
+# 镜像来源：ghcr.io/houzhh15
+
+services:
+  aidg:
+    image: ghcr.io/houzhh15/aidg:${IMAGE_TAG:-latest}
+    container_name: aidg-lite
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    environment:
+      - ENV=production
+      - PORT=8000
+      - MCP_HTTP_PORT=8001
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      # 禁用外部依赖
+      - DEPENDENCY_MODE=disabled
+      - WHISPER_MODE=disabled
+      - ENABLE_AUDIO_CONVERSION=false
+      - ENABLE_SPEAKER_DIARIZATION=false
+      # 安全配置（生产环境必须修改）
+      - JWT_SECRET=${JWT_SECRET}
+      - USER_JWT_SECRET=${USER_JWT_SECRET}
+      - IDP_ENCRYPTION_KEY=${IDP_ENCRYPTION_KEY}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
+      - MCP_PASSWORD=${MCP_PASSWORD}
+      # 数据目录
+      - PROJECTS_DIR=/app/data/projects
+      - USERS_DIR=/app/data/users
+      - MEETINGS_DIR=/app/data/meetings
+      - AUDIT_LOGS_DIR=/app/data/audit_logs
+      # MCP 与 CORS 配置
+      - MCP_SERVER_URL=${MCP_SERVER_URL:-http://localhost:8000}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:8000}
+    volumes:
+      - ../../data/projects:/app/data/projects
+      - ../../data/users:/app/data/users
+      - ../../data/meetings:/app/data/meetings
+      - ../../data/audit_logs:/app/data/audit_logs
+      - ../../models/tessdata:/usr/share/tessdata:ro
+    networks:
+      - aidg-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", 
+             "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  aidg-network:
+    driver: bridge

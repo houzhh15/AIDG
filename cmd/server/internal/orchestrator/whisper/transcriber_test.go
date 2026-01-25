@@ -14,7 +14,7 @@ import (
 func TestGoWhisperImpl(t *testing.T) {
 	t.Run("successful transcription", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/v1/audio/transcriptions" {
+			if r.URL.Path == "/api/whisper/transcribe" {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"text": "Hello world",

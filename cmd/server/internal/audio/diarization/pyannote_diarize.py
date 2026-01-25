@@ -24,14 +24,24 @@ import shutil
 import tempfile
 import subprocess
 import platform
+import yaml
 from pathlib import Path
 
-# Optional: only import pyannote when executed to avoid failing when not installed
-try:
-    from pyannote.audio import Pipeline
-except Exception as e:
-    print(json.dumps({"segments": [], "error": f"pyannote not available: {e}"}))
-    sys.exit(0)
+# Global variable to hold Pipeline class (lazy loaded)
+Pipeline = None
+
+
+def _ensure_pipeline_imported():
+    """Lazily import Pipeline to allow monkey-patching before import."""
+    global Pipeline
+    if Pipeline is None:
+        try:
+            from pyannote.audio import Pipeline as _Pipeline
+            Pipeline = _Pipeline
+        except Exception as e:
+            print(json.dumps({"segments": [], "error": f"pyannote not available: {e}"}))
+            sys.exit(0)
+    return Pipeline
 
 
 def main():
@@ -78,6 +88,7 @@ def main():
         pipeline = None
         if is_local_pipeline:
             # Load from a local directory or YAML file directly, no network
+            _ensure_pipeline_imported()
             if os.path.isdir(args.pipeline):
                 cfg = os.path.join(args.pipeline, "config.yaml")
                 if not os.path.isfile(cfg):
@@ -91,26 +102,13 @@ def main():
                 # YAML file path provided
                 pipeline = Pipeline.from_pretrained(args.pipeline)
         elif args.offline:
-            # Offline load via snapshot_download to resolve local cache path
-            try:
-                from huggingface_hub import snapshot_download
-            except Exception as e:
-                raise RuntimeError(f"offline mode requires huggingface_hub installed: {e}")
-            # In offline mode, don't use token to avoid any network calls
-            # Use environment variables for authentication to avoid API compatibility issues
-            local_dir = snapshot_download(args.pipeline, local_files_only=True, cache_dir=args.cache_dir)
-            cfg = os.path.join(local_dir, "config.yaml")
-            if not os.path.isfile(cfg):
-                # Fallback: pick the first *.yml|*.yaml under the snapshot
-                ymls = [str(p) for p in Path(local_dir).glob("*.yml")] + [str(p) for p in Path(local_dir).glob("*.yaml")]
-                if not ymls:
-                    raise RuntimeError(f"cached snapshot missing YAML config: {local_dir}")
-                cfg = sorted(ymls)[0]
-            pipeline = Pipeline.from_pretrained(cfg)
+            # Offline load: use local snapshot paths to avoid network calls
+            pipeline = load_pipeline_offline(args.pipeline, args.cache_dir)
         else:
             # Online load; HF hub will reuse cache if available
             # pyannote.audio 3.1.1 doesn't accept token parameter
             # Must use environment variables (already set above if args.hf_token exists)
+            _ensure_pipeline_imported()
             pipeline = Pipeline.from_pretrained(args.pipeline, cache_dir=args.cache_dir)
         # Select device
         device = resolve_device(args.device)
@@ -161,6 +159,122 @@ def resolve_device(pref: str) -> str:
     except Exception:
         pass
     return "cpu"
+
+
+def load_pipeline_offline(pipeline_name: str, cache_dir: str = None):
+    """
+    Load pyannote pipeline in fully offline mode by resolving all model paths locally.
+    
+    This function works around pyannote.audio's internal network calls by:
+    1. Monkey-patching hf_hub_download and torch.load BEFORE importing pyannote
+    2. Pre-downloading all required models using snapshot_download with local_files_only=True
+    3. Setting up environment to force offline mode
+    4. Overriding cache_dir to ensure pyannote uses our configured cache location
+    """
+    global Pipeline
+    
+    import huggingface_hub
+    import huggingface_hub.file_download
+    import torch
+    
+    # Ensure HF_HUB_OFFLINE is set
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    
+    # Determine the effective cache directory
+    # If not specified, use the environment variable or default
+    effective_cache_dir = cache_dir or os.environ.get("HF_HUB_CACHE") or os.environ.get("HF_HOME")
+    if effective_cache_dir and not effective_cache_dir.endswith("/hub"):
+        # Normalize to hub directory path
+        hub_cache_dir = os.path.join(effective_cache_dir, "hub") if os.path.isdir(os.path.join(effective_cache_dir, "hub")) else effective_cache_dir
+    else:
+        hub_cache_dir = effective_cache_dir
+    
+    # Store original functions BEFORE any imports that might use them
+    original_hf_hub_download = huggingface_hub.file_download.hf_hub_download
+    original_torch_load = torch.load
+    
+    def patched_hf_hub_download(*args, **kwargs):
+        kwargs['local_files_only'] = True
+        # CRITICAL: Override cache_dir to use our configured cache location
+        if hub_cache_dir:
+            kwargs['cache_dir'] = hub_cache_dir
+        # Remove auth token parameters to avoid network validation
+        kwargs.pop('use_auth_token', None)
+        kwargs.pop('token', None)
+        return original_hf_hub_download(*args, **kwargs)
+    
+    def patched_torch_load(*args, **kwargs):
+        # Force weights_only=False for older checkpoints (PyTorch 2.6+ compatibility)
+        kwargs['weights_only'] = False
+        return original_torch_load(*args, **kwargs)
+    
+    # Apply patches BEFORE importing pyannote or its dependencies
+    huggingface_hub.hf_hub_download = patched_hf_hub_download
+    huggingface_hub.file_download.hf_hub_download = patched_hf_hub_download
+    torch.load = patched_torch_load
+    
+    try:
+        # Import snapshot_download for verification (after patching)
+        from huggingface_hub import snapshot_download
+        
+        # Get the main pipeline's local cache path to verify it exists
+        local_dir = snapshot_download(pipeline_name, local_files_only=True, cache_dir=hub_cache_dir)
+        cfg_path = os.path.join(local_dir, "config.yaml")
+        
+        if not os.path.isfile(cfg_path):
+            raise RuntimeError(f"Pipeline config not found: {cfg_path}")
+        
+        # Read and parse the config to find sub-models
+        with open(cfg_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Pre-verify all sub-models are cached (this will raise if any are missing)
+        params = config.get('pipeline', {}).get('params', {})
+        for key, value in params.items():
+            if isinstance(value, str) and '/' in value and not value.startswith('/'):
+                try:
+                    sub_model_dir = snapshot_download(value, local_files_only=True, cache_dir=hub_cache_dir)
+                    if not os.path.isdir(sub_model_dir):
+                        raise RuntimeError(f"Sub-model not cached: {value}")
+                except Exception as e:
+                    raise RuntimeError(f"Sub-model {value} not cached. Please download it first: {e}")
+        
+        # NOW import pyannote (with patches in place)
+        # Clear any previously imported pyannote modules to ensure fresh import with patches
+        import sys
+        pyannote_modules = [k for k in sys.modules.keys() if k.startswith('pyannote')]
+        for mod in pyannote_modules:
+            del sys.modules[mod]
+        
+        # Also clear lightning_fabric if it was imported
+        lightning_modules = [k for k in sys.modules.keys() if k.startswith('lightning')]
+        for mod in lightning_modules:
+            del sys.modules[mod]
+        
+        from pyannote.audio import Pipeline as _Pipeline
+        Pipeline = _Pipeline
+        
+        # After importing, also patch the module-level references
+        import pyannote.audio.core.pipeline
+        import pyannote.audio.core.model
+        pyannote.audio.core.pipeline.hf_hub_download = patched_hf_hub_download
+        pyannote.audio.core.model.hf_hub_download = patched_hf_hub_download
+        
+        # Patch lightning_fabric's torch.load reference
+        try:
+            import lightning_fabric.utilities.cloud_io
+            lightning_fabric.utilities.cloud_io.torch.load = patched_torch_load
+        except:
+            pass
+        
+        pipeline = Pipeline.from_pretrained(pipeline_name, cache_dir=hub_cache_dir)
+        return pipeline
+        
+    finally:
+        # Restore original functions
+        huggingface_hub.hf_hub_download = original_hf_hub_download
+        huggingface_hub.file_download.hf_hub_download = original_hf_hub_download
+        torch.load = original_torch_load
 
 
 def ensure_wav_mono_16k(src_path: str) -> str:

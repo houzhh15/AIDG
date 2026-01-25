@@ -75,7 +75,7 @@ type WhisperTranscriber interface {
 	//
 	// Implementation notes:
 	//   - Should be lightweight and fast (< 10 seconds)
-	//   - For HTTP-based services: check /health or /api/v1/models endpoint
+	//   - For HTTP-based services: check /health or /api/whisper/model endpoint
 	//   - For local programs: execute --version command
 	//   - MockTranscriber always returns (false, nil)
 	HealthCheck(ctx context.Context) (bool, error)

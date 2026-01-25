@@ -86,6 +86,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: build/dockerfiles/Dockerfile
           push: false
           load: true  # Load image into docker daemon for testing
           tags: aidg:ci-test
@@ -97,11 +98,11 @@ jobs:
           docker run -d --name aidg-test \
             -e ENV=development \
             -e PORT=8000 \
-            -e MCP_HTTP_PORT=8081 \
+            -e MCP_HTTP_PORT=8001 \
             -e USER_JWT_SECRET=test-secret-at-least-32-characters-long \
             -e ADMIN_DEFAULT_PASSWORD=testpass123 \
             -e MCP_PASSWORD=test-mcp \
-            -p 8000:8000 -p 8081:8081 \
+            -p 8000:8000 -p 8001:8001 \
             aidg:ci-test
           
           # Wait for services to start
@@ -109,7 +110,7 @@ jobs:
           
           # Check health endpoints
           curl -f http://localhost:8000/health || exit 1
-          curl -f http://localhost:8081/health || exit 1
+          curl -f http://localhost:8001/health || exit 1
           
           # Cleanup
           docker stop aidg-test

@@ -369,8 +369,17 @@ const ModelDownloadDrawer: React.FC<ModelDownloadDrawerProps> = ({ open, onClose
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (data.status && data.status.includes('downloading')) {
-                // 更新下载进度
+              // go-whisper 返回格式: {"current": bytes, "total": bytes, "percent": float}
+              // 或完成时: {"id": "model-id", "object": "model", "path": "filename", "created": timestamp}
+              if (data.percent !== undefined) {
+                // 下载进度更新
+                setDownloadProgress(prev => new Map(prev).set(modelPath, {
+                  status: `下载中 ${data.percent.toFixed(1)}%`,
+                  total: data.total,
+                  completed: data.current
+                }));
+              } else if (data.status && data.status.includes('downloading')) {
+                // 兼容旧格式
                 setDownloadProgress(prev => new Map(prev).set(modelPath, {
                   status: data.status,
                   total: data.total,

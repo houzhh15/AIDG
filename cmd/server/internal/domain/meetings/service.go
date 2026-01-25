@@ -159,6 +159,10 @@ func LoadTasks(reg *Registry) error {
 		// backfill SB defaults for legacy persisted tasks missing values
 		backfillSBDefaults(&pt.Cfg)
 
+		// Override dependency configuration with environment variables
+		// This ensures that runtime environment takes precedence over persisted config
+		overrideDependencyConfig(&pt.Cfg)
+
 		// Create orchestrator instance for the loaded task
 		// This ensures that API endpoints requiring dependency client work correctly
 		orch := orchestrator.New(pt.Cfg)
@@ -199,6 +203,49 @@ func backfillSBDefaults(cfg *orchestrator.Config) bool {
 		return true
 	}
 	return false
+}
+
+// overrideDependencyConfig overrides dependency-related configuration with environment variables.
+// This ensures that runtime environment takes precedence over persisted task config,
+// which is important when:
+// - Moving from local development to Docker deployment
+// - Upgrading from local mode to remote/fallback mode
+// - Changing deps-service URL
+func overrideDependencyConfig(cfg *orchestrator.Config) {
+	// Override DependencyMode from environment
+	if mode := strings.TrimSpace(os.Getenv("DEPENDENCY_MODE")); mode != "" {
+		cfg.DependencyMode = mode
+	}
+
+	// Override DependencyServiceURL from environment
+	if url := strings.TrimSpace(os.Getenv("DEPS_SERVICE_URL")); url != "" {
+		cfg.DependencyServiceURL = url
+	}
+
+	// Override DependencySharedVolume from environment
+	if vol := strings.TrimSpace(os.Getenv("DEPENDENCY_SHARED_VOLUME")); vol != "" {
+		cfg.DependencySharedVolume = vol
+	}
+
+	// Override WhisperMode from environment
+	if mode := strings.TrimSpace(os.Getenv("WHISPER_MODE")); mode != "" {
+		cfg.WhisperMode = mode
+	}
+
+	// Override WhisperAPIURL from environment
+	if url := strings.TrimSpace(os.Getenv("WHISPER_API_URL")); url != "" {
+		cfg.WhisperAPIURL = url
+	}
+
+	// Override script paths for remote/fallback mode
+	// In Docker deployment, scripts are at /app/scripts/ in deps-service container
+	// This is necessary because persisted config may have local paths like ./tmp/pyannote/
+	depMode := strings.ToLower(cfg.DependencyMode)
+	if depMode == "remote" || depMode == "fallback" {
+		// Force use of container paths for remote execution
+		cfg.DiarizationScriptPath = "/app/scripts/pyannote_diarize.py"
+		cfg.EmbeddingScriptPath = "/app/scripts/generate_speaker_embeddings.py"
+	}
 }
 
 // Document management functions

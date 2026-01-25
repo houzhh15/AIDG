@@ -1,0 +1,39 @@
+# HTTPS 覆盖配置
+# 用途：启用 HTTPS，与其他部署方案组合使用
+# 使用方法：
+#   docker-compose -f docker-compose.standard.yml -f docker-compose.https.yml up -d
+#   docker-compose -f docker-compose.full.yml -f docker-compose.https.yml up -d
+#
+# 前置要求：
+#   1. 在 ../../certs/ 目录下放置 TLS 证书：
+#      - server.crt - 证书文件
+#      - server.key - 私钥文件
+#   2. 生成自签名证书（测试用）：
+#      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#        -keyout ../../certs/server.key \
+#        -out ../../certs/server.crt \
+#        -subj "/CN=localhost"
+
+services:
+  aidg:
+    ports:
+      - "443:443"
+      - "8001:8001"
+    environment:
+      - SERVER_PROTOCOL=https
+      - PORT=443
+      - TLS_CERT_FILE=/app/certs/server.crt
+      - TLS_KEY_FILE=/app/certs/server.key
+      - MCP_SERVER_URL=https://localhost:443
+      - CORS_ALLOWED_ORIGINS=https://localhost:443,https://yourdomain.com
+    volumes:
+      - ../../data:/app/data
+      - ../../models:/models:ro
+      - ../../certs/server.crt:/app/certs/server.crt:ro
+      - ../../certs/server.key:/app/certs/server.key:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", 
+             "--no-check-certificate", "https://localhost:443/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

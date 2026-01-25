@@ -42,9 +42,9 @@ func NewGlobalServiceChecker() *GlobalServiceChecker {
 
 // CheckWhisperHealth 检查 Whisper 服务健康状态
 func (g *GlobalServiceChecker) CheckWhisperHealth(ctx context.Context) (bool, error) {
-	// go-whisper 容器使用 /v1/models 端点来检查可用性
+	// go-whisper 容器使用 /api/whisper/model 端点来检查可用性
 	// 如果返回 200，说明服务正常；如果连接失败或 500 错误，说明不可用
-	checkURL := fmt.Sprintf("%s/v1/models", g.whisperURL)
+	checkURL := fmt.Sprintf("%s/api/whisper/model", g.whisperURL)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", checkURL, nil)
 	if err != nil {

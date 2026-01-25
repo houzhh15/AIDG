@@ -232,6 +232,48 @@ def maybe_offline_env(args):
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 
+def _apply_offline_patches(hub_cache_dir: str):
+    """
+    Apply monkey-patches required for offline mode with pyannote.audio.
+    
+    This handles two issues:
+    1. pyannote uses its own cache_dir instead of the configured one
+    2. PyTorch 2.6+ defaults to weights_only=True which breaks older checkpoints
+    
+    Returns a cleanup function to restore original behavior.
+    """
+    import huggingface_hub
+    import huggingface_hub.file_download
+    
+    # Store original functions
+    original_hf_hub_download = huggingface_hub.file_download.hf_hub_download
+    original_torch_load = torch.load
+    
+    def patched_hf_hub_download(*args, **kwargs):
+        kwargs['local_files_only'] = True
+        if hub_cache_dir:
+            kwargs['cache_dir'] = hub_cache_dir
+        kwargs.pop('use_auth_token', None)
+        kwargs.pop('token', None)
+        return original_hf_hub_download(*args, **kwargs)
+    
+    def patched_torch_load(*args, **kwargs):
+        kwargs['weights_only'] = False
+        return original_torch_load(*args, **kwargs)
+    
+    # Apply patches
+    huggingface_hub.hf_hub_download = patched_hf_hub_download
+    huggingface_hub.file_download.hf_hub_download = patched_hf_hub_download
+    torch.load = patched_torch_load
+    
+    def cleanup():
+        huggingface_hub.hf_hub_download = original_hf_hub_download
+        huggingface_hub.file_download.hf_hub_download = original_hf_hub_download
+        torch.load = original_torch_load
+    
+    return cleanup, patched_hf_hub_download, patched_torch_load
+
+
 def load_embedding_model(args):
     cache_dir_explicit = args.cache_dir is not None
 
@@ -241,52 +283,89 @@ def load_embedding_model(args):
         if found:
             args.cache_dir = found
 
-    # NOTE: pyannote.audio's Model.from_pretrained may ignore cache_dir/local_files_only
-    # in some versions and rely on HuggingFace environment variables.
-    # Ensure they point to the discovered cache root so offline mode can work reliably.
+    # Determine hub cache directory
+    hub_cache_dir = None
     if args.cache_dir and os.path.isdir(args.cache_dir):
         os.environ.setdefault("HF_HOME", args.cache_dir)
         os.environ.setdefault("TRANSFORMERS_CACHE", args.cache_dir)
         os.environ.setdefault("TORCH_HOME", args.cache_dir)
         hub_cache = str(Path(args.cache_dir) / "hub")
-        os.environ.setdefault("HF_HUB_CACHE", hub_cache)
-        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", hub_cache)
-
-    # Import pyannote AFTER environment variables are finalized.
-    try:
-        from pyannote.audio import Model
-    except Exception as e:
-        raise RuntimeError(f"pyannote.audio not available: {e}")
+        if os.path.isdir(hub_cache):
+            hub_cache_dir = hub_cache
+        else:
+            hub_cache_dir = args.cache_dir
+        os.environ.setdefault("HF_HUB_CACHE", hub_cache_dir)
+        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", hub_cache_dir)
 
     # 尝试本地目录或在线
     if os.path.isdir(args.embedding_model):
         cfg = Path(args.embedding_model)
-        # 尝试找到 config 或直接目录加载
+        # Apply patches for torch.load compatibility
+        cleanup, _, patched_torch_load = _apply_offline_patches(hub_cache_dir)
         try:
+            from pyannote.audio import Model
+            # Patch lightning_fabric's torch.load reference
+            try:
+                import lightning_fabric.utilities.cloud_io
+                lightning_fabric.utilities.cloud_io.torch.load = patched_torch_load
+            except:
+                pass
             model = Model.from_pretrained(str(cfg))
+            return model
         except Exception as e:
             raise RuntimeError(f"本地嵌入模型加载失败: {e}")
-        return model
+        finally:
+            cleanup()
     
     # 如果指定了 --offline，强制离线模式
     if args.offline:
-        # 设定 HF_HUB_OFFLINE 避免网络请求
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        
+        # Apply all patches for offline mode
+        cleanup, patched_hf_hub_download, patched_torch_load = _apply_offline_patches(hub_cache_dir)
+        
         try:
+            # Clear any previously imported pyannote modules
+            import sys as _sys
+            pyannote_modules = [k for k in _sys.modules.keys() if k.startswith('pyannote')]
+            for mod in pyannote_modules:
+                del _sys.modules[mod]
+            lightning_modules = [k for k in _sys.modules.keys() if k.startswith('lightning')]
+            for mod in lightning_modules:
+                del _sys.modules[mod]
+            
+            # Now import pyannote with patches in place
+            from pyannote.audio import Model
+            
+            # Patch module-level references
+            try:
+                import pyannote.audio.core.model
+                pyannote.audio.core.model.hf_hub_download = patched_hf_hub_download
+            except:
+                pass
+            try:
+                import lightning_fabric.utilities.cloud_io
+                lightning_fabric.utilities.cloud_io.torch.load = patched_torch_load
+            except:
+                pass
+            
             model = Model.from_pretrained(
                 args.embedding_model,
-                token=None,  # 离线模式不使用token
-                cache_dir=args.cache_dir if cache_dir_explicit else None,
+                token=None,
+                cache_dir=hub_cache_dir,
                 local_files_only=True,
             )
             return model
         except Exception as e:
             raise RuntimeError(f"离线模式下找不到已缓存模型 '{args.embedding_model}': {e}\n"
                              f"请确保模型已经下载到缓存目录，或使用 --embedding-model 指定本地模型路径")
+        finally:
+            cleanup()
     
     # 在线模式：正常加载 (HF 缓存会复用; 若网络问题会抛异常)
     try:
+        from pyannote.audio import Model
         model = Model.from_pretrained(
             args.embedding_model,
             token=args.hf_token,

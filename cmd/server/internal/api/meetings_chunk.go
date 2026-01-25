@@ -23,6 +23,22 @@ import (
 // Handles: MergeChunk, ChunkDebug, RedoSpeakers, RedoEmbeddings, RedoMapped
 // Includes: applyLocalMapping, applyGlobalMapping, resolveChunkFile, srvSpeakersFile
 
+// ensureAbsolutePath converts relative paths to absolute paths based on working directory.
+// This is necessary because task configs may have been saved with relative paths like
+// "data/meetings/xxx" but deps-service expects absolute paths like "/app/data/meetings/xxx".
+func ensureAbsolutePath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	// Convert relative path to absolute
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		// If conversion fails, return original path
+		return path
+	}
+	return absPath
+}
+
 // ============================================================================
 // Chunk Merge Handler
 // ============================================================================
@@ -40,7 +56,8 @@ func HandleMergeChunk(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		// Resolve needed segment & speaker files
-		baseDir := t.Cfg.OutputDir
+		// Ensure base path is absolute for deps-service compatibility
+		baseDir := ensureAbsolutePath(t.Cfg.OutputDir)
 		n, err := strconv.Atoi(cid)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chunk id"})
@@ -53,18 +70,31 @@ func HandleMergeChunk(reg *meetings.Registry) gin.HandlerFunc {
 		spkBase := filepath.Join(baseDir, fmt.Sprintf("chunk_%s_speakers.json", pad))
 
 		// Check merge-segments binary exists
-		// Determine merge-segments binary path: prefer local bin/merge-segments for development
-		mergeCmd := "merge-segments"
-		if _, err := os.Stat("./bin/merge-segments"); err == nil {
-			mergeCmd = "./bin/merge-segments"
-		} else if _, err := os.Stat("go-whisper/merge-segments"); err == nil {
-			mergeCmd = "go-whisper/merge-segments"
+		// Determine merge-segments binary path: check multiple locations for compatibility
+		mergeCmd := ""
+		mergePaths := []string{
+			"/usr/local/bin/merge-segments", // Docker container path
+			"./bin/merge-segments",          // Local development path
+			"go-whisper/merge-segments",     // Legacy path
+			"merge-segments",                // PATH lookup
+		}
+		for _, p := range mergePaths {
+			if _, err := os.Stat(p); err == nil {
+				mergeCmd = p
+				break
+			}
+		}
+		// If not found by path, check if it's in PATH
+		if mergeCmd == "" {
+			if path, err := exec.LookPath("merge-segments"); err == nil {
+				mergeCmd = path
+			}
 		}
 
-		if _, err := os.Stat(mergeCmd); err != nil {
+		if mergeCmd == "" {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":  "merge-segments binary not found",
-				"detail": fmt.Sprintf("expected at %s", mergeCmd),
+				"detail": fmt.Sprintf("checked paths: %v", mergePaths),
 			})
 			return
 		}
@@ -309,7 +339,8 @@ func HandleChunkDebug(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		pad := fmt.Sprintf("%04d", n)
-		base := t.Cfg.OutputDir
+		// Ensure base path is absolute for consistent file checking
+		base := ensureAbsolutePath(t.Cfg.OutputDir)
 
 		// Check all chunk-related files
 		paths := map[string]string{
@@ -347,7 +378,8 @@ func HandleRedoSpeakers(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
-		base := t.Cfg.OutputDir
+		// Ensure base path is absolute for deps-service compatibility
+		base := ensureAbsolutePath(t.Cfg.OutputDir)
 		n, err := strconv.Atoi(cid)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chunk id"})
@@ -429,7 +461,8 @@ func HandleRedoEmbeddings(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
-		base := t.Cfg.OutputDir
+		// Ensure base path is absolute for deps-service compatibility
+		base := ensureAbsolutePath(t.Cfg.OutputDir)
 		n, err := strconv.Atoi(cid)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chunk id"})
@@ -512,7 +545,8 @@ func HandleRedoMapped(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
-		base := t.Cfg.OutputDir
+		// Ensure base path is absolute for deps-service compatibility
+		base := ensureAbsolutePath(t.Cfg.OutputDir)
 		n, err := strconv.Atoi(cid)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chunk id"})

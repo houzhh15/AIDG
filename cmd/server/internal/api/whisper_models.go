@@ -72,7 +72,7 @@ func loadWhisperModelsMetadata() (*WhisperModelsMetadata, error) {
 // getDownloadedModels queries the Whisper service to get list of downloaded models
 func getDownloadedModels(whisperAPIURL string) (map[string]bool, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	endpoint := fmt.Sprintf("%s/api/v1/models", whisperAPIURL)
+	endpoint := fmt.Sprintf("%s/api/whisper/model", whisperAPIURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -121,7 +121,7 @@ func HandleGetWhisperModels() gin.HandlerFunc {
 		}
 
 		// Request models from Whisper API
-		endpoint := fmt.Sprintf("%s/api/v1/models", whisperAPIURL)
+		endpoint := fmt.Sprintf("%s/api/whisper/model", whisperAPIURL)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -261,12 +261,14 @@ func HandleDownloadWhisperModel() gin.HandlerFunc {
 		}
 
 		// Send download request to Whisper API
-		endpoint := fmt.Sprintf("%s/api/v1/models?stream=true", whisperAPIURL)
+		// go-whisper API expects POST /api/whisper/model with {"model": "filename"}
+		// Add Accept: text/event-stream header for streaming progress
+		endpoint := fmt.Sprintf("%s/api/whisper/model", whisperAPIURL)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 
-		// Create request body
-		reqBody := map[string]string{"path": req.Path}
+		// Create request body - go-whisper expects "model" field, not "path"
+		reqBody := map[string]string{"model": req.Path}
 		jsonData, err := json.Marshal(reqBody)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -285,6 +287,7 @@ func HandleDownloadWhisperModel() gin.HandlerFunc {
 			return
 		}
 		reqHTTP.Header.Set("Content-Type", "application/json")
+		reqHTTP.Header.Set("Accept", "text/event-stream") // Enable streaming progress
 
 		resp, err := client.Do(reqHTTP)
 		if err != nil {

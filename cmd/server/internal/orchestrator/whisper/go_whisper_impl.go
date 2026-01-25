@@ -48,13 +48,13 @@ func NewGoWhisperImpl(apiURL string) *GoWhisperImpl {
 //
 // Implementation details:
 //   - Opens the audio file from the provided path
-//   - Constructs a multipart request with file, model, and response_format fields
-//   - Sends POST request to /v1/audio/transcriptions endpoint
+//   - Constructs a multipart request with audio, model fields
+//   - Sends POST request to /api/whisper/transcribe endpoint
 //   - Parses JSON response into TranscriptionResult
 //   - Handles errors with context wrapping for better debugging
 //
 // Supported audio formats: WAV (16kHz, mono, PCM recommended)
-// API endpoint: POST {apiURL}/v1/audio/transcriptions
+// API endpoint: POST {apiURL}/api/whisper/transcribe
 // Reference: https://github.com/mutablelogic/go-whisper/blob/main/doc/API.md#transcription
 func (g *GoWhisperImpl) Transcribe(ctx context.Context, audioPath string, options *TranscribeOptions) (*TranscriptionResult, error) {
 	// Open audio file
@@ -68,8 +68,8 @@ func (g *GoWhisperImpl) Transcribe(ctx context.Context, audioPath string, option
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	// Add file field
-	part, err := writer.CreateFormFile("file", filepath.Base(audioPath))
+	// Add audio field (go-whisper API uses 'audio' field name)
+	part, err := writer.CreateFormFile("audio", filepath.Base(audioPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}
@@ -120,7 +120,7 @@ func (g *GoWhisperImpl) Transcribe(ctx context.Context, audioPath string, option
 	}
 
 	// Send HTTP POST request
-	endpoint := fmt.Sprintf("%s/api/v1/audio/transcriptions", g.apiURL)
+	endpoint := fmt.Sprintf("%s/api/whisper/transcribe", g.apiURL)
 	fmt.Printf("[GO-WHISPER] Sending transcription request to: %s\n", endpoint)
 	fmt.Printf("[GO-WHISPER] Audio file: %s, Model: %s\n", audioPath, model)
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, body)
@@ -155,13 +155,13 @@ func (g *GoWhisperImpl) Transcribe(ctx context.Context, audioPath string, option
 // HealthCheck verifies that the go-whisper service is operational.
 //
 // Implementation:
-//   - Sends GET request to /v1/ping endpoint (go-whisper standard)
+//   - Sends GET request to /api/whisper/model endpoint (go-whisper standard)
 //   - Returns true if service responds with 200 OK
 //   - Returns false only for network/connection errors
 //
 // Reference: https://github.com/mutablelogic/go-whisper/blob/main/doc/API.md#models
 func (g *GoWhisperImpl) HealthCheck(ctx context.Context) (bool, error) {
-	endpoint := fmt.Sprintf("%s/api/v1/models", g.apiURL)
+	endpoint := fmt.Sprintf("%s/api/whisper/model", g.apiURL)
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create health check request: %w", err)

@@ -283,7 +283,7 @@ func HandleDeleteProject(reg *projects.ProjectRegistry) gin.HandlerFunc {
 // HandleListProjectTasks GET /api/v1/projects/:id/tasks
 // 获取项目的任务列表，支持搜索查询和时间范围筛选
 // 查询参数:
-//   - q: 搜索关键词
+//   - q: 搜索关键词（支持搜索任务名和负责人）
 //   - time_range: 时间筛选 (today, week, month)
 //   - fuzzy: 是否启用模糊搜索 (true/false，默认false)
 func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
@@ -378,8 +378,12 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 
 				nameLower := strings.ToLower(name)
 
-				// 检查字符串包含
-				stringMatch := strings.Contains(nameLower, queryLower)
+				// 获取负责人字段
+				assignee, _ := task["assignee"].(string)
+				assigneeLower := strings.ToLower(assignee)
+
+				// 检查字符串包含（任务名或负责人）
+				stringMatch := strings.Contains(nameLower, queryLower) || strings.Contains(assigneeLower, queryLower)
 
 				// 检查 SimHash 语义匹配（仅在 fuzzySearch=true 时启用）
 				simhashMatch := false
