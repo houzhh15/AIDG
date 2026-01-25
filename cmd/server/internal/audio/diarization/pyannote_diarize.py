@@ -27,6 +27,37 @@ import platform
 import yaml
 from pathlib import Path
 
+# =============================================================================
+# CRITICAL: Apply torch.load patch BEFORE importing pyannote or lightning
+# PyTorch 2.6+ changed default weights_only=True, breaking pyannote models
+# =============================================================================
+import torch
+
+_original_torch_load = torch.load
+
+def _patched_torch_load(f, *args, **kwargs):
+    """Patched torch.load that forces weights_only=False for compatibility."""
+    if 'weights_only' not in kwargs or kwargs.get('weights_only') is None:
+        kwargs['weights_only'] = False
+    return _original_torch_load(f, *args, **kwargs)
+
+# Apply the patch globally
+torch.load = _patched_torch_load
+
+# Also patch lightning_fabric which pyannote uses
+try:
+    import lightning_fabric.utilities.cloud_io as _cloud_io
+    _original_cloud_io_load = _cloud_io._load
+    
+    def _patched_cloud_io_load(path_or_url, map_location=None, weights_only=None):
+        if weights_only is None:
+            weights_only = False
+        return _original_cloud_io_load(path_or_url, map_location=map_location, weights_only=weights_only)
+    
+    _cloud_io._load = _patched_cloud_io_load
+except ImportError:
+    pass
+
 # Global variable to hold Pipeline class (lazy loaded)
 Pipeline = None
 
@@ -38,6 +69,13 @@ def _ensure_pipeline_imported():
         try:
             from pyannote.audio import Pipeline as _Pipeline
             Pipeline = _Pipeline
+            
+            # Re-apply patches after import (some modules cache references)
+            import pyannote.audio.core.model
+            try:
+                pyannote.audio.core.model.pl_load = _patched_cloud_io_load
+            except:
+                pass
         except Exception as e:
             print(json.dumps({"segments": [], "error": f"pyannote not available: {e}"}))
             sys.exit(0)
