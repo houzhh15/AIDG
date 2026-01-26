@@ -369,7 +369,7 @@ def ensure_wav_mono_16k(src_path: str) -> str:
                 "-ar", "16000",
                 dst_path,
             ]
-            subprocess.check_call(cmd)
+            subprocess.check_call(cmd, stderr=subprocess.PIPE)
             return dst_path
         except Exception as e:
             # Fallback to librosa if ffmpeg fails
@@ -382,6 +382,8 @@ def ensure_wav_mono_16k(src_path: str) -> str:
         y, sr = librosa.load(src_path, sr=16000, mono=True)
         sf.write(dst_path, y, 16000)
         return dst_path
+    except ImportError as e:
+        raise RuntimeError(f"fallback convert failed: librosa/soundfile not available: {e}")
     except Exception as e:
         raise RuntimeError(f"fallback convert failed: {e}")
 

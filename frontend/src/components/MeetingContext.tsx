@@ -60,7 +60,16 @@ export const MeetingContext: React.FC<MeetingContextProps> = ({ taskId }) => {
 
   // 当taskId改变时加载内容
   useEffect(() => {
-    loadContent();
+    // 立即清空内容，避免显示上一个任务的数据
+    setContent('');
+    setLoading(true);
+    
+    // 延迟加载，确保状态已更新
+    const timer = setTimeout(() => {
+      loadContent();
+    }, 50);
+    
+    return () => clearTimeout(timer);
   }, [taskId]);
 
   const handleManualSave = () => {

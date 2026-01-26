@@ -2279,14 +2279,30 @@ func (o *Orchestrator) Stop() {
 		log.Printf("[Orchestrator] Saved nextChunkID=%d for next start", o.nextChunkID)
 		recorder.FinalizeAndStop()
 	}
+	log.Printf("[Orchestrator] Stop() called, waiting for all workers to finish...")
+	
+	// 使用独立的 goroutine 等待 workers 完成，避免阻塞
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Orchestrator] PANIC in Stop goroutine: %v", r)
+			}
+		}()
+		
+		log.Printf("[Orchestrator] Background goroutine: waiting for wg.Wait()...")
 		o.wg.Wait()
+		log.Printf("[Orchestrator] Background goroutine: all workers finished, updating state to StateStopped")
+		
 		o.mutex.Lock()
-		_, _ = o.ConcatAllMerged()
-
-		o.mutex.Lock()
+		defer o.mutex.Unlock()
+		
+		// 尝试合并所有文件（忽略错误）
+		if _, err := o.ConcatAllMerged(); err != nil {
+			log.Printf("[Orchestrator] ConcatAllMerged failed (ignored): %v", err)
+		}
+		
 		o.state = StateStopped
-		o.mutex.Unlock()
+		log.Printf("[Orchestrator] State updated to StateStopped successfully")
 	}()
 }
 
