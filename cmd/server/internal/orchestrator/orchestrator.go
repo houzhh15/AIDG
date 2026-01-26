@@ -1723,7 +1723,7 @@ func initDependencyClient(cfg Config) (*dependency.DependencyClient, error) {
 		if err != nil {
 			absOutputDir = cfg.OutputDir
 		}
-		
+
 		// 向上查找，直到找到包含 "meetings" 子目录的目录
 		dir := absOutputDir
 		for {
