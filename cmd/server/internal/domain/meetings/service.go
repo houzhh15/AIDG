@@ -259,6 +259,12 @@ func overrideDependencyConfig(cfg *orchestrator.Config) {
 		cfg.DiarizationScriptPath = "/app/scripts/pyannote_diarize.py"
 		cfg.EmbeddingScriptPath = "/app/scripts/generate_speaker_embeddings.py"
 	}
+
+	// Override EnableOffline from environment
+	// This is critical for PyAnnote to work correctly in offline mode
+	if offlineEnv := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_OFFLINE"))); offlineEnv != "" {
+		cfg.EnableOffline = offlineEnv == "true" || offlineEnv == "1"
+	}
 }
 
 // Document management functions
