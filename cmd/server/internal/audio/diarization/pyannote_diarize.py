@@ -100,6 +100,11 @@ def main():
     if not os.path.exists(args.input):
         print(json.dumps({"segments": [], "error": "input audio not found"}))
         return
+    
+    # Check if input file is empty
+    if os.path.getsize(args.input) == 0:
+        print(json.dumps({"segments": [], "error": "input audio file is empty"}))
+        return
 
     # If using offline mode or local pipeline path, token is not required
     is_local_pipeline = os.path.isdir(args.pipeline) or (os.path.isfile(args.pipeline) and args.pipeline.lower().endswith((".yml", ".yaml")))
@@ -369,10 +374,13 @@ def ensure_wav_mono_16k(src_path: str) -> str:
                 "-ar", "16000",
                 dst_path,
             ]
-            subprocess.check_call(cmd, stderr=subprocess.PIPE)
-            return dst_path
-        except Exception as e:
+            result = subprocess.run(cmd, capture_output=True, check=True)
+            if os.path.exists(dst_path) and os.path.getsize(dst_path) > 0:
+                return dst_path
+        except subprocess.CalledProcessError as e:
             # Fallback to librosa if ffmpeg fails
+            print(f"ffmpeg convert failed (exit {e.returncode}): {e.stderr.decode('utf-8', errors='ignore')}", file=sys.stderr)
+        except Exception as e:
             print(f"ffmpeg convert failed: {e}", file=sys.stderr)
 
     # Fallback using librosa+soundfile
@@ -381,11 +389,14 @@ def ensure_wav_mono_16k(src_path: str) -> str:
         import soundfile as sf
         y, sr = librosa.load(src_path, sr=16000, mono=True)
         sf.write(dst_path, y, 16000)
-        return dst_path
+        if os.path.exists(dst_path) and os.path.getsize(dst_path) > 0:
+            return dst_path
+        else:
+            raise RuntimeError("librosa/soundfile produced empty output file")
     except ImportError as e:
         raise RuntimeError(f"fallback convert failed: librosa/soundfile not available: {e}")
     except Exception as e:
-        raise RuntimeError(f"fallback convert failed: {e}")
+        raise RuntimeError(f"fallback convert failed: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

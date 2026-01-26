@@ -35,6 +35,21 @@ func HandleListTasks(reg *meetings.Registry) gin.HandlerFunc {
 
 		tasks := reg.List()
 
+		// 更新活跃任务的状态（从 Orchestrator 获取最新状态）
+		stateUpdated := false
+		for _, t := range tasks {
+			if t.Orch != nil {
+				p := t.Orch.Progress()
+				if t.State != p.State {
+					t.State = p.State
+					stateUpdated = true
+				}
+			}
+		}
+		if stateUpdated {
+			meetings.SaveTasks(reg)
+		}
+
 		list := []gin.H{}
 		for _, t := range tasks {
 			// Apply filters

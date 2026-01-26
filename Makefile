@@ -59,7 +59,6 @@ dev:
 		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars \
 		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword! \
 		DEPENDENCY_SHARED_VOLUME=./data \
-		PYTHON_PATH=$${HOME}/miniforge3/envs/go-whisper/bin/python3 \
 		DIARIZATION_SCRIPT_PATH=./cmd/server/internal/audio/diarization/pyannote_diarize.py \
 		EMBEDDING_SCRIPT_PATH=./cmd/server/internal/audio/diarization/generate_speaker_embeddings.py \
 		go run ./cmd/server & \

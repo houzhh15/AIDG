@@ -455,6 +455,7 @@ func (q *SafeQueue[T]) Push(v T) {
 }
 func (q *SafeQueue[T]) Pop() (T, bool) { v, ok := <-q.ch; return v, ok }
 func (q *SafeQueue[T]) Close()         { q.once.Do(func() { q.closed.Store(true); close(q.ch) }) }
+func (q *SafeQueue[T]) Len() int       { return len(q.ch) }
 
 type AudioChunk struct {
 	ID        int
@@ -486,6 +487,12 @@ type Orchestrator struct {
 	embQ     *SafeQueue[SDResult]
 	mergeQ   *SafeQueue[EmbeddingResult]
 	wg       sync.WaitGroup
+
+	// 正在处理中的任务计数器 (用于空闲检测)
+	asrInProgress   atomic.Int32
+	sdInProgress    atomic.Int32
+	embInProgress   atomic.Int32
+	mergeInProgress atomic.Int32
 
 	voicePrint   *VoicePrintState
 	startChunkID int
@@ -1053,66 +1060,75 @@ func (o *Orchestrator) asrWorker(ctx context.Context) {
 				log.Printf("[ASR Worker] Queue closed, exiting worker")
 				break
 			}
-			log.Printf("[ASR Worker] Got chunk from queue: ID=%d, Path=%s", chunk.ID, chunk.Path)
 
-			startTime := time.Now()
+			// 标记开始处理
+			o.asrInProgress.Add(1)
 
-			// 日志:开始处理
-			logger.LogAudioProcessing(slog.Default(), "asr", "start", chunk.ID, 0, "")
+			// 使用函数封装处理逻辑，确保无论成功失败都减少计数
+			func() {
+				defer o.asrInProgress.Add(-1)
 
-			// 【核心变更】通过降级控制器获取当前Transcriber
-			transcriber := o.degradationController.GetTranscriber()
-			transcriberName := transcriber.Name()
+				log.Printf("[ASR Worker] Got chunk from queue: ID=%d, Path=%s", chunk.ID, chunk.Path)
 
-			// 构造TranscribeOptions
-			opts := &whisper.TranscribeOptions{
-				Model:       o.cfg.WhisperModel,
-				Language:    "", // 自动检测
-				Temperature: o.cfg.WhisperTemperature,
-				Prompt:      "",
-				Timeout:     10 * time.Minute,
-			}
+				startTime := time.Now()
 
-			// 调用Transcriber.Transcribe()
-			result, err := transcriber.Transcribe(ctx, chunk.Path, opts)
-			duration := time.Since(startTime)
-			durationMs := duration.Milliseconds()
+				// 日志:开始处理
+				logger.LogAudioProcessing(slog.Default(), "asr", "start", chunk.ID, 0, "")
 
-			if err != nil {
-				// 记录错误
-				log.Printf("[ASR] transcribe error (transcriber=%s): %v", transcriberName, err)
+				// 【核心变更】通过降级控制器获取当前Transcriber
+				transcriber := o.degradationController.GetTranscriber()
+				transcriberName := transcriber.Name()
 
-				// 日志:错误
-				errorCode := fmt.Sprintf("WHISPER_ERROR_%s", strings.ToUpper(transcriberName))
-				logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, errorCode)
+				// 构造TranscribeOptions
+				opts := &whisper.TranscribeOptions{
+					Model:       o.cfg.WhisperModel,
+					Language:    "", // 自动检测
+					Temperature: o.cfg.WhisperTemperature,
+					Prompt:      "",
+					Timeout:     10 * time.Minute,
+				}
 
-				// 指标:失败
-				metrics.RecordChunkProcessed("asr", false)
-				metrics.RecordError("asr", "whisper_"+transcriberName)
-				continue
-			}
+				// 调用Transcriber.Transcribe()
+				result, err := transcriber.Transcribe(ctx, chunk.Path, opts)
+				duration := time.Since(startTime)
+				durationMs := duration.Milliseconds()
 
-			// 将结果写入segments.json文件 (保持原有格式兼容)
-			meetingID := filepath.Base(o.cfg.OutputDir)
-			segPath := o.pathManager.GetChunkSegmentsPath(meetingID, chunk.ID)
-			if err := writeSegmentsJSON(segPath, result); err != nil {
-				log.Printf("[ASR] write segments error: %v", err)
-				logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, "WRITE_SEGMENTS_ERROR")
-				metrics.RecordChunkProcessed("asr", false)
-				continue
-			}
+				if err != nil {
+					// 记录错误
+					log.Printf("[ASR] transcribe error (transcriber=%s): %v", transcriberName, err)
 
-			// 日志:成功 (带transcriber名称和降级状态)
-			log.Printf("[ASR] transcribe success (transcriber=%s, degraded=%v)", transcriberName, o.degradationController.IsDegraded())
-			logger.LogAudioProcessing(slog.Default(), "asr", "success", chunk.ID, durationMs, "")
+					// 日志:错误
+					errorCode := fmt.Sprintf("WHISPER_ERROR_%s", strings.ToUpper(transcriberName))
+					logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, errorCode)
 
-			// 指标:成功
-			metrics.RecordChunkProcessed("asr", true)
-			metrics.RecordDuration("asr", duration.Seconds())
+					// 指标:失败
+					metrics.RecordChunkProcessed("asr", false)
+					metrics.RecordError("asr", "whisper_"+transcriberName)
+					return
+				}
 
-			// 推送到 SD 队列进行说话人分离
-			log.Printf("[ASR Worker] Pushing chunk %d to SD queue for speaker diarization", chunk.ID)
-			o.sdQ.Push(ASRResult{Chunk: chunk, SegJSON: segPath})
+				// 将结果写入segments.json文件 (保持原有格式兼容)
+				meetingID := filepath.Base(o.cfg.OutputDir)
+				segPath := o.pathManager.GetChunkSegmentsPath(meetingID, chunk.ID)
+				if err := writeSegmentsJSON(segPath, result); err != nil {
+					log.Printf("[ASR] write segments error: %v", err)
+					logger.LogAudioProcessing(slog.Default(), "asr", "error", chunk.ID, durationMs, "WRITE_SEGMENTS_ERROR")
+					metrics.RecordChunkProcessed("asr", false)
+					return
+				}
+
+				// 日志:成功 (带transcriber名称和降级状态)
+				log.Printf("[ASR] transcribe success (transcriber=%s, degraded=%v)", transcriberName, o.degradationController.IsDegraded())
+				logger.LogAudioProcessing(slog.Default(), "asr", "success", chunk.ID, durationMs, "")
+
+				// 指标:成功
+				metrics.RecordChunkProcessed("asr", true)
+				metrics.RecordDuration("asr", duration.Seconds())
+
+				// 推送到 SD 队列进行说话人分离
+				log.Printf("[ASR Worker] Pushing chunk %d to SD queue for speaker diarization", chunk.ID)
+				o.sdQ.Push(ASRResult{Chunk: chunk, SegJSON: segPath})
+			}()
 		}
 		o.sdQ.Close()
 	}()
@@ -1144,143 +1160,163 @@ func (o *Orchestrator) sdWorker(ctx context.Context) {
 				log.Printf("[SD Worker] Queue closed, exiting worker")
 				break
 			}
-			log.Printf("[SD Worker] Got item from queue: Chunk ID=%d", item.Chunk.ID)
-			meetingID := filepath.Base(o.cfg.OutputDir)
-			speakersPath := o.pathManager.GetChunkSpeakersPath(meetingID, item.Chunk.ID)
 
-			// Use DependencyClient for diarization (supports local/remote/fallback modes)
-			if o.dependencyClient != nil {
-				// ========== File Sharing: Ensure audio file is in shared volume ==========
-				audioPath := item.Chunk.Path
-				sharedVolume := o.cfg.DependencySharedVolume
+			// 标记开始处理，使用函数封装确保无论成功失败都减少计数
+			o.sdInProgress.Add(1)
+			func() {
+				defer o.sdInProgress.Add(-1)
 
-				// Check if audio file is within shared volume
-				if sharedVolume != "" && !strings.HasPrefix(audioPath, sharedVolume) {
-					// File is outside shared volume, need to copy it
-					pm := o.dependencyClient.PathManager()
-					meetingID := filepath.Base(filepath.Dir(audioPath)) // Extract meeting ID from path
-					if meetingID == "." || meetingID == "/" {
-						meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100) // Fallback: group by 100 chunks
+				log.Printf("[SD Worker] Got item from queue: Chunk ID=%d", item.Chunk.ID)
+				meetingID := filepath.Base(o.cfg.OutputDir)
+				speakersPath := o.pathManager.GetChunkSpeakersPath(meetingID, item.Chunk.ID)
+
+				// Use DependencyClient for diarization (supports local/remote/fallback modes)
+				if o.dependencyClient != nil {
+					// ========== File Sharing: Ensure audio file is in shared volume ==========
+					audioPath := item.Chunk.Path
+					sharedVolume := o.cfg.DependencySharedVolume
+
+					// Normalize paths for comparison (resolve . and .. components)
+					normalizedAudioPath, _ := filepath.Abs(audioPath)
+					normalizedSharedVolume, _ := filepath.Abs(sharedVolume)
+
+					// Check if audio file is within shared volume
+					if sharedVolume != "" && !strings.HasPrefix(normalizedAudioPath, normalizedSharedVolume) {
+						// File is outside shared volume, need to copy it
+						pm := o.dependencyClient.PathManager()
+						meetingID := filepath.Base(filepath.Dir(audioPath)) // Extract meeting ID from path
+						if meetingID == "." || meetingID == "/" {
+							meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100) // Fallback: group by 100 chunks
+						}
+
+						// Construct target path in shared volume
+						chunkFilename := filepath.Base(audioPath)
+						targetPath := pm.GetAudioPath(meetingID, chunkFilename)
+
+						// Skip if source and target are the same (already in shared volume)
+						normalizedTargetPath, _ := filepath.Abs(targetPath)
+						if normalizedAudioPath == normalizedTargetPath {
+							slog.Debug("[SD] audio file already in shared volume, skipping copy",
+								"chunk_id", item.Chunk.ID,
+								"path", audioPath,
+							)
+						} else {
+							// Ensure meeting directory exists
+							if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
+								slog.Error("[SD] failed to create shared volume directory",
+									"chunk_id", item.Chunk.ID,
+									"meeting_id", meetingID,
+									"error", err.Error(),
+								)
+								return
+							}
+
+							// Copy file to shared volume
+							if err := copyFile(audioPath, targetPath); err != nil {
+								slog.Error("[SD] failed to copy audio file to shared volume",
+									"chunk_id", item.Chunk.ID,
+									"src", audioPath,
+									"dst", targetPath,
+									"error", err.Error(),
+								)
+								return
+							}
+
+							slog.Info("[SD] copied audio file to shared volume",
+								"chunk_id", item.Chunk.ID,
+								"src", audioPath,
+								"dst", targetPath,
+							)
+
+							// Update audio path to point to shared volume
+							audioPath = targetPath
+						}
+					}
+					// ========== End File Sharing ==========
+
+					// Transform path for deps-service container if needed
+					// Note: After volume mount fix, both containers use /app/data, so no transformation needed
+					audioPathForDeps := audioPath
+					// Previously: unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+					// Now: Both use /app/data/meetings/... (transformation not needed)
+
+					// Execute diarization via DependencyClient high-level API
+					// Use 30 minutes timeout to allow model download on first run
+					diarizationCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+					defer cancel() // Prepare diarization options
+					opts := &dependency.DiarizationOptions{
+						Device:        o.cfg.DeviceDefault,
+						EnableOffline: o.cfg.EnableOffline,
+						// Note: HFToken will be read from environment in deps-service
+						// No need to pass it here for security reasons
 					}
 
-					// Construct target path in shared volume
-					chunkFilename := filepath.Base(audioPath)
-					targetPath := pm.GetAudioPath(meetingID, chunkFilename)
-
-					// Ensure meeting directory exists
-					if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
-						slog.Error("[SD] failed to create shared volume directory",
+					// Use RunDiarization high-level API which handles script path internally
+					err := o.dependencyClient.RunDiarization(diarizationCtx, audioPathForDeps, speakersPath, opts)
+					if err != nil {
+						slog.Error("[SD] diarization failed via DependencyClient",
 							"chunk_id", item.Chunk.ID,
-							"meeting_id", meetingID,
 							"error", err.Error(),
 						)
-						continue
+						return
 					}
 
-					// Copy file to shared volume
-					if err := copyFile(audioPath, targetPath); err != nil {
-						slog.Error("[SD] failed to copy audio file to shared volume",
-							"chunk_id", item.Chunk.ID,
-							"src", audioPath,
-							"dst", targetPath,
-							"error", err.Error(),
-						)
-						continue
+					slog.Info("[SD] diarization completed successfully",
+						"chunk_id", item.Chunk.ID,
+						"audio", audioPathForDeps,
+						"output", speakersPath,
+					)
+				} else {
+					// Fallback: direct Python script execution (legacy behavior)
+					scriptPath := o.cfg.DiarizationScriptPath
+					if scriptPath == "" {
+						scriptPath = "/app/scripts/pyannote_diarize.py"
 					}
 
-					slog.Info("[SD] copied audio file to shared volume",
-						"chunk_id", item.Chunk.ID,
-						"src", audioPath,
-						"dst", targetPath,
-					)
+					args := []string{"python3", scriptPath, "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
+					if o.cfg.EnableOffline {
+						args = append(args, "--offline")
+					}
 
-					// Update audio path to point to shared volume
-					audioPath = targetPath
-				}
-				// ========== End File Sharing ==========
-
-				// Transform path for deps-service container if needed
-				// Note: After volume mount fix, both containers use /app/data, so no transformation needed
-				audioPathForDeps := audioPath
-				// Previously: unified: /app/data/meetings/... -> deps-service: /data/meetings/...
-				// Now: Both use /app/data/meetings/... (transformation not needed)
-
-				// Execute diarization via DependencyClient high-level API
-				// Use 30 minutes timeout to allow model download on first run
-				diarizationCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-				defer cancel() // Prepare diarization options
-				opts := &dependency.DiarizationOptions{
-					Device:        o.cfg.DeviceDefault,
-					EnableOffline: o.cfg.EnableOffline,
-					// Note: HFToken will be read from environment in deps-service
-					// No need to pass it here for security reasons
-				}
-
-				// Use RunDiarization high-level API which handles script path internally
-				err := o.dependencyClient.RunDiarization(diarizationCtx, audioPathForDeps, speakersPath, opts)
-				if err != nil {
-					slog.Error("[SD] diarization failed via DependencyClient",
-						"chunk_id", item.Chunk.ID,
-						"error", err.Error(),
-					)
-					continue
+					cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+					env := os.Environ()
+					// Note: HUGGINGFACE_ACCESS_TOKEN should be set in environment
+					// No need to append from config - let Python read from env
+					if o.cfg.EnableOffline {
+						env = append(env, "HF_HUB_OFFLINE=1")
+					}
+					cmd.Env = env
+					cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+					stdout, err := cmd.StdoutPipe()
+					if err != nil {
+						log.Printf("[SD] pipe err: %v", err)
+						return
+					}
+					cmd.Stderr = os.Stderr
+					if err := cmd.Start(); err != nil {
+						log.Printf("[SD] start err: %v", err)
+						return
+					}
+					f, _ := os.Create(speakersPath)
+					w := bufio.NewWriter(f)
+					_, _ = io.Copy(w, stdout)
+					w.Flush()
+					f.Close()
+					if err := cmd.Wait(); err != nil {
+						log.Printf("[SD] wait err: %v", err)
+						return
+					}
 				}
 
-				slog.Info("[SD] diarization completed successfully",
-					"chunk_id", item.Chunk.ID,
-					"audio", audioPathForDeps,
-					"output", speakersPath,
-				)
-			} else {
-				// Fallback: direct Python script execution (legacy behavior)
-				scriptPath := o.cfg.DiarizationScriptPath
-				if scriptPath == "" {
-					scriptPath = "/app/scripts/pyannote_diarize.py"
+				// Post-process: clamp any segment ends beyond wav duration
+				if err := sanitizeSpeakersJSON(speakersPath, item.Chunk.Path); err != nil {
+					log.Printf("[SD][sanitize] error: %v", err)
 				}
 
-				args := []string{"python3", scriptPath, "--input", item.Chunk.Path, "--device", o.cfg.DeviceDefault}
-				if o.cfg.EnableOffline {
-					args = append(args, "--offline")
-				}
-
-				cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-				env := os.Environ()
-				// Note: HUGGINGFACE_ACCESS_TOKEN should be set in environment
-				// No need to append from config - let Python read from env
-				if o.cfg.EnableOffline {
-					env = append(env, "HF_HUB_OFFLINE=1")
-				}
-				cmd.Env = env
-				cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-				stdout, err := cmd.StdoutPipe()
-				if err != nil {
-					log.Printf("[SD] pipe err: %v", err)
-					continue
-				}
-				cmd.Stderr = os.Stderr
-				if err := cmd.Start(); err != nil {
-					log.Printf("[SD] start err: %v", err)
-					continue
-				}
-				f, _ := os.Create(speakersPath)
-				w := bufio.NewWriter(f)
-				_, _ = io.Copy(w, stdout)
-				w.Flush()
-				f.Close()
-				if err := cmd.Wait(); err != nil {
-					log.Printf("[SD] wait err: %v", err)
-					continue
-				}
-			}
-
-			// Post-process: clamp any segment ends beyond wav duration
-			if err := sanitizeSpeakersJSON(speakersPath, item.Chunk.Path); err != nil {
-				log.Printf("[SD][sanitize] error: %v", err)
-			}
-
-			// 推送到 EMB 队列进行嵌入处理
-			log.Printf("[SD Worker] Pushing chunk %d to EMB queue for embedding extraction", item.Chunk.ID)
-			o.embQ.Push(SDResult{Chunk: item.Chunk, SegJSON: item.SegJSON, SpeakersJSON: speakersPath})
+				// 推送到 EMB 队列进行嵌入处理
+				log.Printf("[SD Worker] Pushing chunk %d to EMB queue for embedding extraction", item.Chunk.ID)
+				o.embQ.Push(SDResult{Chunk: item.Chunk, SegJSON: item.SegJSON, SpeakersJSON: speakersPath})
+			}()
 		}
 		o.embQ.Close()
 	}()
@@ -1299,141 +1335,169 @@ func (o *Orchestrator) embeddingWorker(ctx context.Context) {
 				log.Printf("[EMB Worker] Queue closed, exiting worker")
 				break
 			}
-			log.Printf("[EMB Worker] Got item from queue: Chunk ID=%d", item.Chunk.ID)
-			meetingID := filepath.Base(o.cfg.OutputDir)
-			embPath := o.pathManager.GetChunkEmbeddingsPath(meetingID, item.Chunk.ID)
 
-			// Get existing embeddings path for speaker continuity
-			o.voicePrint.Mutex.Lock()
-			existing := o.voicePrint.CurrentEmbPath
-			o.voicePrint.Mutex.Unlock()
+			// 标记开始处理
+			o.embInProgress.Add(1)
+			func() {
+				defer o.embInProgress.Add(-1)
 
-			// ========== File Sharing: Ensure audio and speakers files are in shared volume ==========
-			audioPath := item.Chunk.Path
-			speakersPath := item.SpeakersJSON
-			sharedVolume := o.cfg.DependencySharedVolume
+				log.Printf("[EMB Worker] Got item from queue: Chunk ID=%d", item.Chunk.ID)
+				meetingID := filepath.Base(o.cfg.OutputDir)
+				embPath := o.pathManager.GetChunkEmbeddingsPath(meetingID, item.Chunk.ID)
 
-			// Check if audio file needs to be copied to shared volume
-			if sharedVolume != "" && !strings.HasPrefix(audioPath, sharedVolume) {
-				pm := o.dependencyClient.PathManager()
-				meetingID := filepath.Base(filepath.Dir(audioPath))
-				if meetingID == "." || meetingID == "/" {
-					meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100)
+				// Get existing embeddings path for speaker continuity
+				o.voicePrint.Mutex.Lock()
+				existing := o.voicePrint.CurrentEmbPath
+				o.voicePrint.Mutex.Unlock()
+
+				// ========== File Sharing: Ensure audio and speakers files are in shared volume ==========
+				audioPath := item.Chunk.Path
+				speakersPath := item.SpeakersJSON
+				sharedVolume := o.cfg.DependencySharedVolume
+
+				// Normalize paths for comparison
+				normalizedAudioPath, _ := filepath.Abs(audioPath)
+				normalizedSpeakersPath, _ := filepath.Abs(speakersPath)
+				normalizedSharedVolume, _ := filepath.Abs(sharedVolume)
+
+				// Check if audio file needs to be copied to shared volume
+				if sharedVolume != "" && !strings.HasPrefix(normalizedAudioPath, normalizedSharedVolume) {
+					pm := o.dependencyClient.PathManager()
+					meetingID := filepath.Base(filepath.Dir(audioPath))
+					if meetingID == "." || meetingID == "/" {
+						meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100)
+					}
+
+					chunkFilename := filepath.Base(audioPath)
+					targetPath := pm.GetAudioPath(meetingID, chunkFilename)
+					normalizedTargetPath, _ := filepath.Abs(targetPath)
+
+					if normalizedAudioPath != normalizedTargetPath {
+						if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
+							slog.Error("[EMB] failed to create shared volume directory",
+								"chunk_id", item.Chunk.ID,
+								"meeting_id", meetingID,
+								"error", err.Error(),
+							)
+							return
+						}
+
+						if err := copyFile(audioPath, targetPath); err != nil {
+							slog.Error("[EMB] failed to copy audio file to shared volume",
+								"chunk_id", item.Chunk.ID,
+								"src", audioPath,
+								"dst", targetPath,
+								"error", err.Error(),
+							)
+							return
+						}
+
+						slog.Info("[EMB] copied audio file to shared volume",
+							"chunk_id", item.Chunk.ID,
+							"src", audioPath,
+							"dst", targetPath,
+						)
+
+						audioPath = targetPath
+					} else {
+						slog.Debug("[EMB] audio file already in shared volume, skipping copy",
+							"chunk_id", item.Chunk.ID,
+							"path", audioPath,
+						)
+					}
 				}
 
-				chunkFilename := filepath.Base(audioPath)
-				targetPath := pm.GetAudioPath(meetingID, chunkFilename)
+				// Check if speakers file needs to be copied to shared volume
+				if sharedVolume != "" && !strings.HasPrefix(normalizedSpeakersPath, normalizedSharedVolume) {
+					pm := o.dependencyClient.PathManager()
+					meetingID := filepath.Base(filepath.Dir(speakersPath))
+					if meetingID == "." || meetingID == "/" {
+						meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100)
+					}
 
-				if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
-					slog.Error("[EMB] failed to create shared volume directory",
-						"chunk_id", item.Chunk.ID,
-						"meeting_id", meetingID,
-						"error", err.Error(),
-					)
-					continue
+					speakersFilename := filepath.Base(speakersPath)
+					targetPath := pm.GetDiarizationPath(meetingID, speakersFilename)
+					normalizedTargetPath, _ := filepath.Abs(targetPath)
+
+					if normalizedSpeakersPath != normalizedTargetPath {
+						if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
+							slog.Error("[EMB] failed to create shared volume directory for speakers",
+								"chunk_id", item.Chunk.ID,
+								"meeting_id", meetingID,
+								"error", err.Error(),
+							)
+							return
+						}
+
+						if err := copyFile(speakersPath, targetPath); err != nil {
+							slog.Error("[EMB] failed to copy speakers file to shared volume",
+								"chunk_id", item.Chunk.ID,
+								"src", speakersPath,
+								"dst", targetPath,
+								"error", err.Error(),
+							)
+							return
+						}
+
+						slog.Info("[EMB] copied speakers file to shared volume",
+							"chunk_id", item.Chunk.ID,
+							"src", speakersPath,
+							"dst", targetPath,
+						)
+
+						speakersPath = targetPath
+					} else {
+						slog.Debug("[EMB] speakers file already in shared volume, skipping copy",
+							"chunk_id", item.Chunk.ID,
+							"path", speakersPath,
+						)
+					}
 				}
+				// ========== End File Sharing ==========
 
-				if err := copyFile(audioPath, targetPath); err != nil {
-					slog.Error("[EMB] failed to copy audio file to shared volume",
-						"chunk_id", item.Chunk.ID,
-						"src", audioPath,
-						"dst", targetPath,
-						"error", err.Error(),
-					)
-					continue
-				}
+				// Transform paths for deps-service container if needed
+				// Note: After volume mount fix, both containers use /app/data, so no transformation needed
+				audioPathForDeps := audioPath
+				speakersPathForDeps := speakersPath
+				embPathForDeps := embPath
+				existingForDeps := existing
+				// Previously: unified: /app/data/meetings/... -> deps-service: /data/meetings/...
+				// Now: Both use /app/data/meetings/... (transformation not needed)
 
-				slog.Info("[EMB] copied audio file to shared volume",
+				slog.Info("[EMB] using paths for deps-service",
 					"chunk_id", item.Chunk.ID,
-					"src", audioPath,
-					"dst", targetPath,
+					"audio", audioPathForDeps,
+					"speakers", speakersPathForDeps,
+					"output", embPathForDeps,
+					"existing", existingForDeps,
 				)
 
-				audioPath = targetPath
-			}
-
-			// Check if speakers file needs to be copied to shared volume
-			if sharedVolume != "" && !strings.HasPrefix(speakersPath, sharedVolume) {
-				pm := o.dependencyClient.PathManager()
-				meetingID := filepath.Base(filepath.Dir(speakersPath))
-				if meetingID == "." || meetingID == "/" {
-					meetingID = fmt.Sprintf("meeting_%d", item.Chunk.ID/100)
+				// Construct EmbeddingOptions from config
+				opts := &dependency.EmbeddingOptions{
+					Device:             o.cfg.EmbeddingDeviceDefault,
+					EnableOffline:      o.cfg.EnableOffline,
+					HFToken:            o.cfg.HFTokenValue,
+					Threshold:          o.cfg.EmbeddingThreshold,
+					AutoLowerThreshold: true, // Always enable auto-lowering
+					AutoLowerMin:       o.cfg.EmbeddingAutoLowerMin,
+					AutoLowerStep:      o.cfg.EmbeddingAutoLowerStep,
+					ExistingEmbeddings: existingForDeps, // Use path (no transformation needed)
 				}
 
-				speakersFilename := filepath.Base(speakersPath)
-				targetPath := pm.GetDiarizationPath(meetingID, speakersFilename)
-
-				if _, err := pm.EnsureMeetingDir(meetingID); err != nil {
-					slog.Error("[EMB] failed to create shared volume directory for speakers",
-						"chunk_id", item.Chunk.ID,
-						"meeting_id", meetingID,
-						"error", err.Error(),
-					)
-					continue
+				log.Printf("[EMB] Calling DependencyClient.GenerateEmbeddings: audio=%s, speakers=%s, output=%s, device=%s, threshold=%s",
+					audioPathForDeps, speakersPathForDeps, embPathForDeps, opts.Device, opts.Threshold) // Use DependencyClient to generate embeddings (use transformed paths)
+				if err := o.dependencyClient.GenerateEmbeddings(ctx, audioPathForDeps, speakersPathForDeps, embPathForDeps, opts); err != nil {
+					log.Printf("[EMB] error: %v", err)
+					return
 				}
 
-				if err := copyFile(speakersPath, targetPath); err != nil {
-					slog.Error("[EMB] failed to copy speakers file to shared volume",
-						"chunk_id", item.Chunk.ID,
-						"src", speakersPath,
-						"dst", targetPath,
-						"error", err.Error(),
-					)
-					continue
-				}
-
-				slog.Info("[EMB] copied speakers file to shared volume",
-					"chunk_id", item.Chunk.ID,
-					"src", speakersPath,
-					"dst", targetPath,
-				)
-
-				speakersPath = targetPath
-			}
-			// ========== End File Sharing ==========
-
-			// Transform paths for deps-service container if needed
-			// Note: After volume mount fix, both containers use /app/data, so no transformation needed
-			audioPathForDeps := audioPath
-			speakersPathForDeps := speakersPath
-			embPathForDeps := embPath
-			existingForDeps := existing
-			// Previously: unified: /app/data/meetings/... -> deps-service: /data/meetings/...
-			// Now: Both use /app/data/meetings/... (transformation not needed)
-
-			slog.Info("[EMB] using paths for deps-service",
-				"chunk_id", item.Chunk.ID,
-				"audio", audioPathForDeps,
-				"speakers", speakersPathForDeps,
-				"output", embPathForDeps,
-				"existing", existingForDeps,
-			)
-
-			// Construct EmbeddingOptions from config
-			opts := &dependency.EmbeddingOptions{
-				Device:             o.cfg.EmbeddingDeviceDefault,
-				EnableOffline:      o.cfg.EnableOffline,
-				HFToken:            o.cfg.HFTokenValue,
-				Threshold:          o.cfg.EmbeddingThreshold,
-				AutoLowerThreshold: true, // Always enable auto-lowering
-				AutoLowerMin:       o.cfg.EmbeddingAutoLowerMin,
-				AutoLowerStep:      o.cfg.EmbeddingAutoLowerStep,
-				ExistingEmbeddings: existingForDeps, // Use path (no transformation needed)
-			}
-
-			log.Printf("[EMB] Calling DependencyClient.GenerateEmbeddings: audio=%s, speakers=%s, output=%s, device=%s, threshold=%s",
-				audioPathForDeps, speakersPathForDeps, embPathForDeps, opts.Device, opts.Threshold) // Use DependencyClient to generate embeddings (use transformed paths)
-			if err := o.dependencyClient.GenerateEmbeddings(ctx, audioPathForDeps, speakersPathForDeps, embPathForDeps, opts); err != nil {
-				log.Printf("[EMB] error: %v", err)
-				continue
-			}
-
-			// Update current embeddings path for next chunk (use original path for local file access)
-			o.voicePrint.Mutex.Lock()
-			o.voicePrint.CurrentEmbPath = embPath
-			o.voicePrint.Mutex.Unlock() // 推送到 MERGE 队列进行最终合并
-			log.Printf("[EMB Worker] Pushing chunk %d to MERGE queue for final merging", item.Chunk.ID)
-			o.mergeQ.Push(EmbeddingResult{Chunk: item.Chunk, SegJSON: item.SegJSON, SpeakersJSON: item.SpeakersJSON, EmbeddingsJSON: embPath})
+				// Update current embeddings path for next chunk (use original path for local file access)
+				o.voicePrint.Mutex.Lock()
+				o.voicePrint.CurrentEmbPath = embPath
+				o.voicePrint.Mutex.Unlock() // 推送到 MERGE 队列进行最终合并
+				log.Printf("[EMB Worker] Pushing chunk %d to MERGE queue for final merging", item.Chunk.ID)
+				o.mergeQ.Push(EmbeddingResult{Chunk: item.Chunk, SegJSON: item.SegJSON, SpeakersJSON: item.SpeakersJSON, EmbeddingsJSON: embPath})
+			}()
 		}
 		o.mergeQ.Close()
 	}()
@@ -1637,36 +1701,43 @@ func (o *Orchestrator) mergeWorker(ctx context.Context) {
 				log.Printf("[MERGE Worker] Queue closed, exiting worker")
 				break
 			}
-			log.Printf("[MERGE] chunk %04d merging (seg=%s spk=%s emb=%s)", item.Chunk.ID, filepath.Base(item.SegJSON), filepath.Base(item.SpeakersJSON), filepath.Base(item.EmbeddingsJSON))
-			mapped := item.SpeakersJSON
-			if p, err := applyLocalMapping(item.SpeakersJSON, item.EmbeddingsJSON); err == nil && p != "" {
-				mapped = p
-				log.Printf("[MERGE] chunk %04d local mapping -> %s", item.Chunk.ID, filepath.Base(mapped))
-			}
-			if p, err := applyGlobalMapping(mapped, item.EmbeddingsJSON); err == nil && p != "" {
-				mapped = p
-				log.Printf("[MERGE] chunk %04d global mapping -> %s", item.Chunk.ID, filepath.Base(mapped))
-			}
-			// Note: No dedicated PathManager method for merged.txt, using custom path
-			meetingID := filepath.Base(o.cfg.OutputDir)
-			mergedTxt := filepath.Join(o.pathManager.GetMeetingDir(meetingID), fmt.Sprintf("chunk_%04d_merged.txt", item.Chunk.ID))
 
-			// Determine merge-segments binary path: prefer local bin/merge-segments for development
-			mergeCmd := "merge-segments"
-			if _, err := os.Stat("./bin/merge-segments"); err == nil {
-				mergeCmd = "./bin/merge-segments"
-			}
+			// 标记开始处理
+			o.mergeInProgress.Add(1)
+			func() {
+				defer o.mergeInProgress.Add(-1)
 
-			args := []string{mergeCmd, "--segments-file", item.SegJSON, "--speaker-file", mapped}
-			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			outFile, _ := os.Create(mergedTxt)
-			cmd.Stdout = outFile
-			cmd.Stderr = os.Stderr
-			_ = cmd.Run()
-			outFile.Close()
-			removeBlankLines(mergedTxt)
-			log.Printf("[MERGE] chunk %04d merged -> %s", item.Chunk.ID, filepath.Base(mergedTxt))
+				log.Printf("[MERGE] chunk %04d merging (seg=%s spk=%s emb=%s)", item.Chunk.ID, filepath.Base(item.SegJSON), filepath.Base(item.SpeakersJSON), filepath.Base(item.EmbeddingsJSON))
+				mapped := item.SpeakersJSON
+				if p, err := applyLocalMapping(item.SpeakersJSON, item.EmbeddingsJSON); err == nil && p != "" {
+					mapped = p
+					log.Printf("[MERGE] chunk %04d local mapping -> %s", item.Chunk.ID, filepath.Base(mapped))
+				}
+				if p, err := applyGlobalMapping(mapped, item.EmbeddingsJSON); err == nil && p != "" {
+					mapped = p
+					log.Printf("[MERGE] chunk %04d global mapping -> %s", item.Chunk.ID, filepath.Base(mapped))
+				}
+				// Note: No dedicated PathManager method for merged.txt, using custom path
+				meetingID := filepath.Base(o.cfg.OutputDir)
+				mergedTxt := filepath.Join(o.pathManager.GetMeetingDir(meetingID), fmt.Sprintf("chunk_%04d_merged.txt", item.Chunk.ID))
+
+				// Determine merge-segments binary path: prefer local bin/merge-segments for development
+				mergeCmd := "merge-segments"
+				if _, err := os.Stat("./bin/merge-segments"); err == nil {
+					mergeCmd = "./bin/merge-segments"
+				}
+
+				args := []string{mergeCmd, "--segments-file", item.SegJSON, "--speaker-file", mapped}
+				cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+				cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+				outFile, _ := os.Create(mergedTxt)
+				cmd.Stdout = outFile
+				cmd.Stderr = os.Stderr
+				_ = cmd.Run()
+				outFile.Close()
+				removeBlankLines(mergedTxt)
+				log.Printf("[MERGE] chunk %04d merged -> %s", item.Chunk.ID, filepath.Base(mergedTxt))
+			}()
 		}
 	}()
 }
@@ -2280,7 +2351,7 @@ func (o *Orchestrator) Stop() {
 		recorder.FinalizeAndStop()
 	}
 	log.Printf("[Orchestrator] Stop() called, waiting for all workers to finish...")
-	
+
 	// 使用独立的 goroutine 等待 workers 完成，避免阻塞
 	go func() {
 		defer func() {
@@ -2288,19 +2359,59 @@ func (o *Orchestrator) Stop() {
 				log.Printf("[Orchestrator] PANIC in Stop goroutine: %v", r)
 			}
 		}()
-		
+
+		// 空闲超时机制：等待队列变空 且 没有正在处理的任务 后一段时间再关闭
+		// 这样可以处理前端上传模式下，Stop() 和最后的音频上传并发的情况
+		const idleTimeout = 3 * time.Second
+		const checkInterval = 200 * time.Millisecond
+
+		idleStart := time.Time{}
+
+		for {
+			// 检查所有队列是否为空 且 没有正在处理的任务
+			queuesEmpty := o.asrQ.Len() == 0 && o.sdQ.Len() == 0 && o.embQ.Len() == 0 && o.mergeQ.Len() == 0
+			noProcessing := o.asrInProgress.Load() == 0 && o.sdInProgress.Load() == 0 &&
+				o.embInProgress.Load() == 0 && o.mergeInProgress.Load() == 0
+			allIdle := queuesEmpty && noProcessing
+
+			if allIdle {
+				if idleStart.IsZero() {
+					idleStart = time.Now()
+					log.Printf("[Orchestrator] All queues empty and no tasks processing, starting idle timeout (%v)", idleTimeout)
+				} else if time.Since(idleStart) >= idleTimeout {
+					log.Printf("[Orchestrator] Idle timeout reached, closing all queues")
+					break
+				}
+			} else {
+				// 有任务在队列中或正在处理，重置超时
+				if !idleStart.IsZero() {
+					log.Printf("[Orchestrator] Tasks detected (queues=%v, processing: asr=%d sd=%d emb=%d merge=%d), resetting idle timeout",
+						!queuesEmpty, o.asrInProgress.Load(), o.sdInProgress.Load(), o.embInProgress.Load(), o.mergeInProgress.Load())
+				}
+				idleStart = time.Time{}
+			}
+
+			time.Sleep(checkInterval)
+		}
+
+		// 关闭所有队列，让 workers 退出
+		o.asrQ.Close()
+		o.sdQ.Close()
+		o.embQ.Close()
+		o.mergeQ.Close()
+
 		log.Printf("[Orchestrator] Background goroutine: waiting for wg.Wait()...")
 		o.wg.Wait()
 		log.Printf("[Orchestrator] Background goroutine: all workers finished, updating state to StateStopped")
-		
+
 		o.mutex.Lock()
 		defer o.mutex.Unlock()
-		
+
 		// 尝试合并所有文件（忽略错误）
 		if _, err := o.ConcatAllMerged(); err != nil {
 			log.Printf("[Orchestrator] ConcatAllMerged failed (ignored): %v", err)
 		}
-		
+
 		o.state = StateStopped
 		log.Printf("[Orchestrator] State updated to StateStopped successfully")
 	}()
