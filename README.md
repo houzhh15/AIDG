@@ -5,8 +5,6 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-> 探索 Spec-Driven Development (SDD) 的个人实践 | 尝试让 AI 辅助开发更可控、可追溯 | 人机协作的治理工具
-
 ---
 
 ## 📖 简介
@@ -14,10 +12,6 @@
 AIDG (AI Development Governance)  **Spec-Driven Development (SDD)** 的实践工具。提供人机协作的平台，在软件开发的特性设计、架构设计、任务分解、需求文档、设计文档等关键环节设置锚点，控制AI生成空间。
 
 ---
-
-## 🚀 快速开始 (Getting Started)
-
-
 
 ### 💡 工作原理示意图
 
@@ -67,34 +61,7 @@ graph TD
 
 ---
 
-### 📦 1. 快速部署（5 分钟）
-
-详细步骤请参考：[**部署指南 (DEPLOYMENT.md)**](docs/DEPLOYMENT.md)
-
-**超简版**:
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/houzhh15/AIDG.git
-cd AIDG
-
-# 2. 配置环境变量
-cp deployments/production/.env.example deployments/production/.env
-# 编辑 .env 文件，修改安全密钥
-
-# 3. 启动服务（Lite 方案，~250MB）
-cd deployments/production
-docker compose -f docker-compose.lite.yml up -d
-
-# 4. 打开浏览器访问
-open http://localhost:8000
-```
-
-> 💡 **提示**: Lite 方案已包含核心功能（项目/任务管理、MCP 接入）。如需会议录音转写功能，请使用 Standard 方案。
-
----
-
-### 🌐 2. Web 界面使用
+### 🌐 Web 界面使用
 
 
 
@@ -121,8 +88,7 @@ open http://localhost:8000
 
 ---
 
-### 🔌 3. MCP 服务器配置
-
+### 🔌  MCP 服务器配置
 
 
 #### 在 AI 开发工具中接入 AIDG
@@ -150,42 +116,6 @@ AIDG 基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 提
    ```
 
 ---
-
-### 🔄 4. 完整开发流程
-
-AIDG 的工作流与 MCP（Model Context Protocol）内置的提示词模板紧密集成，实现引导式的、结构化的开发流程。
-
-**提示词模板使用方式**：
-- 在 VS Code 中输入：`/mcp.aidg.{prompt-name}`
-- 例如：`/mcp.aidg.requirements` 或 `/mcp.aidg.design`
-
-**典型开发流程**：
-
-1.  **需求文档生成**
-    *   在 Web 界面创建任务后，使用提示词模板引导 AI 生成需求文档
-    *   `/mcp.aidg.requirements` - 基于项目特性列表和任务描述生成需求文档
-
-2.  **设计文档生成**
-    *   基于需求文档，引导 AI 生成技术设计
-    *   `/mcp.aidg.design` - 创建技术设计，包括模块划分、接口定义等
-
-3.  **执行计划提交**
-    *   AI 根据设计文档生成详细的、可分步执行的计划
-    *   `/mcp.aidg.planning` - 生成编码或操作步骤的执行计划
-    *   人工在 Web 界面对计划进行审批，确保执行方向正确
-
-4.  **自主执行与追踪**
-    *   计划审批后，AI 通过 MCP 工具获取下一步操作
-    *   `/mcp.aidg.executing` - 按计划逐步执行，自动获取可执行步骤
-    *   完成后通过 MCP 工具回写执行状态和结果
-    *   整个过程在 Web 界面实时追踪，确保过程可控
-
-5.  **任务总结**
-    *   任务完成后生成结构化总结
-    *   `/mcp.aidg.task_summary` - 生成任务完成报告，记录关键产出和经验
-
-**提示词模板位置**：`cmd/mcp-server/prompts/*.prompt.md`
-
 
 ## 📚 详细部署方案
 
