@@ -413,6 +413,14 @@ func HandleRenameTask(reg *meetings.Registry) gin.HandlerFunc {
 			newDir := filepath.Join(tasksRootDir, newID)
 			if err := os.Rename(t.Cfg.OutputDir, newDir); err == nil {
 				t.Cfg.OutputDir = newDir
+				log.Printf("[INFO] Successfully renamed directory: %s -> %s", oldDirAbs, newDir)
+				
+				// 如果存在 Orchestrator 实例（即使在停止状态），销毁并重新创建
+				// 这确保 Orchestrator 使用更新后的 OutputDir
+				if t.Orch != nil {
+					log.Printf("[INFO] Destroying existing orchestrator for renamed task %s", newID)
+					t.Orch = nil // 销毁旧的 orchestrator 实例
+				}
 			} else {
 				log.Printf("[WARN] rename dir failed %s -> %s: %v", t.Cfg.OutputDir, newDir, err)
 			}
