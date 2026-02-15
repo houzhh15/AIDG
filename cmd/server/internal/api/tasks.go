@@ -91,6 +91,9 @@ func HandleGetUserCurrentTask(c *gin.Context) {
 		return
 	}
 
+	// 为任务信息添加完成状态
+	enrichTaskWithCompletionStatus(taskInfo, currentTask.ProjectID, currentTask.TaskID)
+
 	// Return task info with project info
 	result := map[string]interface{}{
 		"project_id":   currentTask.ProjectID,

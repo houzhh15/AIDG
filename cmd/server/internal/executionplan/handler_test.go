@@ -56,7 +56,7 @@ dependencies: []
 	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if payload["status"] != "Pending Approval" {
+	if payload["status"] != "Approved" {
 		t.Fatalf("unexpected status: %v", payload["status"])
 	}
 
@@ -65,8 +65,9 @@ dependencies: []
 	if err != nil {
 		t.Fatalf("read stored plan: %v", err)
 	}
-	if string(stored) != planContent {
-		t.Fatalf("plan content mismatch\nexpected:\n%s\nactual:\n%s", planContent, string(stored))
+	// 自动审批后，存储的计划内容中 status 已被更新为 Approved
+	if !bytes.Contains(stored, []byte("Approved")) {
+		t.Fatalf("stored plan should contain Approved status, got:\n%s", string(stored))
 	}
 }
 

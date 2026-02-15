@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,10 +15,73 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/taskdocs"
 	"github.com/houzhh15/AIDG/cmd/server/internal/executionplan"
 	"github.com/houzhh15/AIDG/cmd/server/internal/simhash"
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
+
+// enrichTaskWithCompletionStatus 为任务信息添加4个文档槽位的完成状态
+// 槽位: requirements(需求文档), design(设计文档), execution_plan(执行计划), test(测试文档)
+// 状态: "" (空/未完成) 或 "completed" (已完成)
+func enrichTaskWithCompletionStatus(task map[string]interface{}, projectID, taskID string) {
+	completion := map[string]string{
+		"requirements":   "",
+		"design":         "",
+		"execution_plan": "",
+		"test":           "",
+	}
+
+	// 检查需求文档
+	if checkDocSlotCompleted(projectID, taskID, "requirements") {
+		completion["requirements"] = "completed"
+	}
+
+	// 检查设计文档
+	if checkDocSlotCompleted(projectID, taskID, "design") {
+		completion["design"] = "completed"
+	}
+
+	// 检查执行计划
+	if checkExecutionPlanCompleted(projectID, taskID) {
+		completion["execution_plan"] = "completed"
+	}
+
+	// 检查测试文档
+	if checkDocSlotCompleted(projectID, taskID, "test") {
+		completion["test"] = "completed"
+	}
+
+	task["completion"] = completion
+}
+
+// checkDocSlotCompleted 检查某个文档槽位是否已有内容
+func checkDocSlotCompleted(projectID, taskID, docType string) bool {
+	compiledPath, err := taskdocs.DocCompiledPath(projectID, taskID, docType)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(compiledPath)
+	if err != nil {
+		// 尝试 legacy 路径
+		legacyPath := filepath.Join(projectsRoot(), projectID, "tasks", taskID, docType+".md")
+		data, err = os.ReadFile(legacyPath)
+		if err != nil {
+			return false
+		}
+	}
+	return len(strings.TrimSpace(string(data))) > 0
+}
+
+// checkExecutionPlanCompleted 检查执行计划是否已有内容
+func checkExecutionPlanCompleted(projectID, taskID string) bool {
+	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
+	if err != nil {
+		return false
+	}
+	_, err = repo.Read(context.Background())
+	return err == nil
+}
 
 // projectsRoot resolves to the configured projects directory
 func projectsRoot() string {
@@ -561,6 +625,13 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 				projectID, query, timeRange, len(taskList), originalCount)
 		}
 
+		// 为每个任务添加完成状态
+		for _, task := range taskList {
+			if id, ok := task["id"].(string); ok {
+				enrichTaskWithCompletionStatus(task, projectID, id)
+			}
+		}
+
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": taskList})
 	}
 }
@@ -676,6 +747,7 @@ func HandleGetProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 		// Find the task
 		for _, task := range taskList {
 			if task["id"] == taskID {
+				enrichTaskWithCompletionStatus(task, projectID, taskID)
 				c.JSON(http.StatusOK, gin.H{"success": true, "data": task})
 				return
 			}

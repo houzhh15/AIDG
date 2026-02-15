@@ -73,6 +73,15 @@ func (h *Handler) UpdateExecutionPlan(c *gin.Context) {
 		return
 	}
 
+	// 自动审批通过：创建/更新执行计划时直接设置为 Approved 状态
+	if plan.Status == models.PlanStatusDraft || plan.Status == models.PlanStatusPendingApproval {
+		plan, err = svc.UpdatePlanStatus(c.Request.Context(), models.PlanStatusApproved)
+		if err != nil {
+			// 自动审批失败不阻塞响应，记录日志
+			fmt.Printf("[WARN] Auto-approve execution plan failed for project=%s task=%s: %v\n", projectID, taskID, err)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"plan_id":    plan.PlanID,
 		"task_id":    plan.TaskID,
