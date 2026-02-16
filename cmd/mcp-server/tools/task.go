@@ -383,3 +383,50 @@ func (t *CreateProjectTaskPromptTool) Execute(arguments map[string]interface{}, 
 	}
 	return shared.CallAPI(apiClient, "POST", fmt.Sprintf("/api/v1/projects/%s/tasks/%s/prompts", projectID, taskID), body, clientToken)
 }
+
+// GetNextIncompleteTaskTool 获取下一个未完成文档的任务
+type GetNextIncompleteTaskTool struct{}
+
+func (t *GetNextIncompleteTaskTool) Name() string {
+	return "get_next_incomplete_task"
+}
+
+func (t *GetNextIncompleteTaskTool) Description() string {
+	return "获取项目中下一个有未完成文档的任务。可指定要检查的文档类型（requirements/design/plan/test），不指定则检查全部四项。返回推荐优先完成的文档类型。plan 有三种状态：无计划、计划完成、执行完成。"
+}
+
+func (t *GetNextIncompleteTaskTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"project_id": map[string]interface{}{
+				"type":        "string",
+				"description": "项目ID（可选，缺失时从当前任务获取）",
+			},
+			"doc_type": map[string]interface{}{
+				"type":        "string",
+				"description": "要检查的文档类型（可选）。可选值：requirements（需求文档）、design（设计文档）、plan（执行计划）、test（测试文档）。不指定则返回任意一项未完成的任务。",
+				"enum":        []string{"requirements", "design", "plan", "test"},
+			},
+		},
+		"required": []string{},
+	}
+}
+
+func (t *GetNextIncompleteTaskTool) Execute(arguments map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
+	projectID, err := shared.GetProjectIDWithFallback(arguments, apiClient, clientToken)
+	if err != nil {
+		return "", fmt.Errorf("get_next_incomplete_task: %w", err)
+	}
+
+	path := fmt.Sprintf("/api/v1/projects/%s/tasks/next-incomplete", projectID)
+
+	// 如果指定了 doc_type 参数，添加到查询字符串
+	if docType, exists := arguments["doc_type"]; exists && docType != nil {
+		if dt, ok := docType.(string); ok && dt != "" {
+			path += "?doc_type=" + dt
+		}
+	}
+
+	return shared.CallAPI(apiClient, "GET", path, nil, clientToken)
+}

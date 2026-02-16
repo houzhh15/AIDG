@@ -69,6 +69,7 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry.Register(&tools.GetProjectTaskTool{})
 	registry.Register(&tools.UpdateProjectTaskTool{})
 	registry.Register(&tools.DeleteProjectTaskTool{})
+	registry.Register(&tools.GetNextIncompleteTaskTool{})
 	registry.Register(&tools.GetProjectTaskPromptsTool{})
 	registry.Register(&tools.CreateProjectTaskPromptTool{})
 

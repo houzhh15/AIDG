@@ -504,6 +504,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/projects/:id/tech-design/history": {users.ScopeProjectDocRead}, "DELETE /api/v1/projects/:id/tech-design/history/:version": {users.ScopeProjectDocWrite},
 		"POST /api/v1/projects/:id/copy-from-task": {users.ScopeProjectDocWrite},
 		"GET /api/v1/projects/:id/tasks":           {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/next-incomplete": {users.ScopeTaskRead},
 		"GET /api/v1/projects/:id/tasks/:task_id": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id": {users.ScopeTaskWrite},
 		"DELETE /api/v1/projects/:id/tasks/:task_id":           {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
@@ -1164,6 +1165,7 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 
 	// Get project tasks
 	r.GET("/api/v1/projects/:id/tasks", api.HandleListProjectTasks(projectsReg))
+	r.GET("/api/v1/projects/:id/tasks/next-incomplete", api.HandleGetNextIncompleteTask(projectsReg))
 	r.POST("/api/v1/projects/:id/tasks", api.HandleCreateProjectTask(projectsReg))
 	r.GET("/api/v1/projects/:id/tasks/:task_id", api.HandleGetProjectTask(projectsReg))
 	r.PUT("/api/v1/projects/:id/tasks/:task_id", api.HandleUpdateProjectTask(projectsReg))

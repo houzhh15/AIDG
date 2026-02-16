@@ -17,6 +17,8 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/taskdocs"
 	"github.com/houzhh15/AIDG/cmd/server/internal/executionplan"
+	"github.com/houzhh15/AIDG/cmd/server/internal/models"
+	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15/AIDG/cmd/server/internal/simhash"
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
@@ -81,6 +83,143 @@ func checkExecutionPlanCompleted(projectID, taskID string) bool {
 	}
 	_, err = repo.Read(context.Background())
 	return err == nil
+}
+
+// getExecutionPlanStatus 获取执行计划的详细状态
+// 返回值: "" (无计划), "plan_completed" (有计划但未全部执行完), "execution_completed" (所有步骤执行完成)
+func getExecutionPlanStatus(projectID, taskID string) string {
+	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
+	if err != nil {
+		return ""
+	}
+	svc := services.NewExecutionPlanService(repo)
+	plan, err := svc.Load(context.Background())
+	if err != nil {
+		return ""
+	}
+	if plan.Status == models.PlanStatusCompleted {
+		return "execution_completed"
+	}
+	return "plan_completed"
+}
+
+// HandleGetNextIncompleteTask GET /api/v1/projects/:id/tasks/next-incomplete
+// 获取下一个有未完成文档的任务
+// 可选参数 doc_type: requirements, design, plan, test
+func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		projectID := c.Param("id")
+		docTypeFilter := c.Query("doc_type") // 可选: requirements, design, plan, test
+
+		// Verify project exists
+		if reg.Get(projectID) == nil {
+			notFoundResponse(c, "project not found")
+			return
+		}
+
+		projDir := filepath.Join(projectsRoot(), projectID)
+		tasksFile := filepath.Join(projDir, "tasks.json")
+
+		if _, err := os.Stat(tasksFile); os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "message": "no tasks found"})
+			return
+		}
+
+		data, err := os.ReadFile(tasksFile)
+		if err != nil {
+			internalErrorResponse(c, fmt.Errorf("failed to read tasks: %w", err))
+			return
+		}
+
+		var taskList []map[string]interface{}
+		if err := json.Unmarshal(data, &taskList); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "message": "no tasks found"})
+			return
+		}
+
+		// 验证 doc_type 参数
+		validDocTypes := map[string]bool{"requirements": true, "design": true, "plan": true, "test": true}
+		if docTypeFilter != "" && !validDocTypes[docTypeFilter] {
+			badRequestResponse(c, "invalid doc_type, must be one of: requirements, design, plan, test")
+			return
+		}
+
+		// 遍历任务列表，找到第一个满足条件的任务
+		for _, task := range taskList {
+			taskID, ok := task["id"].(string)
+			if !ok || taskID == "" {
+				continue
+			}
+
+			// 计算各文档槽位的状态
+			reqCompleted := checkDocSlotCompleted(projectID, taskID, "requirements")
+			designCompleted := checkDocSlotCompleted(projectID, taskID, "design")
+			planStatus := getExecutionPlanStatus(projectID, taskID)
+			testCompleted := checkDocSlotCompleted(projectID, taskID, "test")
+
+			// 判断是否满足筛选条件
+			var matchesFilter bool
+			switch docTypeFilter {
+			case "requirements":
+				matchesFilter = !reqCompleted
+			case "design":
+				matchesFilter = !designCompleted
+			case "plan":
+				matchesFilter = planStatus != "execution_completed"
+			case "test":
+				matchesFilter = !testCompleted
+			default:
+				// 无筛选时，任意一项未完成即匹配
+				matchesFilter = !reqCompleted || !designCompleted || planStatus != "execution_completed" || !testCompleted
+			}
+
+			if !matchesFilter {
+				continue
+			}
+
+			// 构建完成状态
+			completion := map[string]string{
+				"requirements": "",
+				"design":       "",
+				"plan":         planStatus, // "", "plan_completed", "execution_completed"
+				"test":         "",
+			}
+			if reqCompleted {
+				completion["requirements"] = "completed"
+			}
+			if designCompleted {
+				completion["design"] = "completed"
+			}
+			if testCompleted {
+				completion["test"] = "completed"
+			}
+			task["completion"] = completion
+
+			// 推荐下一个要完成的内容，按优先级: requirements > design > plan > test
+			recommended := ""
+			if !reqCompleted {
+				recommended = "requirements"
+			} else if !designCompleted {
+				recommended = "design"
+			} else if planStatus != "execution_completed" {
+				recommended = "plan"
+			} else if !testCompleted {
+				recommended = "test"
+			}
+
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data": gin.H{
+					"task":        task,
+					"recommended": recommended,
+				},
+			})
+			return
+		}
+
+		// 没有满足条件的任务
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "message": "all tasks completed"})
+	}
 }
 
 // projectsRoot resolves to the configured projects directory
