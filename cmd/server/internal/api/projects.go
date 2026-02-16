@@ -75,18 +75,23 @@ func checkDocSlotCompleted(projectID, taskID, docType string) bool {
 	return len(strings.TrimSpace(string(data))) > 0
 }
 
-// checkExecutionPlanCompleted 检查执行计划是否已有内容
+// checkExecutionPlanCompleted 检查执行计划是否已完成（非 Draft 状态即视为已有计划）
 func checkExecutionPlanCompleted(projectID, taskID string) bool {
 	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
 	if err != nil {
 		return false
 	}
-	_, err = repo.Read(context.Background())
-	return err == nil
+	svc := services.NewExecutionPlanService(repo)
+	plan, err := svc.Load(context.Background())
+	if err != nil {
+		return false
+	}
+	// Draft 状态是默认模板，不算已完成
+	return plan.Status != models.PlanStatusDraft
 }
 
 // getExecutionPlanStatus 获取执行计划的详细状态
-// 返回值: "" (无计划), "plan_completed" (有计划但未全部执行完), "execution_completed" (所有步骤执行完成)
+// 返回值: "" (无计划/Draft), "plan_completed" (有计划但未全部执行完), "execution_completed" (所有步骤执行完成)
 func getExecutionPlanStatus(projectID, taskID string) string {
 	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
 	if err != nil {
@@ -95,6 +100,10 @@ func getExecutionPlanStatus(projectID, taskID string) string {
 	svc := services.NewExecutionPlanService(repo)
 	plan, err := svc.Load(context.Background())
 	if err != nil {
+		return ""
+	}
+	// Draft 状态是默认模板，视为无计划
+	if plan.Status == models.PlanStatusDraft {
 		return ""
 	}
 	if plan.Status == models.PlanStatusCompleted {
