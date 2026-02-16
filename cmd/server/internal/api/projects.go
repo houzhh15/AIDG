@@ -23,33 +23,30 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
 
-// enrichTaskWithCompletionStatus 为任务信息添加4个文档槽位的完成状态
-// 槽位: requirements(需求文档), design(设计文档), execution_plan(执行计划), test(测试文档)
+// enrichTaskWithCompletionStatus 为任务信息添加5个文档槽位的完成状态
+// 槽位: requirements(需求文档), design(设计文档), plan(执行计划), execution(执行完成), test(测试文档)
 // 状态: "" (空/未完成) 或 "completed" (已完成)
 func enrichTaskWithCompletionStatus(task map[string]interface{}, projectID, taskID string) {
 	completion := map[string]string{
-		"requirements":   "",
-		"design":         "",
-		"execution_plan": "",
-		"test":           "",
+		"requirements": "",
+		"design":       "",
+		"plan":         "",
+		"execution":    "",
+		"test":         "",
 	}
 
-	// 检查需求文档
 	if checkDocSlotCompleted(projectID, taskID, "requirements") {
 		completion["requirements"] = "completed"
 	}
-
-	// 检查设计文档
 	if checkDocSlotCompleted(projectID, taskID, "design") {
 		completion["design"] = "completed"
 	}
-
-	// 检查执行计划
 	if checkExecutionPlanCompleted(projectID, taskID) {
-		completion["execution_plan"] = "completed"
+		completion["plan"] = "completed"
 	}
-
-	// 检查测试文档
+	if checkExecutionCompleted(projectID, taskID) {
+		completion["execution"] = "completed"
+	}
 	if checkDocSlotCompleted(projectID, taskID, "test") {
 		completion["test"] = "completed"
 	}
@@ -90,26 +87,18 @@ func checkExecutionPlanCompleted(projectID, taskID string) bool {
 	return plan.Status != models.PlanStatusDraft
 }
 
-// getExecutionPlanStatus 获取执行计划的详细状态
-// 返回值: "" (无计划/Draft), "plan_completed" (有计划但未全部执行完), "execution_completed" (所有步骤执行完成)
-func getExecutionPlanStatus(projectID, taskID string) string {
+// checkExecutionCompleted 检查执行计划的所有步骤是否全部执行完成
+func checkExecutionCompleted(projectID, taskID string) bool {
 	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
 	if err != nil {
-		return ""
+		return false
 	}
 	svc := services.NewExecutionPlanService(repo)
 	plan, err := svc.Load(context.Background())
 	if err != nil {
-		return ""
+		return false
 	}
-	// Draft 状态是默认模板，视为无计划
-	if plan.Status == models.PlanStatusDraft {
-		return ""
-	}
-	if plan.Status == models.PlanStatusCompleted {
-		return "execution_completed"
-	}
-	return "plan_completed"
+	return plan.Status == models.PlanStatusCompleted
 }
 
 // HandleGetNextIncompleteTask GET /api/v1/projects/:id/tasks/next-incomplete
@@ -147,9 +136,9 @@ func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc 
 		}
 
 		// 验证 doc_type 参数
-		validDocTypes := map[string]bool{"requirements": true, "design": true, "plan": true, "test": true}
+		validDocTypes := map[string]bool{"requirements": true, "design": true, "plan": true, "execution": true, "test": true}
 		if docTypeFilter != "" && !validDocTypes[docTypeFilter] {
-			badRequestResponse(c, "invalid doc_type, must be one of: requirements, design, plan, test")
+			badRequestResponse(c, "invalid doc_type, must be one of: requirements, design, plan, execution, test")
 			return
 		}
 
@@ -163,7 +152,8 @@ func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			// 计算各文档槽位的状态
 			reqCompleted := checkDocSlotCompleted(projectID, taskID, "requirements")
 			designCompleted := checkDocSlotCompleted(projectID, taskID, "design")
-			planStatus := getExecutionPlanStatus(projectID, taskID)
+			planCompleted := checkExecutionPlanCompleted(projectID, taskID)
+			execCompleted := checkExecutionCompleted(projectID, taskID)
 			testCompleted := checkDocSlotCompleted(projectID, taskID, "test")
 
 			// 判断是否满足筛选条件
@@ -174,12 +164,14 @@ func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			case "design":
 				matchesFilter = !designCompleted
 			case "plan":
-				matchesFilter = planStatus != "execution_completed"
+				matchesFilter = !planCompleted
+			case "execution":
+				matchesFilter = !execCompleted
 			case "test":
 				matchesFilter = !testCompleted
 			default:
 				// 无筛选时，任意一项未完成即匹配
-				matchesFilter = !reqCompleted || !designCompleted || planStatus != "execution_completed" || !testCompleted
+				matchesFilter = !reqCompleted || !designCompleted || !planCompleted || !execCompleted || !testCompleted
 			}
 
 			if !matchesFilter {
@@ -190,7 +182,8 @@ func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			completion := map[string]string{
 				"requirements": "",
 				"design":       "",
-				"plan":         planStatus, // "", "plan_completed", "execution_completed"
+				"plan":         "",
+				"execution":    "",
 				"test":         "",
 			}
 			if reqCompleted {
@@ -199,19 +192,27 @@ func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			if designCompleted {
 				completion["design"] = "completed"
 			}
+			if planCompleted {
+				completion["plan"] = "completed"
+			}
+			if execCompleted {
+				completion["execution"] = "completed"
+			}
 			if testCompleted {
 				completion["test"] = "completed"
 			}
 			task["completion"] = completion
 
-			// 推荐下一个要完成的内容，按优先级: requirements > design > plan > test
+			// 推荐下一个要完成的内容，按优先级: requirements > design > plan > execution > test
 			recommended := ""
 			if !reqCompleted {
 				recommended = "requirements"
 			} else if !designCompleted {
 				recommended = "design"
-			} else if planStatus != "execution_completed" {
+			} else if !planCompleted {
 				recommended = "plan"
+			} else if !execCompleted {
+				recommended = "execution"
 			} else if !testCompleted {
 				recommended = "test"
 			}

@@ -392,7 +392,7 @@ func (t *GetNextIncompleteTaskTool) Name() string {
 }
 
 func (t *GetNextIncompleteTaskTool) Description() string {
-	return "获取项目中下一个有未完成文档的任务。可指定要检查的文档类型（requirements/design/plan/test），不指定则检查全部四项。返回推荐优先完成的文档类型。plan 有三种状态：无计划、计划完成、执行完成。"
+	return "获取项目中下一个有未完成文档的任务。可指定要检查的文档类型（requirements/design/plan/execution/test），不指定则检查全部五项。返回推荐优先完成的文档类型。"
 }
 
 func (t *GetNextIncompleteTaskTool) InputSchema() map[string]interface{} {
@@ -405,8 +405,8 @@ func (t *GetNextIncompleteTaskTool) InputSchema() map[string]interface{} {
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
-				"description": "要检查的文档类型（可选）。可选值：requirements（需求文档）、design（设计文档）、plan（执行计划）、test（测试文档）。不指定则返回任意一项未完成的任务。",
-				"enum":        []string{"requirements", "design", "plan", "test"},
+				"description": "要检查的文档类型（可选）。可选值：requirements（需求文档）、design（设计文档）、plan（执行计划）、execution（计划执行完成）、test（测试文档）。不指定则返回任意一项未完成的任务。",
+				"enum":        []string{"requirements", "design", "plan", "execution", "test"},
 			},
 		},
 		"required": []string{},
