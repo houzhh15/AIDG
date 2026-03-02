@@ -17,11 +17,12 @@ import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, upd
 import { authedApi } from './api/auth';
 import { smartLogin, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
 import { TaskSummary, ChunkFlag } from './types';
-import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ApiOutlined } from '@ant-design/icons';
+import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ApiOutlined, CloudServerOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { SyncPanel } from './components/SyncPanel';
 import { svnSync } from './api/svn';
 import { RoleManagement } from './components/role/RoleManagement';
+import RemoteManagement from './components/RemoteManagement';
 import { usePermission } from './hooks/usePermission';
 import { useProjectPermission } from './hooks/useProjectPermission';
 import { ScopeUserManage } from './constants/permissions';
@@ -702,6 +703,15 @@ const App: React.FC = () => {
                       </span>
                     ),
                     children: <RoleManagement />,
+                  },
+                  {
+                    key: 'remotes',
+                    label: (
+                      <span>
+                        <CloudServerOutlined /> 远端管理
+                      </span>
+                    ),
+                    children: <RemoteManagement />,
                   },
                 ]}
                 style={{ height: '100%' }}

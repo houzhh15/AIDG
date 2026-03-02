@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse, Tooltip, Row, Col, Switch } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
-import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask } from '../api/tasks';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SwapOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, transferProjectTask } from '../api/tasks';
 import { getUsers, User } from '../api/users';
+import { listProjects, ProjectSummary } from '../api/projects';
 import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 import MarkdownViewer from './MarkdownViewer';
+import CopyResourceDialog from './CopyResourceDialog';
 
 const { TextArea } = Input;
 const { Option } = Select;
@@ -39,7 +41,13 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const [form] = Form.useForm();
   const [formDirty, setFormDirty] = useState(false); // 追踪表单是否被修改
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [transferringTask, setTransferringTask] = useState<ProjectTask | null>(null);
+  const [targetProjectId, setTargetProjectId] = useState<string>('');
+  const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
+  const [transferring, setTransferring] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [copyTarget, setCopyTarget] = useState<ProjectTask | null>(null);
   const [assigneeFilter, setAssigneeFilter] = useState<string | undefined>();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [fuzzySearch, setFuzzySearch] = useState<boolean>(false); // 模糊搜索开关，默认关闭
@@ -52,6 +60,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
     if (projectId) {
       loadTasks();
       loadUsers();
+      loadAllProjects();
     }
   }, [projectId, searchQuery, timeRangeFilter, fuzzySearch]);
 
@@ -78,6 +87,15 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       setUsers(result.data || []);
     } catch (error) {
       console.error('Failed to load users:', error);
+    }
+  };
+
+  const loadAllProjects = async () => {
+    try {
+      const projects = await listProjects();
+      setAllProjects(projects);
+    } catch (error) {
+      console.error('Failed to load projects:', error);
     }
   };
 
@@ -143,6 +161,37 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
     } catch (error) {
       console.error('复制失败:', error);
       message.error('复制失败，请手动复制');
+    }
+  };
+
+  const handleOpenTransfer = (task: ProjectTask) => {
+    setTransferringTask(task);
+    setTargetProjectId('');
+    setTransferModalVisible(true);
+  };
+
+  const handleTransferTask = async () => {
+    if (!transferringTask || !targetProjectId) {
+      message.warning('请选择目标项目');
+      return;
+    }
+    try {
+      setTransferring(true);
+      await transferProjectTask(projectId, transferringTask.id, targetProjectId);
+      const targetProject = allProjects.find(p => p.id === targetProjectId);
+      message.success(`任务已转移到项目: ${targetProject?.name || targetProjectId}`);
+      setTransferModalVisible(false);
+      setTransferringTask(null);
+      loadTasks();
+      if (currentTask === transferringTask.id) {
+        onTaskSelect(''); // 清除当前选中的任务
+      }
+      triggerRefresh();
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error || error.message || '任务转移失败';
+      message.error(`任务转移失败: ${errorMsg}`);
+    } finally {
+      setTransferring(false);
     }
   };
 
@@ -351,6 +400,18 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                           danger: true,
                           disabled: !canDelete,
                         },
+                        { type: 'divider' },
+                        {
+                          key: 'transfer',
+                          icon: <SwapOutlined />,
+                          label: '移动到其他项目',
+                        },
+                        { type: 'divider' },
+                        {
+                          key: 'copy-remote',
+                          icon: <CloudUploadOutlined />,
+                          label: '拷贝到远端...',
+                        },
                       ],
                       onClick: ({ key }) => {
                         if (key === 'copy-id') {
@@ -367,6 +428,12 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                             cancelText: '取消',
                             onOk: () => handleDelete(task.id),
                           });
+                        }
+                        if (key === 'transfer') {
+                          handleOpenTransfer(task);
+                        }
+                        if (key === 'copy-remote') {
+                          setCopyTarget(task);
                         }
                       },
                     };
@@ -561,6 +628,69 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
           </Row>
         </Form>
       </Modal>
+
+      {/* 任务转移模态框 */}
+      <Modal
+        title={
+          <span>
+            <SwapOutlined style={{ marginRight: 8 }} />
+            移动任务到其他项目
+          </span>
+        }
+        open={transferModalVisible}
+        onOk={handleTransferTask}
+        onCancel={() => {
+          setTransferModalVisible(false);
+          setTransferringTask(null);
+          setTargetProjectId('');
+        }}
+        confirmLoading={transferring}
+        okText="确认移动"
+        cancelText="取消"
+        okButtonProps={{ disabled: !targetProjectId }}
+      >
+        {transferringTask && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ margin: '0 0 8px' }}>
+                <strong>任务：</strong>{transferringTask.name}
+              </p>
+              <p style={{ margin: '0 0 8px', color: '#666', fontSize: 12 }}>
+                ID: {transferringTask.id}
+              </p>
+              <p style={{ margin: 0, color: '#999', fontSize: 12 }}>
+                移动后，任务的需求文档、设计文档、测试文档、执行计划等所有相关文件将一起转移到目标项目。
+              </p>
+            </div>
+            <div>
+              <p style={{ marginBottom: 8 }}><strong>选择目标项目：</strong></p>
+              <Select
+                style={{ width: '100%' }}
+                placeholder="请选择目标项目"
+                value={targetProjectId || undefined}
+                onChange={(value) => setTargetProjectId(value)}
+                showSearch
+                optionFilterProp="label"
+                options={allProjects
+                  .filter(p => p.id !== projectId)
+                  .map(p => ({
+                    value: p.id,
+                    label: `${p.name}${p.product_line ? ` [${p.product_line}]` : ''}`,
+                  }))}
+              />
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <CopyResourceDialog
+        open={!!copyTarget}
+        onClose={() => setCopyTarget(null)}
+        resourceType="task"
+        resourceId={copyTarget?.id || ''}
+        resourceName={copyTarget?.name || copyTarget?.id || ''}
+        projectId={projectId}
+      />
     </div>
   );
 };

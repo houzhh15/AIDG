@@ -1,7 +1,7 @@
 ---
 name: t1_requirements
 description: 用于生成需求文档的提示词模版，确保需求清晰且可执行。
-version: 1.1
+version: 1.2
 ---
 
 # AI 需求文档生成模版
@@ -44,15 +44,11 @@ version: 1.1
 *   在内存中综合分析所有取证得到的信息。
 *   提炼出关键的业务目标、用户画像、核心场景和已知约束，形成一个用于生成文档的完整上下文。
 
-**第四步：记录最终提示词 (Record Final Prompt)**
-*   将上一步综合的完整上下文与用户的原始指令组合成一个“最终提示词” (Effective Prompt，模板见下)。
-*   调用 `create_project_task_prompt(project_id, task_id, content)` 工具，将这个“最终提示词”持久化记录到当前任务下，确保过程可追溯。
-
-**第五步：生成需求文档 (Generate Requirement Document)**
+**第四步：生成需求文档 (Generate Requirement Document)**
 *   基于上一步记录的“最终提示词”中的完整上下文，在一次性输出中，生成一份结构完整、内容详实的 Markdown 格式需求文档。
 *   文档必须严格遵循下面定义的 **“需求文档结构”**。
 
-**第六步：更新需求文档 (Update Requirement Document)**
+**第五步：更新需求文档 (Update Requirement Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
 *   调用 `update_task_document(project_id, task_id, slot_key=requirements, content)` 工具，将需求文档持久化到系统中。
 
@@ -102,43 +98,5 @@ version: 1.1
 *   **5.1. 假设 (Assumptions):** 列出在需求分析过程中做出的、可能影响设计的关键假设。
 *   **5.2. 约束 (Constraints):** 列出已知的技术、业务或资源上的限制。
 
----
-
-## Effective Prompt 模板
-```
-# System Role
-你是一个在任务 <task_id> 上执行 <一句话目标> 的工程助手。
-
-# Meta
-- project_id:{project_id}
-- task_id:{task_id}
-- username:{username}
-- timestamp:{timestamp_iso}
-- purpose:<补>
-
-# Context
-<补> // 汇总需求/设计/测试/架构精炼事实
-
-# User Message
-<补> // 原始执行目标
-
-# Plan
-1. <补>
-2. <补>
-3. <补>
-4. <补>
-5. <补可选>
-
-# Constraints
-- 不臆测缺失事实；使用 <缺失: ...> 标注
-- 引用必须可追溯到取证工具输出
-- 不泄露敏感信息
-
-# Expected Output
-<补> // 结果形式（Markdown 表 / 要点列表 / 代码片段 等）
-
-# Final Task
-请基于以上上下文，完成上述 Plan 并给出输出。
-```
 ---
 请分析现有代码的实现，在满足任务所有要求的前提下，以最小修改为原则，开始生成当前任务的需求文档。

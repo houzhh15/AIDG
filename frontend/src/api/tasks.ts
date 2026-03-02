@@ -108,6 +108,19 @@ export async function deleteProjectTask(projectId: string, taskId: string): Prom
   return response.data;
 }
 
+// 转移项目任务到另一个项目
+export async function transferProjectTask(
+  sourceProjectId: string,
+  taskId: string,
+  targetProjectId: string
+): Promise<ApiResponse<{ task_id: string; source_project_id: string; target_project_id: string }>> {
+  const response = await authedApi.post<ApiResponse<{ task_id: string; source_project_id: string; target_project_id: string }>>(
+    `${BASE_URL}/${sourceProjectId}/tasks/${taskId}/transfer`,
+    { target_project_id: targetProjectId }
+  );
+  return response.data;
+}
+
 // 获取任务文档
 export async function getTaskDocument(
   projectId: string, 

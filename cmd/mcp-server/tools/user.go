@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/houzhh15/AIDG/cmd/mcp-server/shared"
 )
@@ -130,4 +132,85 @@ func (t *SetUserCurrentTaskTool) Execute(
 	}
 
 	return string(resp), nil
+}
+
+// GetUserProjectsTool 实现获取当前用户项目列表的工具
+// 对应后端 API: GET /api/v1/user/projects
+type GetUserProjectsTool struct{}
+
+// Name 返回工具名称
+func (t *GetUserProjectsTool) Name() string {
+	return "get_user_projects"
+}
+
+// Description 返回工具描述
+func (t *GetUserProjectsTool) Description() string {
+	return "获取当前登录用户的项目列表，包含每个项目的可见性设置。返回所有项目及其 visible 状态。"
+}
+
+// InputSchema 返回输入参数的JSON Schema
+func (t *GetUserProjectsTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"visible_only": map[string]interface{}{
+				"type":        "boolean",
+				"description": "是否只返回可见的项目（默认 false，返回所有项目）",
+			},
+		},
+	}
+}
+
+// Execute 执行工具，获取当前用户的项目列表
+func (t *GetUserProjectsTool) Execute(
+	args map[string]interface{},
+	clientToken string,
+	apiClient *shared.APIClient,
+) (string, error) {
+	// 调用后端 API
+	resp, err := shared.CallAPI(apiClient, "GET", "/api/v1/user/projects", nil, clientToken)
+	if err != nil {
+		return fmt.Sprintf("⚠️  API服务器不可用\n\n后端API服务器 (%s) 当前不可用。\n错误详情: %v\n\n请确保API服务器正在运行。",
+			apiClient.BaseURL, err), nil
+	}
+
+	// 检查是否需要只返回可见项目
+	visibleOnly, _ := shared.SafeGetBool(args, "visible_only")
+	if visibleOnly {
+		var result struct {
+			Success bool `json:"success"`
+			Data    []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				ProductLine string `json:"product_line"`
+				Visible     bool   `json:"visible"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(resp), &result); err == nil {
+			var visibleProjects []map[string]interface{}
+			for _, p := range result.Data {
+				if p.Visible {
+					visibleProjects = append(visibleProjects, map[string]interface{}{
+						"id":           p.ID,
+						"name":         p.Name,
+						"product_line": p.ProductLine,
+						"visible":      true,
+					})
+				}
+			}
+			// 构建简化的输出
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("可见项目列表 (%d 个):\n\n", len(visibleProjects)))
+			for i, p := range visibleProjects {
+				sb.WriteString(fmt.Sprintf("%d. %s (ID: %s)", i+1, p["name"], p["id"]))
+				if pl, ok := p["product_line"].(string); ok && pl != "" {
+					sb.WriteString(fmt.Sprintf(" [%s]", pl))
+				}
+				sb.WriteString("\n")
+			}
+			return sb.String(), nil
+		}
+	}
+
+	return resp, nil
 }

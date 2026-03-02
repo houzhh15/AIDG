@@ -23,9 +23,8 @@ version: 1.1
   - 可选：项目特性 → get_project_document slot_key=feature_list format=markdown
   - slot_key 白名单：task=requirements|design|test；project=feature_list|architecture_design；禁止自造。
    - 缺失用 <缺失: X> 标注。
-3. 组装 Effective Prompt（含：原始请求 + 摘要 + 计划）→ create_project_task_prompt；失败重试一次，再失败 PROMPT_RECORD_FAIL。
-4. 后执行，生成markdown格式的“任务分解清单”,包含完整的执行步骤,格式要求见下。每个步骤用非结构化语言进行详细描述（不带有markdown格式与特殊符号，防止格式解析错误，信息丢失），述必须清晰、具体、可执行，禁止模糊和抽象。
-5. update_execution_plan(project_id, task_id, content=任务分解清单)。如果提交失败，请对照markdown格式要求重新生成。
+3. 后执行，生成markdown格式的“任务分解清单”,包含完整的执行步骤,格式要求见下。每个步骤用非结构化语言进行详细描述（不带有markdown格式与特殊符号，防止格式解析错误，信息丢失），述必须清晰、具体、可执行，禁止模糊和抽象。
+4. update_execution_plan(project_id, task_id, content=任务分解清单)。如果提交失败，请对照markdown格式要求重新生成。
 
 
 ---

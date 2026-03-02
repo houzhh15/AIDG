@@ -32,6 +32,7 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/docslot"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/remotes"
 	syncdomain "github.com/houzhh15/AIDG/cmd/server/internal/domain/sync"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/taskdocs"
 	executionplan "github.com/houzhh15/AIDG/cmd/server/internal/executionplan"
@@ -505,8 +506,9 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"POST /api/v1/projects/:id/copy-from-task": {users.ScopeProjectDocWrite},
 		"GET /api/v1/projects/:id/tasks":           {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/next-incomplete": {users.ScopeTaskRead},
-		"GET /api/v1/projects/:id/tasks/:task_id": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id":        {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id": {users.ScopeTaskWrite},
 		"DELETE /api/v1/projects/:id/tasks/:task_id":           {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/transfer":    {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskWrite},
@@ -557,6 +559,8 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"DELETE /api/v1/projects/:id/prompts/:prompt_id": {users.ScopeMeetingWrite},
 		"GET /api/v1/user/current-task":                  {users.ScopeTaskRead},
 		"PUT /api/v1/user/current-task":                  {users.ScopeTaskWrite},
+		"GET /api/v1/user/projects":                      {users.ScopeMeetingRead},
+		"PUT /api/v1/user/projects":                      {users.ScopeMeetingRead},
 		"POST /api/v1/user/resources/refresh":            {users.ScopeMeetingRead}, // Manual refresh MCP resources, only requires basic access
 		"GET /api/v1/tasks":                              {users.ScopeMeetingRead}, "POST /api/v1/tasks": {users.ScopeMeetingWrite},
 		"GET /api/v1/tasks/:id": {users.ScopeMeetingRead}, "DELETE /api/v1/tasks/:id": {users.ScopeMeetingWrite},
@@ -601,6 +605,16 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reject":                          {users.ScopeTaskWrite},
 		"GET /api/v1/sync/prepare":                                                                {users.ScopeUserManage}, "POST /api/v1/sync": {users.ScopeUserManage},
 		"POST /api/v1/admin/reload": {users.ScopeUserManage},
+		// 远端管理API
+		"GET /api/v1/remotes":           {users.ScopeUserManage},
+		"POST /api/v1/remotes":          {users.ScopeUserManage},
+		"PUT /api/v1/remotes/:id":       {users.ScopeUserManage},
+		"DELETE /api/v1/remotes/:id":    {users.ScopeUserManage},
+		"POST /api/v1/remotes/:id/test": {users.ScopeUserManage},
+		"POST /api/v1/remotes/test-url": {users.ScopeUserManage},
+		// 资源拷贝API
+		"POST /api/v1/copy/push":     {users.ScopeUserManage},
+		"GET /api/v1/copy/resources": {users.ScopeUserManage},
 		// 文档管理API - 使用 project.doc.* 权限
 		"POST /api/v1/projects/:id/documents/nodes": {users.ScopeProjectDocWrite}, "GET /api/v1/projects/:id/documents/tree": {users.ScopeProjectDocRead},
 		"PUT /api/v1/projects/:id/documents/nodes/:node_id/move": {users.ScopeProjectDocWrite}, "PATCH /api/v1/projects/:id/documents/nodes/:node_id": {users.ScopeProjectDocWrite},
@@ -971,13 +985,48 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 
 	// Admin reload
 	r.POST("/api/v1/admin/reload", func(c *gin.Context) {
-		// Clear and reload registries
+		// Reload meetings registry (merge into existing to preserve orchestrator references)
 		newMeetingsReg := meetings.NewRegistry()
-		meetings.LoadTasks(newMeetingsReg)
+		if err := meetings.LoadTasks(newMeetingsReg); err == nil {
+			for _, t := range newMeetingsReg.List() {
+				if existing := meetingsReg.Get(t.ID); existing == nil {
+					meetingsReg.Set(t)
+				}
+			}
+		}
+		// Reload projects registry
 		newProjectsReg := projects.NewProjectRegistry()
-		projects.LoadProjects(newProjectsReg)
-		c.JSON(http.StatusOK, gin.H{"reloaded": true, "tasks": len(newMeetingsReg.List()), "projects": len(newProjectsReg.List())})
+		if err := projects.LoadProjects(newProjectsReg); err == nil {
+			for _, p := range newProjectsReg.List() {
+				projectsReg.Set(p)
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{"reloaded": true, "tasks": len(meetingsReg.List()), "projects": len(projectsReg.List())})
 	})
+
+	// ========== Sync Routes ==========
+	syncCfg := api.NewSyncConfig()
+	r.GET("/api/v1/sync/prepare", api.HandleSyncPrepare)
+	r.POST("/api/v1/sync", api.HandleSync)
+	r.POST("/api/v1/sync/dispatch", api.HandleSyncDispatch(syncCfg))
+	r.POST("/api/v1/sync/receive", api.HandleSyncReceive(syncCfg))
+
+	// ========== Remote Management ==========
+	remoteSvc := remotes.NewService()
+	remoteHandler := api.NewRemoteHandler(remoteSvc)
+	r.GET("/api/v1/remotes", remoteHandler.HandleListRemotes)
+	r.POST("/api/v1/remotes", remoteHandler.HandleCreateRemote)
+	r.GET("/api/v1/remotes/:id", remoteHandler.HandleGetRemote)
+	r.PUT("/api/v1/remotes/:id", remoteHandler.HandleUpdateRemote)
+	r.DELETE("/api/v1/remotes/:id", remoteHandler.HandleDeleteRemote)
+	r.POST("/api/v1/remotes/:id/test", remoteHandler.HandleTestRemote)
+	r.POST("/api/v1/remotes/test-url", remoteHandler.HandleTestRemoteURL)
+
+	// ========== Resource Copy ==========
+	copyHandler := api.NewCopyHandler(remoteSvc, meetingsReg, projectsReg)
+	r.POST("/api/v1/copy/push", copyHandler.HandleCopyPush)
+	r.POST("/api/v1/copy/receive", copyHandler.HandleCopyReceive)
+	r.GET("/api/v1/copy/resources", copyHandler.HandleCopyResources)
 
 	// ========== User Management ==========
 	// Me endpoint - Generate new token for current user
@@ -1007,6 +1056,10 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	// ========== User Task Management ==========
 	r.GET("/api/v1/user/current-task", api.HandleGetUserCurrentTask)
 	r.PUT("/api/v1/user/current-task", api.HandlePutUserCurrentTask(userRoleService, resourceManager, docHandler))
+
+	// ========== User Project Visibility ==========
+	r.GET("/api/v1/user/projects", api.HandleGetUserProjects(projectsReg))
+	r.PUT("/api/v1/user/projects", api.HandleUpdateUserProjects(projectsReg))
 
 	// ========== Resource Management API ==========
 	resourceHandler := api.NewResourceHandler(resourceManager)
@@ -1170,6 +1223,9 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.GET("/api/v1/projects/:id/tasks/:task_id", api.HandleGetProjectTask(projectsReg))
 	r.PUT("/api/v1/projects/:id/tasks/:task_id", api.HandleUpdateProjectTask(projectsReg))
 	r.DELETE("/api/v1/projects/:id/tasks/:task_id", api.HandleDeleteProjectTask(projectsReg))
+
+	// Task transfer
+	r.POST("/api/v1/projects/:id/tasks/:task_id/transfer", api.HandleTransferProjectTask(projectsReg))
 
 	// Task prompts
 	r.GET("/api/v1/projects/:id/tasks/:task_id/prompts", api.HandleGetProjectTaskPrompts(projectsReg))

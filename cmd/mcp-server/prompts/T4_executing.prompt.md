@@ -19,15 +19,14 @@ version: 1.1
    - slot_key 白名单：task文档仅 requirements / design；project文档仅 feature_list / architecture_design；禁止臆造，缺失用 <缺失: ...> 标注。
    - 缺失用 <缺失: X> 标注。
 3. 解析 "现有执行计划" 识别所有步骤及其状态, 生成本次执行Plan;
-4. 组装 Effective Prompt（含：原始请求 + 摘要 + 计划）→ create_project_task_prompt；失败重试一次，再失败 PROMPT_RECORD_FAIL。
-5. 执行Plan，包含以下几个步骤：
+4. 执行Plan，包含以下几个步骤：
    1. 按照计划顺序，逐步执行每个未完成的步骤：
       - get_next_executable_step(project_id, task_id)：获取下一个可执行步骤 ID。
       - 读取步骤详情（描述、优先级等）。
       - 必要时，最小化读取相关文件（如设计文档、代码文件等）。
       - 生成精确的代码实现提示词，驱动自动化编码。
    2. 每完成一个步骤，执行 update_plan_step_status 更新状态，有效的状态值为：pending（待开始）、in-progress（进行中）、succeeded（成功完成）、failed（失败）、cancelled（已取消）。如果结果输出超过150字，请概括。
-6. 汇总：输出 表格(plan 执行状态) 。
+5. 汇总：输出 表格(plan 执行状态) 。
 
 Go 规范简表：
 - 错误透明返回，不吞；外部错误 wrap: fmt.Errorf("ctx: %w", err)

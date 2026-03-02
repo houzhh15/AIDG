@@ -50,15 +50,11 @@ version: 1.1
 *   在内存中综合分析所有取证得到的信息。
 *   提炼出关键的功能性需求、非功能性需求、技术约束和设计边界，形成一个用于生成文档的完整上下文。
 
-**第四步：记录最终提示词 (Record Final Prompt)**
-*   将上一步综合的完整上下文与用户的原始指令组合成一个“最终提示词” (Effective Prompt，模版见下)。
-*   调用 `create_project_task_prompt(project_id, task_id, content)` 工具，将这个“最终提示词”持久化记录到当前任务下，确保过程可追溯。
-
-**第五步：生成详细设计文档 (Generate Detailed Design Document)**
+**第四步：生成详细设计文档 (Generate Detailed Design Document)**
 *   基于上一步记录的“最终提示词”中的完整上下文，在一次性输出中，生成一份结构完整、内容详实的 Markdown 格式设计文档。
 *   文档必须严格遵循下面定义的 **“详细设计文档结构”**。
 
-**第六步：更新设计文档 (Update Design Document)**
+**第五步：更新设计文档 (Update Design Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
 *   调用 `update_task_document(project_id, task_id, slot_key=design, content)` 工具，将设计方案持久化到系统中。如果文档过长不要一次提交，参考章节编辑标准流程，直至全部完成。
 
@@ -120,43 +116,7 @@ version: 1.1
 *   **5.2. 待决策项:** 记录需要进一步讨论或确认的设计点。
 
 ---
-## Effective Prompt 模板
-```
-# System Role
-你是一个在任务 <task_id> 上执行 <一句话目标> 的工程助手。
 
-# Meta
-- project_id:{project_id}
-- task_id:{task_id}
-- username:{username}
-- timestamp:{timestamp_iso}
-- purpose:<补>
-
-# Context
-<补> // 汇总需求/设计/测试/架构精炼事实
-
-# User Message
-<补> // 原始执行目标
-
-# Plan
-1. <补>
-2. <补>
-3. <补>
-4. <补>
-5. <补可选>
-
-# Constraints
-- 不臆测缺失事实；使用 <缺失: ...> 标注
-- 引用必须可追溯到取证工具输出
-- 不泄露敏感信息
-
-# Expected Output
-<补> // 结果形式（Markdown 表 / 要点列表 / 代码片段 等）
-
-# Final Task
-请基于以上上下文，完成上述 Plan 并给出输出。
-```
----
 请开始生成当前任务的详细设计文档，要求：
 - 请仔细分析当前项目路径的源代码，以复用代码优先，最小修改为基本原则，生成设计。
 - 重点包括：架构图、核心流程、组件详述、接口定义 (API)、数据模型，但不要在设计文档中生成大段代码，过度代码细节会干扰对架构和逻辑的审查。

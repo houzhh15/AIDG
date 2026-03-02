@@ -61,3 +61,33 @@ export async function changePassword(data: ChangePasswordRequest): Promise<strin
   const response = await api.post<ChangePasswordResponse>('/user/change-password', data);
   return response.data.message;
 }
+
+/**
+ * 用户项目可见性
+ */
+export interface UserProjectItem {
+  id: string;
+  name: string;
+  product_line?: string;
+  visible: boolean;
+}
+
+export interface UserProjectsResponse {
+  success: boolean;
+  data: UserProjectItem[];
+}
+
+/**
+ * 获取当前用户的项目列表（包含可见性信息）
+ */
+export async function getUserProjects(): Promise<UserProjectItem[]> {
+  const response = await api.get<UserProjectsResponse>('/user/projects');
+  return response.data.data;
+}
+
+/**
+ * 更新用户的项目可见性设置
+ */
+export async function updateUserProjects(hiddenProjectIds: string[]): Promise<void> {
+  await api.put('/user/projects', { hidden_project_ids: hiddenProjectIds });
+}

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Layout, List, Button, Typography, Space, Modal, Form, Input, Popconfirm, message, Tag, Tooltip, Dropdown, type MenuProps } from 'antd';
-import { PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, HistoryOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, EditOutlined, CopyOutlined, HistoryOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ExclamationCircleOutlined, CloudUploadOutlined } from '@ant-design/icons';
 import { ProjectSummary, listProjects, createProject, deleteProject, patchProject } from '../api/projects';
+import CopyResourceDialog from './CopyResourceDialog';
 
 interface Props {
   current?: string;
@@ -16,6 +17,7 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect, scopes = []
   const [editing, setEditing] = useState<ProjectSummary | null>(null);
   const [form] = Form.useForm<{ name: string; product_line?: string; from_task_id?: string }>();
   const [collapsed, setCollapsed] = useState(true);
+  const [copyTarget, setCopyTarget] = useState<ProjectSummary | null>(null);
 
   async function refresh(){
     setLoading(true);
@@ -123,6 +125,15 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect, scopes = []
       danger: true,
       disabled: !canDelete,
       onClick: () => confirmDelete(project),
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'copy-remote',
+      icon: <CloudUploadOutlined />,
+      label: '拷贝到远端...',
+      onClick: () => setCopyTarget(project),
     },
     {
       type: 'divider',
@@ -316,6 +327,13 @@ export const ProjectSidebar: React.FC<Props> = ({ current, onSelect, scopes = []
           )}
         </Form>
       </Modal>
+      <CopyResourceDialog
+        open={!!copyTarget}
+        onClose={() => setCopyTarget(null)}
+        resourceType="project"
+        resourceId={copyTarget?.id || ''}
+        resourceName={copyTarget?.name || copyTarget?.id || ''}
+      />
     </Layout.Sider>
   );
 };

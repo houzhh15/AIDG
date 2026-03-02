@@ -317,6 +317,10 @@ func HandleListProjects(reg *projects.ProjectRegistry) gin.HandlerFunc {
 		for _, p := range list {
 			// 检查用户是否有该项目的权限
 			if hasProjectPermissionWithScopes(username.(string), p.ID, userScopes) {
+				// 检查项目对用户是否可见（用户可在个人中心设置）
+				if !IsProjectVisibleToUser(username.(string), p.ID) {
+					continue
+				}
 				out = append(out, gin.H{
 					"id":           p.ID,
 					"name":         p.Name,

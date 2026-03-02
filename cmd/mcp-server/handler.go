@@ -20,9 +20,10 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry := NewToolRegistry()
 	slotRegistry := shared.NewSlotRegistry()
 
-	// 用户工具 (2个)
+	// 用户工具 (3个)
 	registry.Register(&tools.GetUserCurrentTaskTool{})
 	registry.Register(&tools.SetUserCurrentTaskTool{})
+	registry.Register(&tools.GetUserProjectsTool{})
 
 	// 执行计划工具 (4个)
 	registry.Register(&tools.GetExecutionPlanTool{})

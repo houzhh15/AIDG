@@ -3,13 +3,14 @@
  * 
  * 功能:
  * - 基本信息展示
+ * - 项目列表管理（可见性设置）
  * - 项目角色列表
  * - 默认权限展示 (任务负责人/会议创建者)
  * - 修改密码
  * - MCP Resources 资源管理
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card,
   Descriptions,
@@ -25,6 +26,8 @@ import {
   Typography,
   Alert,
   Tabs,
+  Checkbox,
+  List,
 } from 'antd';
 import {
   UserOutlined,
@@ -34,8 +37,9 @@ import {
   CheckCircleOutlined,
   DatabaseOutlined,
   FileTextOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
-import { getUserProfile, changePassword, type UserProfileData } from '../api/permissions';
+import { getUserProfile, changePassword, getUserProjects, updateUserProjects, type UserProfileData, type UserProjectItem } from '../api/permissions';
 import { getScopeLabel } from '../constants/permissions';
 import ResourcesManagement from './ResourcesManagement';
 import PromptsManagement from './PromptsManagement';
@@ -53,10 +57,14 @@ export const UserProfile: React.FC = () => {
   const [passwordForm] = Form.useForm();
   const [changingPassword, setChangingPassword] = useState(false);
   const [promptsScope, setPromptsScope] = useState<'global' | 'personal'>('personal');
+  const [userProjects, setUserProjects] = useState<UserProjectItem[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [savingProjects, setSavingProjects] = useState(false);
 
   // 加载用户档案
   useEffect(() => {
     loadProfile();
+    loadUserProjects();
   }, []);
 
   const loadProfile = async () => {
@@ -70,6 +78,59 @@ export const UserProfile: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // 加载用户项目列表
+  const loadUserProjects = async () => {
+    try {
+      setProjectsLoading(true);
+      const data = await getUserProjects();
+      setUserProjects(data);
+    } catch (error: any) {
+      message.error('加载项目列表失败: ' + error.message);
+    } finally {
+      setProjectsLoading(false);
+    }
+  };
+
+  // 切换项目可见性
+  const handleToggleProjectVisibility = useCallback(async (projectId: string, visible: boolean) => {
+    // 先乐观更新 UI
+    setUserProjects(prev => prev.map(p => p.id === projectId ? { ...p, visible } : p));
+
+    try {
+      setSavingProjects(true);
+      // 计算新的隐藏项目列表
+      const updatedProjects = userProjects.map(p => p.id === projectId ? { ...p, visible } : p);
+      const hiddenIds = updatedProjects.filter(p => !p.visible).map(p => p.id);
+      await updateUserProjects(hiddenIds);
+      // 更新本地状态
+      setUserProjects(updatedProjects);
+    } catch (error: any) {
+      // 回滚
+      setUserProjects(prev => prev.map(p => p.id === projectId ? { ...p, visible: !visible } : p));
+      message.error('更新项目可见性失败: ' + error.message);
+    } finally {
+      setSavingProjects(false);
+    }
+  }, [userProjects]);
+
+  // 全选/取消全选
+  const handleSelectAll = useCallback(async (selectAll: boolean) => {
+    const updatedProjects = userProjects.map(p => ({ ...p, visible: selectAll }));
+    setUserProjects(updatedProjects);
+
+    try {
+      setSavingProjects(true);
+      const hiddenIds = selectAll ? [] : updatedProjects.map(p => p.id);
+      await updateUserProjects(hiddenIds);
+    } catch (error: any) {
+      // 回滚
+      loadUserProjects();
+      message.error('更新项目可见性失败: ' + error.message);
+    } finally {
+      setSavingProjects(false);
+    }
+  }, [userProjects]);
 
   // 修改密码
   const handleChangePassword = async () => {
@@ -357,6 +418,96 @@ export const UserProfile: React.FC = () => {
               ]}
             />
           </div>
+        </Card>
+      ),
+    },
+    {
+      key: 'projects',
+      label: (
+        <span>
+          <AppstoreOutlined />
+          项目列表
+        </span>
+      ),
+      children: (
+        <Card
+          title={
+            <Space>
+              <AppstoreOutlined />
+              <span>项目可见性管理</span>
+            </Space>
+          }
+          extra={
+            <Space>
+              <Button
+                size="small"
+                onClick={() => handleSelectAll(true)}
+                disabled={savingProjects || userProjects.every(p => p.visible)}
+              >
+                全选
+              </Button>
+              <Button
+                size="small"
+                onClick={() => handleSelectAll(false)}
+                disabled={savingProjects || userProjects.every(p => !p.visible)}
+              >
+                取消全选
+              </Button>
+            </Space>
+          }
+        >
+          <Alert
+            message="项目可见性设置"
+            description="取消勾选的项目将不会显示在项目视图的左侧边栏中。此设置仅影响当前用户的视图，不会影响其他用户。"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          {projectsLoading ? (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+              <Spin tip="加载项目列表..." />
+            </div>
+          ) : userProjects.length === 0 ? (
+            <Alert message="暂无项目" type="info" showIcon />
+          ) : (
+            <List
+              dataSource={userProjects}
+              renderItem={(project) => (
+                <List.Item
+                  style={{
+                    padding: '8px 16px',
+                    background: project.visible ? undefined : '#fafafa',
+                    opacity: project.visible ? 1 : 0.6,
+                  }}
+                >
+                  <Checkbox
+                    checked={project.visible}
+                    disabled={savingProjects}
+                    onChange={(e) => handleToggleProjectVisibility(project.id, e.target.checked)}
+                    style={{ marginRight: 12 }}
+                  />
+                  <List.Item.Meta
+                    title={
+                      <Space>
+                        <span>{project.name || project.id}</span>
+                        {project.product_line && (
+                          <Tag color="blue">{project.product_line}</Tag>
+                        )}
+                      </Space>
+                    }
+                    description={
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        ID: {project.id}
+                      </Typography.Text>
+                    }
+                  />
+                  <Tag color={project.visible ? 'green' : 'default'}>
+                    {project.visible ? '可见' : '已隐藏'}
+                  </Tag>
+                </List.Item>
+              )}
+            />
+          )}
         </Card>
       ),
     },
