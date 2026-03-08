@@ -169,6 +169,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Lite mode: lightweight server for project/task only
+	if cfg.LiteMode {
+		runLiteMode(cfg, appLogger)
+		return
+	}
+
 	// Validate configuration
 	if err := config.ValidateConfig(cfg); err != nil {
 		appLogger.Error("invalid configuration", "error", err)
@@ -1591,6 +1597,387 @@ type HealthCheckResponse struct {
 	Uptime    string    `json:"uptime"`
 	Timestamp time.Time `json:"timestamp"`
 	Env       string    `json:"env"`
+}
+
+// ========== Lite Mode ==========
+
+const liteDefaultUser = "local"
+
+// runLiteMode 启动轻量模式服务器
+// 仅包含项目和任务子系统，无用户认证、无权限校验、仅本地访问
+func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
+	appLogger.Info("🚀 starting in LITE mode", "port", cfg.Server.Port)
+
+	if cfg.Server.Env == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	// Initialize data directories
+	projectsRoot := cfg.Data.ProjectsDir
+	if projectsRoot == "" {
+		projectsRoot = "./data/projects"
+	}
+
+	// Ensure default user directory exists
+	usersDir := cfg.Data.UsersDir
+	if usersDir == "" {
+		usersDir = "./data/users"
+	}
+	os.MkdirAll(filepath.Join(usersDir, liteDefaultUser), 0o755)
+
+	// Initialize domain registries
+	projects.InitPaths()
+	projectsReg := projects.NewProjectRegistry()
+	if err := projects.LoadProjects(projectsReg); err != nil {
+		appLogger.Warn("failed to load projects", "error", err)
+	}
+	appLogger.Info("loaded projects", "count", len(projectsReg.List()))
+
+	// Initialize task document service
+	taskDocSvc := taskdocs.NewDocService()
+	sectionService := taskdocs.NewSectionService(projectsRoot)
+	appLogger.Info("task document service ready")
+
+	// Initialize execution plan handler
+	execPlanHandler := executionplan.NewHandler(projectsRoot)
+	appLogger.Info("execution plan handler ready")
+
+	// Initialize task summary service
+	taskSummaryService := services.NewTaskSummaryService(projectsRoot)
+	appLogger.Info("task summary service ready")
+
+	// Initialize statistics service (needed for project overview/task stats)
+	statisticsService := services.NewStatisticsService(projectsRoot)
+	appLogger.Info("statistics service ready")
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(middleware.RequestLogger())
+
+	// Lite mode: inject default user, skip JWT auth
+	r.Use(func(c *gin.Context) {
+		c.Set("user", liteDefaultUser)
+		// Grant all scopes in lite mode
+		c.Set("scopes", []string{
+			"meeting.read", "meeting.write",
+			"project.doc.read", "project.doc.write",
+			"project.admin", "project.delete",
+			"task.read", "task.write",
+			"user.manage",
+		})
+		c.Next()
+	})
+
+	// ========== Health check ==========
+	startTime := time.Now()
+	r.GET("/health", healthCheckHandler(cfg, startTime))
+	r.GET("/api/v1/health", healthCheckHandler(cfg, startTime))
+
+	// ========== Frontend config endpoint ==========
+	r.GET("/api/v1/app/config", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"lite_mode": true,
+			"version":   "1.0.0",
+		})
+	})
+
+	// ========== Login (lite: always succeed) ==========
+	r.POST("/api/v1/login", func(c *gin.Context) {
+		userSecret := []byte(cfg.Security.JWTSecret)
+		userManager, err := users.NewManager(usersDir, userSecret)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return
+		}
+		// Ensure the default user exists
+		_ = userManager.EnsureDefaultAdmin(cfg.Security.AdminDefaultPassword)
+		token, _ := userManager.GenerateToken(liteDefaultUser)
+		c.JSON(http.StatusOK, gin.H{
+			"token":    token,
+			"username": liteDefaultUser,
+			"scopes":   []string{"meeting.read", "meeting.write", "project.doc.read", "project.doc.write", "project.admin", "project.delete", "task.read", "task.write", "user.manage"},
+		})
+	})
+
+	// ========== User current task ==========
+	r.GET("/api/v1/user/current-task", api.HandleGetUserCurrentTask)
+	r.PUT("/api/v1/user/current-task", liteHandlePutUserCurrentTask())
+
+	// ========== User projects ==========
+	r.GET("/api/v1/user/projects", api.HandleGetUserProjects(projectsReg))
+	r.PUT("/api/v1/user/projects", api.HandleUpdateUserProjects(projectsReg))
+
+	// ========== Projects CRUD ==========
+	r.GET("/api/v1/projects", api.HandleListProjects(projectsReg))
+	r.POST("/api/v1/projects", api.HandleCreateProject(projectsReg))
+	r.GET("/api/v1/projects/:id", api.HandleGetProject(projectsReg))
+	r.PATCH("/api/v1/projects/:id", api.HandlePatchProject(projectsReg))
+	r.DELETE("/api/v1/projects/:id", api.HandleDeleteProject(projectsReg))
+
+	// ========== Project documents ==========
+	r.GET("/api/v1/projects/:id/feature-list", api.HandleGetFeatureList(projectsReg))
+	r.PUT("/api/v1/projects/:id/feature-list", api.HandlePutProjectFeatureList(projectsReg))
+	r.GET("/api/v1/projects/:id/feature-list.json", api.HandleGetFeatureListJSON(projectsReg))
+	r.PUT("/api/v1/projects/:id/feature-list.json", api.HandlePutFeatureListJSON(projectsReg))
+	r.GET("/api/v1/projects/:id/architecture-design", api.HandleGetArchitectureDesign(projectsReg))
+	r.PUT("/api/v1/projects/:id/architecture-design", api.HandlePutProjectArchitectureDesign(projectsReg))
+
+	// ========== Tasks CRUD ==========
+	r.GET("/api/v1/projects/:id/tasks", api.HandleListProjectTasks(projectsReg))
+	r.GET("/api/v1/projects/:id/tasks/next-incomplete", api.HandleGetNextIncompleteTask(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks", api.HandleCreateProjectTask(projectsReg))
+	r.GET("/api/v1/projects/:id/tasks/:task_id", api.HandleGetProjectTask(projectsReg))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id", api.HandleUpdateProjectTask(projectsReg))
+	r.DELETE("/api/v1/projects/:id/tasks/:task_id", api.HandleDeleteProjectTask(projectsReg))
+
+	// ========== Task documents (GET/PUT compat) ==========
+	liteTaskDocHandler := func(docType string) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			projectID := c.Param("id")
+			taskID := c.Param("task_id")
+
+			if projectsReg.Get(projectID) == nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+				return
+			}
+			dir := filepath.Join(projectsRoot, projectID)
+			taskDir := filepath.Join(dir, "tasks", taskID)
+			legacyFile := filepath.Join(taskDir, fmt.Sprintf("%s.md", docType))
+
+			migrateIfNeeded := func() error {
+				meta, mErr := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
+				if mErr != nil {
+					return mErr
+				}
+				if meta.Version > 0 {
+					return nil
+				}
+				data, readErr := os.ReadFile(legacyFile)
+				if readErr != nil {
+					return nil
+				}
+				content := strings.TrimSpace(string(data))
+				if content == "" {
+					return nil
+				}
+				_, _, _, aErr := taskDocSvc.Append(projectID, taskID, docType, content, "migration", nil, "replace_full", "migration")
+				return aErr
+			}
+
+			if c.Request.Method == http.MethodGet {
+				_ = migrateIfNeeded()
+				compiledPath, _ := taskdocs.DocCompiledPath(projectID, taskID, docType)
+				b, _ := os.ReadFile(compiledPath)
+				if len(b) == 0 {
+					if lb, err2 := os.ReadFile(legacyFile); err2 == nil {
+						b = lb
+					}
+				}
+				meta, _ := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
+				exists := len(b) > 0
+				c.JSON(http.StatusOK, gin.H{
+					"exists":  exists,
+					"content": string(b),
+					"version": meta.Version,
+					"etag":    meta.ETag,
+				})
+				return
+			}
+
+			if c.Request.Method == http.MethodPut {
+				var body struct {
+					Content         string `json:"content"`
+					ExpectedVersion *int   `json:"expected_version"`
+				}
+				if err := c.ShouldBindJSON(&body); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+					return
+				}
+				_ = os.MkdirAll(taskDir, 0755)
+				meta, _, duplicate, aErr := taskDocSvc.Append(projectID, taskID, docType, body.Content, "put_api", body.ExpectedVersion, "replace_full", "put")
+				if aErr != nil {
+					if aErr.Error() == "version_mismatch" {
+						c.JSON(http.StatusConflict, gin.H{"error": "version_mismatch"})
+						return
+					}
+					c.JSON(http.StatusInternalServerError, gin.H{"error": aErr.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"success": true, "version": meta.Version, "duplicate": duplicate, "etag": meta.ETag})
+				return
+			}
+
+			c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
+		}
+	}
+
+	r.GET("/api/v1/projects/:id/tasks/:task_id/requirements", liteTaskDocHandler("requirements"))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/requirements", liteTaskDocHandler("requirements"))
+	r.GET("/api/v1/projects/:id/tasks/:task_id/design", liteTaskDocHandler("design"))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/design", liteTaskDocHandler("design"))
+	r.GET("/api/v1/projects/:id/tasks/:task_id/test", liteTaskDocHandler("test"))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/test", liteTaskDocHandler("test"))
+
+	// ========== Task document append ==========
+	r.POST("/api/v1/projects/:id/tasks/:task_id/requirements/append", api.HandleAppendTaskDoc(taskDocSvc, "requirements"))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/design/append", api.HandleAppendTaskDoc(taskDocSvc, "design"))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/test/append", api.HandleAppendTaskDoc(taskDocSvc, "test"))
+
+	// ========== Task document sections ==========
+	requirementsGroup := r.Group("/api/v1/projects/:id/tasks/:task_id/requirements")
+	api.RegisterSectionRoutes(requirementsGroup, sectionService)
+	designGroup := r.Group("/api/v1/projects/:id/tasks/:task_id/design")
+	api.RegisterSectionRoutes(designGroup, sectionService)
+	testGroup := r.Group("/api/v1/projects/:id/tasks/:task_id/test")
+	api.RegisterSectionRoutes(testGroup, sectionService)
+
+	// ========== Execution Plan ==========
+	execPlanHandler.RegisterRoutes(r)
+
+	// ========== Task Summary ==========
+	r.GET("/api/v1/projects/:id/tasks/:task_id/summaries", api.HandleGetTaskSummaries(projectsReg, taskSummaryService))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/summaries", api.HandleAddTaskSummary(projectsReg, taskSummaryService))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/summaries/:summary_id", api.HandleUpdateTaskSummary(projectsReg, taskSummaryService))
+	r.DELETE("/api/v1/projects/:id/tasks/:task_id/summaries/:summary_id", api.HandleDeleteTaskSummary(projectsReg, taskSummaryService))
+	r.GET("/api/v1/projects/:id/summaries/by-week", api.HandleGetSummariesByWeek(projectsReg, taskSummaryService))
+
+	// ========== Task statistics (for task completion status) ==========
+	r.GET("/api/v1/projects/:id/tasks/statistics", api.HandleGetTaskStatistics(projectsReg, statisticsService))
+
+	// ========== Frontend Static Files ==========
+	frontendDistDir := cfg.Frontend.DistDir
+	if frontendDistDir == "" {
+		frontendDistDir = "./frontend/dist"
+	}
+
+	staticGroup := r.Group("/")
+	staticGroup.Use(staticCacheMiddleware())
+	{
+		staticGroup.Static("/assets", filepath.Join(frontendDistDir, "assets"))
+		staticGroup.StaticFile("/index.html", filepath.Join(frontendDistDir, "index.html"))
+		staticGroup.GET("/config.js", func(c *gin.Context) {
+			c.Header("Content-Type", "application/javascript; charset=utf-8")
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+			c.File(filepath.Join(frontendDistDir, "config.js"))
+		})
+	}
+
+	r.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/internal/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "endpoint not found"})
+			return
+		}
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.File(filepath.Join(frontendDistDir, "index.html"))
+	})
+
+	// ========== Start server (127.0.0.1 only) ==========
+	serverAddr := fmt.Sprintf("127.0.0.1:%s", cfg.Server.Port)
+	srv := &http.Server{
+		Addr:    serverAddr,
+		Handler: r,
+	}
+
+	go func() {
+		appLogger.Info("lite server starting", "addr", serverAddr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Error("lite server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	<-quit
+	appLogger.Info("shutdown signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		appLogger.Error("lite server forced to shutdown", "error", err)
+		os.Exit(1)
+	}
+	appLogger.Info("lite server shutdown complete")
+}
+
+// liteHandlePutUserCurrentTask returns a handler for PUT /api/v1/user/current-task in lite mode.
+// It skips permission checks since lite mode grants all access.
+func liteHandlePutUserCurrentTask() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username := c.GetString("user")
+		if username == "" {
+			username = liteDefaultUser
+		}
+
+		var request struct {
+			ProjectID string `json:"project_id"`
+			TaskID    string `json:"task_id"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if request.ProjectID == "" || request.TaskID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "project_id and task_id are required"})
+			return
+		}
+
+		// Verify project exists
+		projDir := filepath.Join(projects.ProjectsRoot, request.ProjectID)
+		if _, err := os.Stat(projDir); os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
+			return
+		}
+
+		// Verify task exists
+		tasksFile := filepath.Join(projects.ProjectsRoot, request.ProjectID, "tasks.json")
+		data, err := os.ReadFile(tasksFile)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "tasks not found"})
+			return
+		}
+
+		var tasks []map[string]interface{}
+		if err := json.Unmarshal(data, &tasks); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse tasks"})
+			return
+		}
+
+		taskExists := false
+		for _, task := range tasks {
+			if id, ok := task["id"].(string); ok && id == request.TaskID {
+				taskExists = true
+				break
+			}
+		}
+		if !taskExists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+			return
+		}
+
+		// Set current task
+		usersDir := os.Getenv("USERS_DIR")
+		if usersDir == "" {
+			usersDir = "./data/users"
+		}
+		userDir := filepath.Join(usersDir, username)
+		os.MkdirAll(userDir, 0o755)
+
+		taskData := map[string]interface{}{
+			"project_id": request.ProjectID,
+			"task_id":    request.TaskID,
+			"set_at":     time.Now(),
+		}
+		b, _ := json.MarshalIndent(taskData, "", "  ")
+		if err := os.WriteFile(filepath.Join(userDir, "current_task.json"), b, 0o644); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save current task"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "current task updated"})
+	}
 }
 
 // ReadinessCheckResponse represents the response from the readiness check endpoint

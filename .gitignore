@@ -115,3 +115,6 @@ scripts/test-build-local.sh
 test-docker-build.sh
 
 docs/USER_MANUAL.md
+
+aidg-lite/data
+aidg-lite/aidg-lite

@@ -20,9 +20,10 @@ interface DeliverablesProps {
   taskId?: string; // 兼容旧调用
   mode?: DeliverableMode;
   targetId?: string; // 当 mode=project 时使用
+  liteMode?: boolean; // lite 模式下仅显示特性列表和架构设计
 }
 
-export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task', targetId }) => {
+export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task', targetId, liteMode = false }) => {
   const effectiveTaskId = mode === 'task' ? (taskId || '') : '';
   const effectiveProjectId = mode === 'project' ? (targetId || '') : '';
 
@@ -79,8 +80,8 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
   };
 
   const items = [
-    // 项目模式下显示项目状态页面（第一个标签页）
-    ...(mode === 'project' && effectiveProjectId ? [{
+    // 项目模式下显示项目状态页面（第一个标签页）— lite 模式下隐藏
+    ...(!liteMode && mode === 'project' && effectiveProjectId ? [{
       key: 'status',
       label: (
         <span>
@@ -122,7 +123,8 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
         </div>
       ),
     },
-    {
+    // lite 模式下隐藏文档管理
+    ...(!liteMode ? [{
       key: 'documents',
       label: (
         <span>
@@ -135,9 +137,9 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
           {renderDocumentManagement()}
         </div>
       ),
-    },
-    // 项目模式下显示 Prompts 管理标签页
-    ...(mode === 'project' && effectiveProjectId ? [{
+    }] : []),
+    // 项目模式下显示 Prompts 管理标签页 — lite 模式下隐藏
+    ...(!liteMode && mode === 'project' && effectiveProjectId ? [{
       key: 'prompts',
       label: (
         <span>
@@ -156,7 +158,7 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
   return (
     <div style={containerStyle}>
       <Tabs
-        defaultActiveKey={mode === 'project' && effectiveProjectId ? 'status' : 'features'}
+        defaultActiveKey={!liteMode && mode === 'project' && effectiveProjectId ? 'status' : 'features'}
         items={items}
         size="small"
         style={tabsStyle}

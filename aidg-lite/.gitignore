@@ -1,0 +1,12 @@
+# Binary
+aidg-lite
+
+# Frontend build output
+frontend/dist/
+frontend/node_modules/
+
+# Go build artifacts
+*.test
+
+# Temp files
+.tmp_*

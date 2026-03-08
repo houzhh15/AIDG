@@ -1,0 +1,705 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse, Tooltip, Row, Col, Switch } from 'antd';
+import type { MenuProps } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SwapOutlined, CloudUploadOutlined, AimOutlined } from '@ant-design/icons';
+import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, transferProjectTask } from '../api/tasks';
+import { getUsers, User } from '../api/users';
+import { listProjects, ProjectSummary } from '../api/projects';
+import { setCurrentTask } from '../api/currentTask';
+import { useTaskRefresh } from '../contexts/TaskRefreshContext';
+import MarkdownViewer from './MarkdownViewer';
+import CopyResourceDialog from './CopyResourceDialog';
+
+const { TextArea } = Input;
+const { Option } = Select;
+
+const STATUS_OPTIONS = [
+  { value: 'in-progress', label: '进行中', color: 'blue' },
+  { value: 'todo', label: '待开始', color: 'default' },
+  { value: 'completed', label: '已完成', color: 'green' },
+  { value: 'cancelled', label: '已取消', color: 'red' },
+];
+
+// 获取状态配置
+const getStatusConfig = (status?: string) => {
+  return STATUS_OPTIONS.find(opt => opt.value === status) || { value: '', label: '未设置', color: 'default' };
+};
+
+interface Props {
+  projectId: string;
+  currentTask?: string;
+  onTaskSelect: (taskId: string) => void;
+  collapsed?: boolean;
+  onCollapse?: (collapsed: boolean) => void;
+  scopes?: string[];
+}
+
+const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSelect, collapsed = false, onCollapse, scopes = [] }) => {
+  const [tasks, setTasks] = useState<ProjectTask[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
+  const [form] = Form.useForm();
+  const [formDirty, setFormDirty] = useState(false); // 追踪表单是否被修改
+  const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [transferringTask, setTransferringTask] = useState<ProjectTask | null>(null);
+  const [targetProjectId, setTargetProjectId] = useState<string>('');
+  const [allProjects, setAllProjects] = useState<ProjectSummary[]>([]);
+  const [transferring, setTransferring] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [copyTarget, setCopyTarget] = useState<ProjectTask | null>(null);
+  const [assigneeFilter, setAssigneeFilter] = useState<string | undefined>();
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [fuzzySearch, setFuzzySearch] = useState<boolean>(false); // 模糊搜索开关，默认关闭
+  const [timeRangeFilter, setTimeRangeFilter] = useState<TimeRangeFilter | undefined>();
+  const [currentTaskId, setCurrentTaskId] = useState<string>('');
+  const { triggerRefresh } = useTaskRefresh();
+
+  const canDelete = scopes.includes('project.delete');
+
+  useEffect(() => {
+    if (projectId) {
+      loadTasks();
+      loadUsers();
+      loadAllProjects();
+    }
+  }, [projectId, searchQuery, timeRangeFilter, fuzzySearch]);
+
+  const loadTasks = async () => {
+    if (!projectId) return;
+    setLoading(true);
+    try {
+      const result = await getProjectTasks(projectId, searchQuery || undefined, timeRangeFilter, fuzzySearch);
+      setTasks(result.data || []);
+    } catch (error: any) {
+      // 对403权限错误不显示提示，让无权限页面处理
+      if (error?.response?.status !== 403) {
+        message.error('加载任务列表失败');
+      }
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const result = await getUsers();
+      setUsers(result.data || []);
+    } catch (error) {
+      console.error('Failed to load users:', error);
+    }
+  };
+
+  const loadAllProjects = async () => {
+    try {
+      const projects = await listProjects();
+      setAllProjects(projects);
+    } catch (error) {
+      console.error('Failed to load projects:', error);
+    }
+  };
+
+  const handleSetCurrentTask = async (task: ProjectTask) => {
+    try {
+      await setCurrentTask({ project_id: projectId, task_id: task.id });
+      setCurrentTaskId(task.id);
+      message.success(`已设为当前任务: ${task.name}`);
+    } catch (error) {
+      message.error('设置当前任务失败');
+      console.error(error);
+    }
+  };
+
+  const handleCreate = () => {
+    setEditingTask(null);
+    form.resetFields();
+    setFormDirty(false);
+    setModalVisible(true);
+  };
+
+  const handleEdit = (task: ProjectTask) => {
+    setEditingTask(task);
+    form.setFieldsValue(task);
+    setFormDirty(false);
+    setModalVisible(true);
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const values = await form.validateFields();
+      
+      if (editingTask) {
+        // 更新任务
+        await updateProjectTask(projectId, editingTask.id, values);
+        message.success('任务更新成功');
+      } else {
+        // 创建任务
+        await createProjectTask(projectId, values);
+        message.success('任务创建成功');
+      }
+      
+      setFormDirty(false);
+      setModalVisible(false);
+      loadTasks();
+      // 触发任务统计数据刷新
+      triggerRefresh();
+    } catch (error) {
+      message.error(editingTask ? '任务更新失败' : '任务创建失败');
+      console.error(error);
+    }
+  };
+
+  const handleDelete = async (taskId: string) => {
+    try {
+      await deleteProjectTask(projectId, taskId);
+      message.success('任务删除成功');
+      loadTasks();
+      if (currentTask === taskId) {
+        onTaskSelect(''); // 清除当前选中的任务
+      }
+      // 触发任务统计数据刷新
+      triggerRefresh();
+    } catch (error) {
+      message.error('任务删除失败');
+      console.error(error);
+    }
+  };
+
+  const handleCopyTaskId = async (taskId: string) => {
+    try {
+      await navigator.clipboard.writeText(taskId);
+      message.success(`任务ID已复制: ${taskId}`);
+    } catch (error) {
+      console.error('复制失败:', error);
+      message.error('复制失败，请手动复制');
+    }
+  };
+
+  const handleOpenTransfer = (task: ProjectTask) => {
+    setTransferringTask(task);
+    setTargetProjectId('');
+    setTransferModalVisible(true);
+  };
+
+  const handleTransferTask = async () => {
+    if (!transferringTask || !targetProjectId) {
+      message.warning('请选择目标项目');
+      return;
+    }
+    try {
+      setTransferring(true);
+      await transferProjectTask(projectId, transferringTask.id, targetProjectId);
+      const targetProject = allProjects.find(p => p.id === targetProjectId);
+      message.success(`任务已转移到项目: ${targetProject?.name || targetProjectId}`);
+      setTransferModalVisible(false);
+      setTransferringTask(null);
+      loadTasks();
+      if (currentTask === transferringTask.id) {
+        onTaskSelect(''); // 清除当前选中的任务
+      }
+      triggerRefresh();
+    } catch (error: any) {
+      const errorMsg = error?.response?.data?.error || error.message || '任务转移失败';
+      message.error(`任务转移失败: ${errorMsg}`);
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  const handleStatusChange = async (taskId: string, newStatus: string) => {
+    try {
+      await updateProjectTask(projectId, taskId, { status: newStatus });
+      const statusConfig = getStatusConfig(newStatus);
+      message.success(`任务状态已更新为：${statusConfig.label}`);
+      loadTasks();
+      // 触发任务统计数据刷新
+      triggerRefresh();
+    } catch (error) {
+      message.error('状态更新失败');
+      console.error(error);
+    }
+  };
+
+  const visibleTasks = useMemo(() => {
+    const filtered = tasks.filter(task => {
+      if (assigneeFilter && task.assignee !== assigneeFilter) {
+        return false;
+      }
+      return true;
+    });
+
+    // 按状态分组
+    const grouped: Record<string, ProjectTask[]> = {
+      'in-progress': [],
+      'todo': [],
+      'completed': [],
+      'cancelled': [],
+    };
+
+    filtered.forEach(task => {
+      const status = task.status || 'todo';
+      if (grouped[status]) {
+        grouped[status].push(task);
+      } else {
+        grouped['todo'].push(task); // 默认
+      }
+    });
+
+    return grouped;
+  }, [tasks, assigneeFilter]);
+
+  const total = tasks.length;
+  const filtered = Object.values(visibleTasks).flat().length;
+  const filterApplied = Boolean(assigneeFilter || searchQuery);
+
+  // 折叠状态
+  if (collapsed) {
+    return (
+      <div style={{ 
+        width: 48, 
+        borderRight: '1px solid #f0f0f0', 
+        height: '100%', 
+        display: 'flex', 
+        flexDirection: 'column',
+        alignItems: 'center',
+        paddingTop: 8,
+        background: '#fff'
+      }}>
+        <Tooltip title="展开任务列表" placement="right">
+          <Button
+            type="text"
+            icon={<MenuUnfoldOutlined />}
+            onClick={() => onCollapse?.(false)}
+            style={{ marginBottom: 8 }}
+          />
+        </Tooltip>
+        <div style={{ 
+          writingMode: 'vertical-rl', 
+          textOrientation: 'mixed',
+          color: '#666',
+          fontSize: 12,
+          marginTop: 8
+        }}>
+          项目任务 ({total})
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ width: 250, borderRight: '1px solid #f0f0f0', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: 16, borderBottom: '1px solid #f0f0f0' }}>
+        {/* 标题栏 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title="新建任务">
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={handleCreate}
+              >
+                新建
+              </Button>
+            </Tooltip>
+          </div>
+          <Tooltip title="收起任务列表">
+            <Button
+              type="text"
+              icon={<MenuFoldOutlined />}
+              onClick={() => onCollapse?.(true)}
+              size="small"
+            />
+          </Tooltip>
+        </div>
+        <Button
+          block
+          type="dashed"
+          style={{ marginBottom: 12 }}
+          onClick={() => onTaskSelect('')}
+        >
+          查看项目文档
+        </Button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Input
+            placeholder="搜索任务名或负责人"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            size="small"
+            allowClear
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title="启用模糊搜索会使用语义相似度匹配，可以找到名称相近的任务">
+              <span style={{ fontSize: 12, color: '#666' }}>模糊搜索</span>
+            </Tooltip>
+            <Switch
+              size="small"
+              checked={fuzzySearch}
+              onChange={setFuzzySearch}
+            />
+          </div>
+          <Select
+            placeholder="按更新时间筛选"
+            allowClear
+            size="small"
+            style={{ width: '100%' }}
+            value={timeRangeFilter}
+            onChange={(value) => setTimeRangeFilter(value as TimeRangeFilter | undefined)}
+          >
+            <Option value="today">今天</Option>
+            <Option value="week">本周</Option>
+            <Option value="month">本月</Option>
+          </Select>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <Spin spinning={loading}>
+          <Collapse
+            defaultActiveKey={['in-progress']}
+            ghost
+            items={STATUS_OPTIONS.map(status => ({
+              key: status.value,
+              label: (
+                <span>
+                  <Tag color={status.color} style={{ marginRight: 8 }}>{status.label}</Tag>
+                  ({visibleTasks[status.value]?.length || 0})
+                </span>
+              ),
+              children: (visibleTasks[status.value] || []).length === 0 ? (
+                <div />
+              ) : (
+                <List
+                  dataSource={visibleTasks[status.value] || []}
+                  renderItem={(task) => {
+                    const menu: MenuProps = {
+                      items: [
+                        {
+                          key: 'status',
+                          label: '修改状态',
+                          icon: <CheckCircleOutlined />,
+                          children: STATUS_OPTIONS.map(opt => ({
+                            key: `status-${opt.value}`,
+                            label: (
+                              <span>
+                                <Tag color={opt.color} style={{ marginRight: 8 }}>{opt.label}</Tag>
+                                {task.status === opt.value && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                              </span>
+                            ),
+                            onClick: () => {
+                              if (task.status !== opt.value) {
+                                handleStatusChange(task.id, opt.value);
+                              }
+                            },
+                          })),
+                        },
+                        { type: 'divider' },
+                        {
+                          key: 'copy-id',
+                          icon: <CopyOutlined />,
+                          label: '复制任务ID',
+                        },
+                        {
+                          key: 'set-current',
+                          icon: <AimOutlined />,
+                          label: currentTaskId === task.id ? '✓ 当前任务' : '设为当前任务',
+                          disabled: currentTaskId === task.id,
+                        },
+                        {
+                          key: 'edit',
+                          icon: <EditOutlined />,
+                          label: '编辑任务',
+                        },
+                        {
+                          key: 'delete',
+                          icon: <DeleteOutlined />,
+                          label: '删除任务',
+                          danger: true,
+                          disabled: !canDelete,
+                        },
+                        { type: 'divider' },
+                        {
+                          key: 'transfer',
+                          icon: <SwapOutlined />,
+                          label: '移动到其他项目',
+                        },
+                        { type: 'divider' },
+                        {
+                          key: 'copy-remote',
+                          icon: <CloudUploadOutlined />,
+                          label: '拷贝到远端...',
+                        },
+                      ],
+                      onClick: ({ key }) => {
+                        if (key === 'copy-id') {
+                          handleCopyTaskId(task.id);
+                        }
+                        if (key === 'set-current') {
+                          handleSetCurrentTask(task);
+                        }
+                        if (key === 'edit') {
+                          handleEdit(task);
+                        }
+                        if (key === 'delete') {
+                          Modal.confirm({
+                            title: '确定删除这个任务吗？',
+                            okText: '删除',
+                            okButtonProps: { danger: true },
+                            cancelText: '取消',
+                            onOk: () => handleDelete(task.id),
+                          });
+                        }
+                        if (key === 'transfer') {
+                          handleOpenTransfer(task);
+                        }
+                        if (key === 'copy-remote') {
+                          setCopyTarget(task);
+                        }
+                      },
+                    };
+
+                    return (
+                      <Dropdown key={task.id} trigger={['contextMenu']} menu={menu}>
+                        <List.Item
+                          key={task.id}
+                          className={`task-item ${currentTask === task.id ? 'active' : ''}`}
+                          style={{
+                            padding: '12px 16px',
+                            cursor: 'pointer',
+                            backgroundColor: currentTask === task.id ? '#e6f7ff' : 'transparent',
+                            borderLeft: currentTask === task.id ? '3px solid #1890ff' : '3px solid transparent',
+                          }}
+                          onClick={() => onTaskSelect(task.id)}
+                        >
+                          <div style={{ display: 'flex', width: '100%', alignItems: 'flex-start', gap: 8 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {currentTaskId === task.id && (
+                                  <Tooltip title="当前任务">
+                                    <AimOutlined style={{ color: '#1890ff', fontSize: 12 }} />
+                                  </Tooltip>
+                                )}
+                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {task.name}({task.id})
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#666' }}>
+                                <div style={{ marginBottom: 2 }}>
+                                  <ClockCircleOutlined style={{ marginRight: 4 }} />
+                                  {new Date(task.updated_at).toLocaleDateString('zh-CN')}
+                                </div>
+                                {task.assignee && (
+                                  <div style={{ marginBottom: 2 }}>
+                                    <UserOutlined style={{ marginRight: 4 }} />
+                                    {task.assignee}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <Dropdown menu={menu} trigger={['click']} placement="bottomRight">
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<MoreOutlined />}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ color: '#666' }}
+                              />
+                            </Dropdown>
+                          </div>
+                        </List.Item>
+                      </Dropdown>
+                    );
+                  }}
+                />
+              ),
+            }))}
+          />
+        </Spin>
+      </div>
+
+      <Modal
+        title={editingTask ? '编辑任务' : '创建任务'}
+        open={modalVisible}
+        onOk={handleSubmit}
+        onCancel={() => {
+          if (formDirty) {
+            Modal.confirm({
+              title: '未保存的更改',
+              content: '当前有未保存的更改，关闭将丢失这些更改。确认关闭吗？',
+              okText: '确认关闭',
+              cancelText: '继续编辑',
+              okType: 'danger',
+              onOk: () => {
+                setFormDirty(false);
+                setModalVisible(false);
+              }
+            });
+          } else {
+            setModalVisible(false);
+          }
+        }}
+        width={1000}
+        okText={editingTask ? '更新' : '创建'}
+        cancelText="取消"
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          preserve={false}
+          onValuesChange={() => setFormDirty(true)}
+        >
+          <Row gutter={24}>
+            {/* 左侧: 基本信息 */}
+            <Col span={10}>
+              <Form.Item
+                name="name"
+                label="任务名称"
+                rules={[{ required: true, message: '请输入任务名称' }]}
+              >
+                <Input placeholder="输入任务名称" />
+              </Form.Item>
+
+              <Form.Item
+                name="feature_id"
+                label="关联特性ID"
+              >
+                <Input placeholder="输入特性ID，如 N-F01-S01" />
+              </Form.Item>
+
+              <Form.Item
+                name="feature_name"
+                label="特性名称"
+              >
+                <Input placeholder="输入特性名称" />
+              </Form.Item>
+
+              <Form.Item
+                name="module"
+                label="模块"
+              >
+                <Input placeholder="输入模块名称" />
+              </Form.Item>
+
+              <Form.Item
+                name="status"
+                label="状态"
+              >
+                <Select placeholder="选择状态" allowClear>
+                  <Option value="todo">待开始</Option>
+                  <Option value="in-progress">进行中</Option>
+                  <Option value="completed">已完成</Option>
+                  <Option value="cancelled">已取消</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+
+            {/* 右侧: 描述和预览 */}
+            <Col span={14}>
+              <Form.Item
+                name="description"
+                label="任务描述（支持Markdown格式）"
+                style={{ marginBottom: 8 }}
+              >
+                <TextArea
+                  placeholder="输入任务描述，支持Markdown格式..."
+                  rows={8}
+                />
+              </Form.Item>
+              
+              <div style={{ marginBottom: 8 }}>
+                <span style={{ fontWeight: 500, color: '#666' }}>预览</span>
+              </div>
+              <div style={{ 
+                border: '1px solid #d9d9d9', 
+                borderRadius: 6, 
+                padding: 12,
+                minHeight: 180,
+                maxHeight: 260,
+                overflow: 'auto',
+                backgroundColor: '#fafafa'
+              }}>
+                <Form.Item noStyle shouldUpdate={(prev, cur) => prev.description !== cur.description}>
+                  {() => {
+                    const desc = form.getFieldValue('description') || '';
+                    return desc ? (
+                      <MarkdownViewer>{desc}</MarkdownViewer>
+                    ) : (
+                      <span style={{ color: '#999' }}>在左侧输入描述后，此处将显示Markdown预览...</span>
+                    );
+                  }}
+                </Form.Item>
+              </div>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      {/* 任务转移模态框 */}
+      <Modal
+        title={
+          <span>
+            <SwapOutlined style={{ marginRight: 8 }} />
+            移动任务到其他项目
+          </span>
+        }
+        open={transferModalVisible}
+        onOk={handleTransferTask}
+        onCancel={() => {
+          setTransferModalVisible(false);
+          setTransferringTask(null);
+          setTargetProjectId('');
+        }}
+        confirmLoading={transferring}
+        okText="确认移动"
+        cancelText="取消"
+        okButtonProps={{ disabled: !targetProjectId }}
+      >
+        {transferringTask && (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ margin: '0 0 8px' }}>
+                <strong>任务：</strong>{transferringTask.name}
+              </p>
+              <p style={{ margin: '0 0 8px', color: '#666', fontSize: 12 }}>
+                ID: {transferringTask.id}
+              </p>
+              <p style={{ margin: 0, color: '#999', fontSize: 12 }}>
+                移动后，任务的需求文档、设计文档、测试文档、执行计划等所有相关文件将一起转移到目标项目。
+              </p>
+            </div>
+            <div>
+              <p style={{ marginBottom: 8 }}><strong>选择目标项目：</strong></p>
+              <Select
+                style={{ width: '100%' }}
+                placeholder="请选择目标项目"
+                value={targetProjectId || undefined}
+                onChange={(value) => setTargetProjectId(value)}
+                showSearch
+                optionFilterProp="label"
+                options={allProjects
+                  .filter(p => p.id !== projectId)
+                  .map(p => ({
+                    value: p.id,
+                    label: `${p.name}${p.product_line ? ` [${p.product_line}]` : ''}`,
+                  }))}
+              />
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <CopyResourceDialog
+        open={!!copyTarget}
+        onClose={() => setCopyTarget(null)}
+        resourceType="task"
+        resourceId={copyTarget?.id || ''}
+        resourceName={copyTarget?.name || copyTarget?.id || ''}
+        projectId={projectId}
+      />
+    </div>
+  );
+};
+
+export default ProjectTaskSidebar;

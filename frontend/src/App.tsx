@@ -32,6 +32,7 @@ import { TaskRefreshProvider } from './contexts/TaskRefreshContext';
 // 身份源相关组件
 import { IdentityProviderList } from './components/identity-provider';
 import LoginSuccessPage from './components/LoginSuccessPage';
+import { useLiteMode } from './hooks/useLiteMode';
 
 const { RangePicker } = DatePicker;
 
@@ -189,6 +190,9 @@ const App: React.FC = () => {
   const [svnRunning, setSvnRunning] = useState(false);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [servicesStatus, setServicesStatus] = useState<ServicesStatus | null>(null);
+  
+  // Lite mode detection
+  const { liteMode, loading: liteModeLoading } = useLiteMode();
   
   // 身份源权限检查
   const { hasPermission } = usePermission();
@@ -450,7 +454,30 @@ const App: React.FC = () => {
     }
   }
 
+  // Lite mode: auto-login
+  useEffect(() => {
+    if (liteMode && !auth && !loggingIn) {
+      setLoggingIn(true);
+      smartLogin('local', 'lite-admin-default')
+        .then(a => { setAuth(a); })
+        .catch(() => {
+          // fallback: try with empty password
+          smartLogin('local', '').then(a => setAuth(a)).catch(() => {});
+        })
+        .finally(() => setLoggingIn(false));
+    }
+  }, [liteMode, auth, loggingIn]);
+
   if(!auth){
+    // Lite mode: show loading while auto-login in progress
+    if (liteMode || liteModeLoading) {
+      return (
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100dvh',background:'#f5f7fa'}}>
+          <div style={{color:'#999'}}>正在连接服务器...</div>
+        </div>
+      );
+    }
+    
     // 检查是否是 OIDC 登录成功回调
     if (window.location.pathname === '/login/success' || window.location.search.includes('token=')) {
       return (
@@ -506,6 +533,7 @@ const App: React.FC = () => {
   return (
   <TaskRefreshProvider>
   <Layout className="app-root-layout" style={{ height: '100dvh', overflow: 'hidden' }}>
+  {!liteMode && (
   <Header 
     onWheel={(e)=>{ e.preventDefault(); e.stopPropagation(); }}
     style={{ height:64, lineHeight:'64px', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 16px', background:'#0266B3' }}>
@@ -599,7 +627,8 @@ const App: React.FC = () => {
           <Button size="small" ghost style={{color:'#fff',borderColor:'#fff'}} onClick={()=>{ clearAuth(false); }}>登出</Button>
         </div>
       </Header>
-      {currentToken && (
+      )}
+      {!liteMode && currentToken && (
         <div style={{ background:'#e6f7ff', padding:'8px 12px', borderBottom:'1px solid #91d5ff', display:'flex', alignItems:'center', gap:8 }}>
           <span style={{ fontWeight:'bold', color:'#1890ff' }}>Token:</span>
           <code style={{ background:'#f6f8fa', padding:'2px 4px', borderRadius:2, fontSize:'12px', wordBreak:'break-all' }}>{currentToken}</code>
@@ -612,7 +641,7 @@ const App: React.FC = () => {
         </div>
       )}
       <Layout style={{ flex:1, minHeight:0, overflow: 'hidden' }}>
-        {viewMode === 'meeting' && auth && (
+        {!liteMode && viewMode === 'meeting' && auth && (
           <MeetingView
             tasks={tasks}
             currentTask={currentTask}
@@ -635,7 +664,7 @@ const App: React.FC = () => {
             servicesStatus={servicesStatus}
           />
         )}
-        {viewMode === 'project' && (
+        {(liteMode || viewMode === 'project') && (
           <>
             <ProjectSidebar 
               current={currentProject} 
@@ -659,11 +688,11 @@ const App: React.FC = () => {
               <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height:'100%' }}>
                 {!currentProject ? (
                   <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'#999' }}>请选择或创建一个项目</div>
-                ) : permissionLoading ? (
+                ) : !liteMode && permissionLoading ? (
                   <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center' }}>
                     <div>检查权限中...</div>
                   </div>
-                ) : !hasProjectPermission ? (
+                ) : !liteMode && !hasProjectPermission ? (
                   <NoPermissionPage 
                     projectId={currentProject}
                     onBack={() => setCurrentProject(undefined)}
@@ -671,16 +700,16 @@ const App: React.FC = () => {
                 ) : !currentProjectTask ? (
                   <div style={{ height:'100%', display:'flex', flexDirection:'column', gap:16 }}>
                     
-                    <Deliverables mode="project" targetId={currentProject} />
+                    <Deliverables mode="project" targetId={currentProject} liteMode={liteMode} />
                   </div>
                 ) : (
-                  <TaskDocuments projectId={currentProject} taskId={currentProjectTask} />
+                  <TaskDocuments projectId={currentProject} taskId={currentProjectTask} liteMode={liteMode} />
                 )}
               </div>
             </Content>
           </>
         )}
-        {viewMode === 'user' && (
+        {!liteMode && viewMode === 'user' && (
           <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
             <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height:'100%' }}>
               <Tabs
@@ -719,14 +748,14 @@ const App: React.FC = () => {
             </div>
           </Content>
         )}
-        {viewMode === 'profile' && (
+        {!liteMode && viewMode === 'profile' && (
           <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
             <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height:'100%' }}>
               <UserProfile />
             </div>
           </Content>
         )}
-        {viewMode === 'idp' && hasIdpReadPermission && (
+        {!liteMode && viewMode === 'idp' && hasIdpReadPermission && (
           <Content style={{ display:'flex', height:'100%', minHeight:0 }}>
             <div className="scroll-region" style={{ flex:1, padding:12, minWidth:0, height:'100%' }}>
               <IdentityProviderList />
@@ -736,27 +765,29 @@ const App: React.FC = () => {
       </Layout>
     </Layout>
     
-    {/* 音频录制模式选择对话框 */}
-    <AudioModeSelectModal
-      open={audioModalOpen}
-      onCancel={() => {
-        setAudioModalOpen(false);
-        setPendingTaskId(null);
-      }}
-      onConfirm={handleAudioModeSelect}
-    />
-    
-    {/* 文件上传对话框 */}
-    <UploadModal
-      open={uploadModalOpen}
-      mode={selectedUploadMode}
-      taskId={pendingTaskId || ''}
-      onCancel={() => {
-        setUploadModalOpen(false);
-        setPendingTaskId(null);
-      }}
-      onSuccess={handleUploadSuccess}
-    />
+    {/* 音频录制模式选择对话框 (仅非 lite 模式) */}
+    {!liteMode && (
+      <>
+        <AudioModeSelectModal
+          open={audioModalOpen}
+          onCancel={() => {
+            setAudioModalOpen(false);
+            setPendingTaskId(null);
+          }}
+          onConfirm={handleAudioModeSelect}
+        />
+        <UploadModal
+          open={uploadModalOpen}
+          mode={selectedUploadMode}
+          taskId={pendingTaskId || ''}
+          onCancel={() => {
+            setUploadModalOpen(false);
+            setPendingTaskId(null);
+          }}
+          onSuccess={handleUploadSuccess}
+        />
+      </>
+    )}
   </TaskRefreshProvider>
   );
 };
