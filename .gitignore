@@ -58,6 +58,8 @@ sdist/
 var/
 wheels/
 *.egg-info/
+# Allow aidg-lite frontend source lib directory (not a Python lib/)
+!aidg-lite/frontend/src/lib/
 .installed.cfg
 *.egg
 MANIFEST

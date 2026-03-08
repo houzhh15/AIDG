@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/houzhh15/aidg-lite/pkg/currenttask"
 	"github.com/houzhh15/aidg-lite/internal/domain/projects"
+	"github.com/houzhh15/aidg-lite/pkg/currenttask"
 )
 
 // HandleGetCurrentTaskLite handles GET /api/v1/user/current-task in Lite mode.
