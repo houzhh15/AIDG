@@ -9,7 +9,7 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
-	"aidg-lite/internal/domain/projects"
+	"github.com/houzhh15/aidg-lite/internal/domain/projects"
 )
 
 // UserHiddenProjects 用户隐藏的项目列表

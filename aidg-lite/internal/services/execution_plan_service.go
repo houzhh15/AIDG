@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"aidg-lite/internal/models"
+	"github.com/houzhh15/aidg-lite/internal/models"
 
 	"gopkg.in/yaml.v3"
 )

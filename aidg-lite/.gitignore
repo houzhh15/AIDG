@@ -3,6 +3,7 @@ aidg-lite
 
 # Frontend build output
 frontend/dist/
+frontend/dist-lib/
 frontend/node_modules/
 
 # Go build artifacts

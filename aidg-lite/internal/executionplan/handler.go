@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"aidg-lite/internal/models"
-	"aidg-lite/internal/services"
+	"github.com/houzhh15/aidg-lite/internal/models"
+	"github.com/houzhh15/aidg-lite/internal/services"
 
 	"github.com/gin-gonic/gin"
 )

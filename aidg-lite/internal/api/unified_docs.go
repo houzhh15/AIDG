@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/domain/docslot"
+	"github.com/houzhh15/aidg-lite/internal/domain/docslot"
 )
 
 // RegisterUnifiedDocRoutes 注册统一文档 API 路由（lite版本仅支持项目文档）

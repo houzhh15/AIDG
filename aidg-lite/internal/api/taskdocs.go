@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/domain/taskdocs"
+	"github.com/houzhh15/aidg-lite/internal/domain/taskdocs"
 )
 
 // HandleAppendTaskDoc POST /api/v1/projects/:id/tasks/:task_id/{docType}/append

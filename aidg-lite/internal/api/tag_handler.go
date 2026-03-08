@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/util"
+	"github.com/houzhh15/aidg-lite/internal/util"
 )
 
 // TagHandler 处理tag版本管理相关的HTTP请求

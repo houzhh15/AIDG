@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"aidg-lite/internal/domain/taskdocs"
+	"github.com/houzhh15/aidg-lite/internal/domain/taskdocs"
 
 	"github.com/gin-gonic/gin"
 )

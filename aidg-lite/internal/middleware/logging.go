@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"aidg-lite/pkg/logger"
+	"github.com/houzhh15/aidg-lite/pkg/logger"
 )
 
 // RequestLogger 写入结构化请求日志并注入 request_id

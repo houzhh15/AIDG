@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/domain/projects"
+	"github.com/houzhh15/aidg-lite/internal/domain/projects"
 )
 
 // ContentHistory represents a single version history entry

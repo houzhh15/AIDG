@@ -1,7 +1,7 @@
 package docslot
 
 import (
-	"aidg-lite/internal/domain/taskdocs"
+	"github.com/houzhh15/aidg-lite/internal/domain/taskdocs"
 )
 
 // UnifiedDocService 统一文档服务接口（lite版本仅支持 project scope）

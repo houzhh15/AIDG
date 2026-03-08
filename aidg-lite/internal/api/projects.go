@@ -14,13 +14,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/domain/projects"
-	"aidg-lite/internal/domain/taskdocs"
-	"aidg-lite/internal/executionplan"
-	"aidg-lite/internal/models"
-	"aidg-lite/internal/services"
-	"aidg-lite/internal/simhash"
-	"aidg-lite/internal/users"
+	"github.com/houzhh15/aidg-lite/internal/domain/projects"
+	"github.com/houzhh15/aidg-lite/internal/domain/taskdocs"
+	"github.com/houzhh15/aidg-lite/internal/executionplan"
+	"github.com/houzhh15/aidg-lite/internal/models"
+	"github.com/houzhh15/aidg-lite/internal/services"
+	"github.com/houzhh15/aidg-lite/internal/simhash"
+	"github.com/houzhh15/aidg-lite/internal/users"
 )
 
 // enrichTaskWithCompletionStatus 为任务信息添加5个文档槽位的完成状态

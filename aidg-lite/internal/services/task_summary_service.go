@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"aidg-lite/internal/models"
-	"aidg-lite/internal/util"
+	"github.com/houzhh15/aidg-lite/internal/models"
+	"github.com/houzhh15/aidg-lite/internal/util"
 )
 
 // 错误定义

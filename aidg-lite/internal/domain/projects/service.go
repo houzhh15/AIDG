@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"aidg-lite/internal/config"
+	"github.com/houzhh15/aidg-lite/internal/config"
 )
 
 var (

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"aidg-lite/internal/domain/taskdocs"
+	"github.com/houzhh15/aidg-lite/internal/domain/taskdocs"
 )
 
 var (

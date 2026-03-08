@@ -13,9 +13,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/domain/projects"
-	"aidg-lite/internal/models"
-	"aidg-lite/internal/services"
+	"github.com/houzhh15/aidg-lite/internal/domain/projects"
+	"github.com/houzhh15/aidg-lite/internal/models"
+	"github.com/houzhh15/aidg-lite/internal/services"
 )
 
 // sanitizeMarkdown 简单的Markdown内容清洗

@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"aidg-lite/internal/domain/projects"
-	"aidg-lite/internal/services"
+	"github.com/houzhh15/aidg-lite/internal/domain/projects"
+	"github.com/houzhh15/aidg-lite/internal/services"
 )
 
 // HandleGetTaskStatistics GET /api/v1/projects/:id/tasks/statistics

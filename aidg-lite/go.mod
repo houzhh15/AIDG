@@ -1,4 +1,4 @@
-module aidg-lite
+module github.com/houzhh15/aidg-lite
 
 go 1.22.0
 
