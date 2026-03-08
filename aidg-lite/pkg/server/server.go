@@ -8,7 +8,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -30,6 +29,7 @@ import (
 	"github.com/houzhh15/aidg-lite/internal/middleware"
 	"github.com/houzhh15/aidg-lite/internal/services"
 	"github.com/houzhh15/aidg-lite/internal/users"
+	"github.com/houzhh15/aidg-lite/pkg/currenttask"
 	"github.com/houzhh15/aidg-lite/pkg/logger"
 )
 
@@ -90,6 +90,12 @@ func New(cfg *config.Config) (*Server, error) {
 	taskSummaryService := services.NewTaskSummaryService(projectsRoot)
 	statisticsService := services.NewStatisticsService(projectsRoot)
 
+	// LRU store for Authorization-scoped current-task pointers.
+	// Each unique Authorization header value gets its own slot; up to 1000
+	// simultaneous identities are tracked (LRU eviction after that).
+	currentTaskStorePath := filepath.Join(usersDir, "lite_current_tasks.json")
+	ctStore := currenttask.New(currenttask.DefaultCapacity, currentTaskStorePath)
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
@@ -121,9 +127,9 @@ func New(cfg *config.Config) (*Server, error) {
 	// ── Auth ──────────────────────────────────────────────────────────────
 	r.POST("/api/v1/login", buildLoginHandler(cfg, usersDir))
 
-	// ── User / current-task ───────────────────────────────────────────────
-	r.GET("/api/v1/user/current-task", api.HandleGetUserCurrentTask)
-	r.PUT("/api/v1/user/current-task", buildPutCurrentTaskHandler(usersDir, projectsRoot))
+	// ── User / current-task (LRU, keyed by Authorization header) ─────────
+	r.GET("/api/v1/user/current-task", api.HandleGetCurrentTaskLite(ctStore))
+	r.PUT("/api/v1/user/current-task", api.HandlePutCurrentTaskLite(ctStore, projectsReg))
 
 	// ── User projects ─────────────────────────────────────────────────────
 	r.GET("/api/v1/user/projects", api.HandleGetUserProjects(projectsReg))
@@ -320,63 +326,6 @@ func buildLoginHandler(cfg *config.Config, usersDir string) gin.HandlerFunc {
 				"task.read", "task.write", "user.manage",
 			},
 		})
-	}
-}
-
-func buildPutCurrentTaskHandler(usersDir, projectsRoot string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		username := DefaultUser
-		if u := c.GetString("user"); u != "" {
-			username = u
-		}
-		var req struct {
-			ProjectID string `json:"project_id"`
-			TaskID    string `json:"task_id"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-			return
-		}
-		if req.ProjectID == "" || req.TaskID == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "project_id and task_id are required"})
-			return
-		}
-		projDir := filepath.Join(projects.ProjectsRoot, req.ProjectID)
-		if _, err := os.Stat(projDir); os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
-			return
-		}
-		tasksFile := filepath.Join(projects.ProjectsRoot, req.ProjectID, "tasks.json")
-		data, err := os.ReadFile(tasksFile)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "tasks not found"})
-			return
-		}
-		var tasks []map[string]interface{}
-		if err := json.Unmarshal(data, &tasks); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse tasks"})
-			return
-		}
-		found := false
-		for _, t := range tasks {
-			if id, ok := t["id"].(string); ok && id == req.TaskID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
-			return
-		}
-		userDir := filepath.Join(usersDir, username)
-		os.MkdirAll(userDir, 0o755)
-		taskData := map[string]interface{}{"project_id": req.ProjectID, "task_id": req.TaskID, "set_at": time.Now()}
-		b, _ := json.MarshalIndent(taskData, "", "  ")
-		if err := os.WriteFile(filepath.Join(userDir, "current_task.json"), b, 0o644); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "current task updated"})
 	}
 }
 
