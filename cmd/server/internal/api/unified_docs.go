@@ -26,6 +26,13 @@ func RegisterUnifiedDocRoutes(router *gin.RouterGroup, svc docslot.UnifiedDocSer
 		projectDocs.DELETE("/sections/:sid", handleDeleteSection(svc, docslot.ScopeProject))
 	}
 
+	// 任务文档路由 - 新统一路径，保留旧路径兼容
+	taskDocs := router.Group("/projects/:id/tasks/:task_id/docs/:slot")
+	{
+		taskDocs.GET("/export", handleTaskDocExport(svc))
+		taskDocs.POST("/append", handleTaskDocAppend(svc))
+	}
+
 	// 会议文档路由 - 使用 :meeting_id 以匹配现有路由命名
 	meetingDocs := router.Group("/meetings/:meeting_id/docs/:slot")
 	{
@@ -104,6 +111,80 @@ func handleAppend(svc docslot.UnifiedDocService, scope docslot.DocumentScope) gi
 		}
 
 		result, err := svc.Append(scope, scopeID, slotKey, req.Content, username, req.ExpectedVersion, req.Op, req.Source)
+		if err != nil {
+			handleDocSlotError(c, err)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"version":   result.Version,
+			"etag":      result.ETag,
+			"duplicate": result.Duplicate,
+			"sequence":  result.Sequence,
+			"timestamp": result.Timestamp,
+		})
+	}
+}
+
+func handleTaskDocExport(svc docslot.UnifiedDocService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		projectID := c.Param("id")
+		taskID := c.Param("task_id")
+		slotKey := c.Param("slot")
+
+		result, err := svc.ExportTask(projectID, taskID, slotKey)
+		if err != nil {
+			handleDocSlotError(c, err)
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"content":    result.Content,
+			"version":    result.Version,
+			"etag":       result.ETag,
+			"updated_at": result.UpdatedAt,
+			"exists":     result.Exists,
+		})
+	}
+}
+
+func handleTaskDocAppend(svc docslot.UnifiedDocService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		projectID := c.Param("id")
+		taskID := c.Param("task_id")
+		slotKey := c.Param("slot")
+
+		var req struct {
+			Content         string `json:"content"`
+			ExpectedVersion *int   `json:"expected_version"`
+			Op              string `json:"op"`
+			Source          string `json:"source"`
+		}
+
+		if err := c.ShouldBindJSON(&req); err != nil {
+			badRequestResponse(c, "invalid request body")
+			return
+		}
+
+		if req.Op == "" {
+			req.Op = "add_full"
+		}
+		if req.Op != "add_full" && req.Op != "replace_full" {
+			badRequestResponse(c, "invalid op, must be 'add_full' or 'replace_full'")
+			return
+		}
+		if strings.TrimSpace(req.Content) == "" && req.Op != "replace_full" {
+			badRequestResponse(c, "content is required for add_full operation")
+			return
+		}
+
+		userVal, _ := c.Get("user")
+		username, _ := userVal.(string)
+		if username == "" {
+			username = "anonymous"
+		}
+
+		result, err := svc.AppendTask(projectID, taskID, slotKey, req.Content, username, req.ExpectedVersion, req.Op, req.Source)
 		if err != nil {
 			handleDocSlotError(c, err)
 			return

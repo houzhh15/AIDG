@@ -518,6 +518,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:slot/export": {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/docs/:slot/append": {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/requirements/append": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/requirements/chunks": {users.ScopeTaskRead},
 		"DELETE /api/v1/projects/:id/tasks/:task_id/requirements/chunks/:seq": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/requirements/export": {users.ScopeTaskRead},
 		"POST /api/v1/projects/:id/tasks/:task_id/design/append": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/design/chunks": {users.ScopeTaskRead},

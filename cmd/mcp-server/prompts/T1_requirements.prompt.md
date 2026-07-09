@@ -33,10 +33,10 @@ version: 1.2
 **第二步：全面取证 (Comprehensive Evidence Gathering)**
 *   基于获取的 `project_id` 和 `task_id`，调用以下工具收集完整的上下文信息：
     *   **项目级上下文:**
-        *   `get_project_document` slot_key=feature_list format=markdown: 理解当前任务所属的更高层级的特性目标。
-        *   `get_project_document` slot_key=architecture_design: 了解现有的技术架构，以识别潜在的技术约束。
+        *   `aidg_read_document` slot_key=feature_list: 理解当前任务所属的更高层级的特性目标。
+        *   `aidg_read_document` slot_key=architecture_design: 了解现有的技术架构，以识别潜在的技术约束。
     *   **任务级上下文:**
-        *   `get_task_document` slot_key=requirements: 获取已有的需求草案或历史版本，在其基础上进行迭代和完善。
+        *   `aidg_read_document` slot_key=requirements: 获取已有的需求草案或历史版本，在其基础上进行迭代和完善。
     *   **当前代码实现：**
         查看当前根目录下的代码文件，理解现有功能和实现细节，合理推断新增需求。
 
@@ -50,17 +50,15 @@ version: 1.2
 
 **第五步：更新需求文档 (Update Requirement Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
-*   调用 `update_task_document(project_id, task_id, slot_key=requirements, content)` 工具，将需求文档持久化到系统中。
+*   调用 `aidg_write_document(project_id, task_id, slot_key=requirements, content)` 工具，将需求文档持久化到系统中。
 
-### 章节级编辑标准流程 (Section-Level Editing Workflow)
-当你的改动仅涉及文档某一章节/局部内容，必须优先使用章节工具链，禁止直接全文覆盖：
-1. `get_task_doc_sections` 获取最新章节树（必需）
-2. `get_task_doc_section` (可选) 读取目标章节基线内容
-3. 生成最小必要修改（未变部分保持不动）
-4. `update_task_doc_section` 提交局部正文更新（必要时带 expected_version）
-5. 新增章节：`insert_task_doc_section` （需要定位则提供 after_section_id）
-6. 删除章节：`delete_task_doc_section` （谨慎，若级联删除需 cascade=true）
-禁止：仅为修改一小段文本而调用 `update_task_document`。全文重写需明确是大规模重构并具备充分理由。
+### 局部编辑标准流程 (Local Editing Workflow)
+当你的改动仅涉及文档某一章节/局部内容，必须优先使用 `aidg_edit_document`，禁止直接全文覆盖：
+1. `aidg_read_document(slot_key=requirements, start_line=..., end_line=...)` 读取目标上下文。
+2. 从读取结果中提取原始片段作为 `old_text`（可去掉行号；工具会容错剥离行号前缀）。
+3. 生成最小必要修改（未变部分保持不动）。
+4. `aidg_edit_document(slot_key=requirements, old_text=..., new_text=...)` 提交局部替换；若匹配多处，扩大上下文后重试，确需批量替换时才使用 `replace_all=true`。
+5. 新增/删除章节也通过 `aidg_edit_document` 替换相邻上下文实现；只有大规模重写或首次创建文档时才使用 `aidg_write_document(append=false)`。
 
 ## 4. 需求文档结构 (Requirement Document Structure)
 

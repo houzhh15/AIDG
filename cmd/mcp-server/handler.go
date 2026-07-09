@@ -34,11 +34,11 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	// 会议列表工具 (1个)
 	registry.Register(&tools.ListAllMeetingsTool{})
 
-	// ===== 通用文档工具 (9个) =====
-	// 任务文档通用工具 (3个)
-	registry.Register(&tools.GetTaskDocumentTool{Registry: slotRegistry})
-	registry.Register(&tools.UpdateTaskDocumentTool{Registry: slotRegistry})
-	registry.Register(&tools.AppendTaskDocumentTool{Registry: slotRegistry})
+	// ===== 通用文档工具 =====
+	// 新统一任务/项目文档工具。旧 task/project document 工具和 task section 工具代码保留但不注册。
+	registry.Register(&tools.AIDGReadDocumentTool{})
+	registry.Register(&tools.AIDGEditDocumentTool{})
+	registry.Register(&tools.AIDGWriteDocumentTool{})
 
 	// 会议文档通用工具 (2个)
 	registry.Register(&tools.GetMeetingDocumentTool{Registry: slotRegistry})
@@ -50,9 +50,7 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	// SyncMeetingDocSectionsTool - 暂时屏蔽，后端 docslot 服务未实现 sync endpoint
 	// registry.Register(&tools.SyncMeetingDocSectionsTool{})
 
-	// 项目文档通用工具 (2个)
-	registry.Register(&tools.GetProjectDocumentTool{Registry: slotRegistry})
-	registry.Register(&tools.UpdateProjectDocumentTool{Registry: slotRegistry})
+	// 旧项目文档工具已屏蔽：使用 aidg_read_document / aidg_edit_document / aidg_write_document。
 
 	// === 以下工具暂时屏蔽（代码保留但不注册） ===
 	// 多层级文档内容工具 (2个) - 暂时屏蔽
@@ -74,13 +72,7 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry.Register(&tools.GetProjectTaskPromptsTool{})
 	registry.Register(&tools.CreateProjectTaskPromptTool{})
 
-	// 章节管理工具 (6个)
-	registry.Register(&tools.GetTaskDocSectionsTool{})
-	registry.Register(&tools.GetTaskDocSectionTool{})
-	registry.Register(&tools.UpdateTaskDocSectionTool{})
-	registry.Register(&tools.InsertTaskDocSectionTool{})
-	registry.Register(&tools.DeleteTaskDocSectionTool{})
-	registry.Register(&tools.SyncTaskDocSectionsTool{})
+	// 旧任务章节工具已屏蔽：使用 aidg_read_document / aidg_edit_document / aidg_write_document。
 
 	// 项目进展和任务总结工具 - 暂时屏蔽 progress_summary 和 update_progress
 	// registry.Register(&tools.ProgressSummaryTool{})

@@ -16,11 +16,11 @@ version: 1.1
 1. get_user_current_task：无 → 输出 NO_TASK 终止。
 2. 取证最小：
   - get_execution_plan (现有执行计划)
-  - get_task_document slot_key=design (现有设计)
+  - aidg_read_document slot_key=design (现有设计)
   - 现有代码（根目录下）
-  - 可选：需求 → get_task_document slot_key=requirements（需要验证业务规则时）
-  - 可选：架构 → get_project_document slot_key=architecture_design（架构边界/规范/接口时）
-  - 可选：项目特性 → get_project_document slot_key=feature_list format=markdown
+  - 可选：需求 → aidg_read_document slot_key=requirements（需要验证业务规则时）
+  - 可选：架构 → aidg_read_document slot_key=architecture_design（架构边界/规范/接口时）
+  - 可选：项目特性 → aidg_read_document slot_key=feature_list
   - slot_key 白名单：task=requirements|design|test；project=feature_list|architecture_design；禁止自造。
    - 缺失用 <缺失: X> 标注。
 3. 后执行，生成markdown格式的“任务分解清单”,包含完整的执行步骤,格式要求见下。每个步骤用非结构化语言进行详细描述（不带有markdown格式与特殊符号，防止格式解析错误，信息丢失），述必须清晰、具体、可执行，禁止模糊和抽象。

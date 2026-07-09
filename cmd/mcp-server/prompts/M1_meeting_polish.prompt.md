@@ -17,8 +17,8 @@ arguments:
 - list_all_meetings
 - get_meeting_document
 - update_meeting_document
-- get_task_doc_sections
-- update_task_section
+- get_meeting_doc_sections
+- update_meeting_doc_section
 
 ## 润色要求
 通过mcp工具获得原始文本 merged_all , 这是语音转换文字的对话记录，每5分钟一个chunk，其中有太多语音理解错误。请完整读取这个文件，结合上下文推测其中真实表达的意思，使用更流畅的语言，重新表达对话过程。尝试还原出当时对话的场景，提升整体的易读性。调用mcp工具获取 会议背景记录，可作为推测依据。以每5分钟为一个章节，完整重写会议详细过程，生成polish.md并提交mcp。内容样例见下方，请保留说话人标识（SPK00，SPK01等）和时间顺序，但润色内容请重新表达。
@@ -34,7 +34,7 @@ arguments:
 2.  get_meeting_document(meeting_id,merged_all) 获取原始会议记录（merged_all.md）。
 3.  （可选步骤）get_meeting_document(meeting_id,context) 获取会议背景（meeting_context.md）。
 4.  结合 merged_all.md 和 meeting_context.md 的信息，推测真实表达的意思，使用更流畅的语言，重新表达对话过程，提升易读性。
-5.  以每5分钟为一个章节，生成润色后的会议记录。先使用 updata_meeting_document 提交所有的章节包括子章节。update_meeting_document(content=所有章节标题, meeting_id, polish) 
+5.  以每5分钟为一个章节，生成润色后的会议记录。先使用 update_meeting_document 提交所有的章节包括子章节。update_meeting_document(content=所有章节标题, meeting_id, polish) 
 6.  调用 get_meeting_doc_sections 获得章节信息
-7.  使用 update_meeting_section更新章节内容。但不要包含任何标题。
+7.  使用 update_meeting_doc_section 更新章节内容。但不要包含任何标题。
 

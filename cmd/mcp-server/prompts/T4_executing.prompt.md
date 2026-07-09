@@ -12,11 +12,11 @@ version: 1.1
 1. get_user_current_task：无 → 输出 NO_TASK 终止。
 2. 取证最小：
    - get_execution_plan (现有执行计划)
-   - get_task_document slot_key=design (现有设计)
-   - 可选：需求 → get_task_document slot_key=requirements（需要验证业务规则时）
-   - 可选：架构 → get_project_document slot_key=architecture_design（架构边界/规范/接口时）
-   - 可选：项目特性 → get_project_document slot_key=feature_list format=markdown
-   - slot_key 白名单：task文档仅 requirements / design；project文档仅 feature_list / architecture_design；禁止臆造，缺失用 <缺失: ...> 标注。
+   - aidg_read_document slot_key=design (现有设计)
+   - 可选：需求 → aidg_read_document slot_key=requirements（需要验证业务规则时）
+   - 可选：架构 → aidg_read_document slot_key=architecture_design（架构边界/规范/接口时）
+   - 可选：项目特性 → aidg_read_document slot_key=feature_list
+   - slot_key 白名单：task文档仅 requirements / design / test；project文档仅 feature_list / architecture_design；禁止臆造，缺失用 <缺失: ...> 标注。
    - 缺失用 <缺失: X> 标注。
 3. 解析 "现有执行计划" 识别所有步骤及其状态, 生成本次执行Plan;
 4. 执行Plan，包含以下几个步骤：
