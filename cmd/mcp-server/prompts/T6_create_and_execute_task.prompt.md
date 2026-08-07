@@ -35,8 +35,8 @@ arguments:
 
 ### **第二步：收集项目级上下文 (Gather Project-Level Context)**
 *   基于获取的 `project_id`，调用以下工具收集项目级上下文：
-    *   `aidg_read_document` slot_key=feature_list: 了解项目的特性列表，确保新任务与项目目标一致。
-    *   `aidg_read_document` slot_key=architecture_design: 了解项目的整体架构，确保新任务的设计符合架构约束。
+    *   `read_document` slot_key=feature_list: 了解项目的特性列表，确保新任务与项目目标一致。
+    *   `read_document` slot_key=architecture_design: 了解项目的整体架构，确保新任务的设计符合架构约束。
 *   **slot_key 使用规范：**
     *   项目文档工具只允许使用：`feature_list`, `architecture_design`；统一使用 Markdown 文档，不再使用 `format=json`。
     *   任何不在白名单内的 slot_key 一律视为无效，应直接终止并标注 `<缺失: 需要合法 slot_key>`。
@@ -64,8 +64,8 @@ arguments:
     4.  **非功能性需求 (Non-Functional Requirements):** 性能、安全、可维护性等要求
     5.  **约束与依赖 (Constraints & Dependencies):** 技术约束、外部依赖
     6.  **验收标准 (Acceptance Criteria):** 可验证的完成标准
-*   调用 `aidg_write_document(project_id, task_id, slot_key=requirements, content)` 提交需求文档。
-*   如果文档过长，使用 `aidg_write_document` 分块提交：首次 `append=false`，后续 `append=true`。
+*   调用 `write_document(project_id, task_id, slot_key=requirements, content)` 提交需求文档。
+*   如果文档过长，使用 `write_document` 分块提交：首次 `append=false`，后续 `append=true`。
 
 ### **第六步：生成并提交设计文档 (Generate & Submit Design)**
 *   基于需求文档和项目架构，生成一份完整的设计文档（参考 T2_design 模版）。
@@ -75,8 +75,8 @@ arguments:
     3.  **详细设计 (Detailed Design):** 组件详述、接口定义（API）、数据模型
     4.  **关键非功能性设计 (Key Non-Functional Design):** 错误处理、日志监控、安全性
     5.  **风险与待办 (Risks & Todos):** 潜在风险、待决策项
-*   调用 `aidg_write_document(project_id, task_id, slot_key=design, content)` 提交设计文档。
-*   如果文档过长，使用 `aidg_write_document` 分块提交：首次 `append=false`，后续 `append=true`。
+*   调用 `write_document(project_id, task_id, slot_key=design, content)` 提交设计文档。
+*   如果文档过长，使用 `write_document` 分块提交：首次 `append=false`，后续 `append=true`。
 
 ### **第七步：生成并提交执行计划 (Generate & Submit Execution Plan)**
 *   基于设计文档，生成一份结构化的执行计划（参考 T3_planning 模版）。
@@ -124,13 +124,13 @@ arguments:
 
 #### **文档分块与局部编辑流程 (Document Chunking & Local Editing Workflow)**
 
-当需求或设计文档过长时，使用 `aidg_write_document` 分块提交：
+当需求或设计文档过长时，使用 `write_document` 分块提交：
 
-1. 第一次调用 `aidg_write_document(slot_key=..., content=第一块内容, append=false)` 创建或覆盖文档。
-2. 后续块调用 `aidg_write_document(slot_key=..., content=后续内容, append=true)` 追加。
-3. 完成后调用 `aidg_read_document(slot_key=..., start_line=..., end_line=...)` 抽查关键范围。
+1. 第一次调用 `write_document(slot_key=..., content=第一块内容, append=false)` 创建或覆盖文档。
+2. 后续块调用 `write_document(slot_key=..., content=后续内容, append=true)` 追加。
+3. 完成后调用 `read_document(slot_key=..., start_line=..., end_line=...)` 抽查关键范围。
 
-当只修改局部内容时，使用 `aidg_edit_document(slot_key=..., old_text=..., new_text=...)` 做最小替换；若只知道行号，先用 `aidg_read_document` 读取范围，再用返回内容构造 `old_text`。
+当只修改局部内容时，使用 `edit_document(slot_key=..., old_text=..., new_text=...)` 做最小替换；若只知道行号，先用 `read_document` 读取范围，再用返回内容构造 `old_text`。
 
 ### **第八步：提交执行计划 (Submit Execution Plan)**
 *   调用 `update_execution_plan(project_id, task_id, content)` 提交执行计划。
@@ -190,11 +190,11 @@ arguments:
 *   `list_project_tasks(project_id)`: 列出项目的所有任务。
 
 #### **文档管理工具 (Document Management)**
-*   `aidg_read_document(slot_key, project_id?, task_id?, start_line?, end_line?)`: 读取任务或项目文档。
+*   `read_document(slot_key, project_id?, task_id?, start_line?, end_line?)`: 读取任务或项目文档。
     *   任务文档槽位：`requirements`, `design`, `test`（需要 `task_id`，缺失时从当前任务获取）。
     *   项目文档槽位：`feature_list`, `architecture_design`（只需要 `project_id`）。
-*   `aidg_edit_document(slot_key, old_text?, new_text?, project_id?, task_id?, start_line?, end_line?, replace_all?)`: 局部编辑文档；若缺少 `old_text`，传 `start_line/end_line` 获取 `old_text_hint`。
-*   `aidg_write_document(slot_key, content, project_id?, task_id?, append?, expected_version?)`: 创建、覆盖或追加文档；首次写入 `append=false`，长文后续分块 `append=true`。
+*   `edit_document(slot_key, old_text?, new_text?, project_id?, task_id?, start_line?, end_line?, replace_all?)`: 局部编辑文档；若缺少 `old_text`，传 `start_line/end_line` 获取 `old_text_hint`。
+*   `write_document(slot_key, content, project_id?, task_id?, append?, expected_version?)`: 创建、覆盖或追加文档；首次写入 `append=false`，长文后续分块 `append=true`。
 
 #### **执行计划工具 (Execution Plan Tools)**
 *   `get_execution_plan(project_id?, task_id?)`: 获取执行计划。
@@ -225,8 +225,8 @@ arguments:
 
 # Context
 ## 项目级上下文
-- 特性列表: <从 aidg_read_document(feature_list) 提炼的关键特性>
-- 架构设计: <从 aidg_read_document(architecture_design) 提炼的关键架构约束>
+- 特性列表: <从 read_document(feature_list) 提炼的关键特性>
+- 架构设计: <从 read_document(architecture_design) 提炼的关键架构约束>
 
 ## 任务描述
 {task_description}
@@ -251,7 +251,7 @@ arguments:
 - 所有引用必须可追溯到取证工具输出
 - 严格遵循 slot_key 白名单，禁止自造
 - 执行计划必须严格遵循 Markdown 格式要求，禁止使用 Markdown 格式或特殊符号在步骤描述中
-- 长文必须使用 `aidg_write_document` 分块提交：首次 `append=false`，后续 `append=true`；局部修改优先使用 `aidg_edit_document`
+- 长文必须使用 `write_document` 分块提交：首次 `append=false`，后续 `append=true`；局部修改优先使用 `edit_document`
 
 # Expected Output
 1. 任务创建成功确认（task_id）
@@ -345,7 +345,7 @@ arguments:
 ## 9. 注意事项 (Important Notes)
 
 1.  **Markdown 格式严格性：** 执行计划的 Markdown 格式必须严格遵守，否则会导致解析失败。特别注意步骤描述中不要包含 Markdown 格式或特殊符号。
-2.  **分块写入与局部编辑优先：** 当文档过长时，必须使用 `aidg_write_document` 分块写入；局部修改使用 `aidg_edit_document`，禁止不必要的全文覆盖。
+2.  **分块写入与局部编辑优先：** 当文档过长时，必须使用 `write_document` 分块写入；局部修改使用 `edit_document`，禁止不必要的全文覆盖。
 3.  **slot_key 白名单：** 严格遵守 slot_key 白名单，禁止自造或使用废弃的工具名。
 4.  **错误处理：** 遇到错误时，按照错误处理策略执行，最多重试 2 次，失败则终止并输出明确的错误信息。
 5.  **状态追溯：** 所有关键步骤和状态变更都必须记录，确保过程可追溯。

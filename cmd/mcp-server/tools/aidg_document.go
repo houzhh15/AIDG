@@ -33,7 +33,7 @@ type AIDGEditDocumentTool struct{}
 
 type AIDGWriteDocumentTool struct{}
 
-func (t *AIDGReadDocumentTool) Name() string { return "aidg_read_document" }
+func (t *AIDGReadDocumentTool) Name() string { return "read_document" }
 
 func (t *AIDGReadDocumentTool) Description() string {
 	return "读取 AIDG 文档内容，对应 read_file 语义。通过 slot_key 自动区分任务文档（requirements/design/test，需要 task_id）和项目文档（feature_list/architecture_design）。支持 start_line/end_line 部分读取，返回带行号的内容。"
@@ -70,7 +70,7 @@ func (t *AIDGReadDocumentTool) Execute(args map[string]interface{}, clientToken 
 	return string(b), nil
 }
 
-func (t *AIDGWriteDocumentTool) Name() string { return "aidg_write_document" }
+func (t *AIDGWriteDocumentTool) Name() string { return "write_document" }
 
 func (t *AIDGWriteDocumentTool) Description() string {
 	return "创建、覆盖或追加 AIDG 文档内容，对应 write_file 语义。append=false 覆盖写入，append=true 追加写入；长文分块时首次覆盖，后续使用 append=true。为支持截断恢复，调用时应先给出 project_id/task_id/slot_key/append，再给出 content。"
@@ -87,12 +87,12 @@ func (t *AIDGWriteDocumentTool) Execute(args map[string]interface{}, clientToken
 	}
 	content, err := shared.SafeGetString(args, "content")
 	if err != nil {
-		return "", fmt.Errorf("aidg_write_document: %w", err)
+		return "", fmt.Errorf("write_document: %w", err)
 	}
 	return writeAIDGDocument(target, content, optionalBool(args, "append"), args["expected_version"], clientToken, apiClient)
 }
 
-func (t *AIDGEditDocumentTool) Name() string { return "aidg_edit_document" }
+func (t *AIDGEditDocumentTool) Name() string { return "edit_document" }
 
 func (t *AIDGEditDocumentTool) Description() string {
 	return "精确编辑 AIDG 文档内容，对应 edit_file 语义。编辑时传 old_text/new_text；old_text 必须精确匹配原始内容。若只传 start_line/end_line，将返回 old_text_hint 供下一次调用。默认要求唯一匹配，replace_all=true 时替换所有匹配。"
@@ -128,7 +128,7 @@ func (t *AIDGEditDocumentTool) Execute(args map[string]interface{}, clientToken 
 		return string(b), nil
 	}
 	if !newOK {
-		return "", fmt.Errorf("aidg_edit_document: new_text is required when old_text is provided")
+		return "", fmt.Errorf("edit_document: new_text is required when old_text is provided")
 	}
 	oldText = stripAIDGReadLinePrefixes(oldText)
 	newText = stripAIDGReadLinePrefixes(newText)

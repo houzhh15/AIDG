@@ -32,11 +32,11 @@ version: 1.1
 **第二步：全面取证 (Comprehensive Evidence Gathering)**
 *   基于获取的 `project_id` 和 `task_id`，调用以下工具收集完整的上下文信息：
     *   **项目级上下文:**
-        *   `aidg_read_document`, slot_key=architecture_design: 理解当前的总体架构。
-        *   `aidg_read_document`, slot_key=feature_list: 了解相关的项目特性。
+        *   `read_document`, slot_key=architecture_design: 理解当前的总体架构。
+        *   `read_document`, slot_key=feature_list: 了解相关的项目特性。
     *   **任务级上下文:**
-        *   `aidg_read_document`, slot_key=requirements: 获取本次设计的详细需求。
-        *   `aidg_read_document`, slot_key=design: 获取已有的设计草案或历史版本，在其基础上进行迭代。
+        *   `read_document`, slot_key=requirements: 获取本次设计的详细需求。
+        *   `read_document`, slot_key=design: 获取已有的设计草案或历史版本，在其基础上进行迭代。
     *   **当前代码实现：**
         查看当前根目录下的代码文件，理解现有功能和实现细节，合理推断新增设计。
 *   **slot_key 使用规范 (来源枚举说明)：**
@@ -56,15 +56,15 @@ version: 1.1
 
 **第五步：更新设计文档 (Update Design Document)**
 *   将上一步生成的完整 Markdown 内容作为参数。
-*   调用 `aidg_write_document(project_id, task_id, slot_key=design, content, append=false)` 工具，将设计方案持久化到系统中。如果文档过长不要一次提交，按分块流程首次 `append=false`、后续 `append=true`，直至全部完成。
+*   调用 `write_document(project_id, task_id, slot_key=design, content, append=false)` 工具，将设计方案持久化到系统中。如果文档过长不要一次提交，按分块流程首次 `append=false`、后续 `append=true`，直至全部完成。
 
 ### 局部编辑标准流程 (Local Editing Workflow)
-当你的改动仅涉及文档某一章节/局部内容，必须优先使用 `aidg_edit_document`，禁止直接全文覆盖：
-1. `aidg_read_document(slot_key=design, start_line=..., end_line=...)` 读取目标上下文。
+当你的改动仅涉及文档某一章节/局部内容，必须优先使用 `edit_document`，禁止直接全文覆盖：
+1. `read_document(slot_key=design, start_line=..., end_line=...)` 读取目标上下文。
 2. 从读取结果中提取原始片段作为 `old_text`（可去掉行号；工具会容错剥离行号前缀）。
 3. 生成最小必要修改（未变部分保持不动）。
-4. `aidg_edit_document(slot_key=design, old_text=..., new_text=...)` 提交局部替换；若匹配多处，扩大上下文后重试，确需批量替换时才使用 `replace_all=true`。
-5. 新增/删除章节也通过 `aidg_edit_document` 替换相邻上下文实现；只有大规模重写或首次创建文档时才使用 `aidg_write_document(append=false)`。
+4. `edit_document(slot_key=design, old_text=..., new_text=...)` 提交局部替换；若匹配多处，扩大上下文后重试，确需批量替换时才使用 `replace_all=true`。
+5. 新增/删除章节也通过 `edit_document` 替换相邻上下文实现；只有大规模重写或首次创建文档时才使用 `write_document(append=false)`。
 
 ## 4. 详细设计文档结构 (Detailed Design Document Structure)
 

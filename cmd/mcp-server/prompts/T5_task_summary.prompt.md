@@ -36,17 +36,17 @@ version: 1.1
    - `get_project_task(project_id, task_id)`: 获取任务名称、描述、状态、负责人等基本信息
 
 2. **需求文档**
-   - `aidg_read_document(project_id, task_id, slot_key=requirements)`: 了解任务的原始需求和目标
+   - `read_document(project_id, task_id, slot_key=requirements)`: 了解任务的原始需求和目标
 
 3. **设计文档**
-   - `aidg_read_document(project_id, task_id, slot_key=design)`: 了解技术设计方案和架构决策
+   - `read_document(project_id, task_id, slot_key=design)`: 了解技术设计方案和架构决策
 
 4. **执行计划与状态**
    - `get_execution_plan(project_id, task_id)`: 获取完整的执行计划，包含所有步骤的状态和输出
 
 5. **项目上下文（可选）**
-   - `aidg_read_document(project_id, slot_key=feature_list,)`: 了解任务在整体特性列表中的定位
-   - `aidg_read_document(project_id, slot_key=architecture_design)`: 了解架构约束和设计原则
+   - `read_document(project_id, slot_key=feature_list,)`: 了解任务在整体特性列表中的定位
+   - `read_document(project_id, slot_key=architecture_design)`: 了解架构约束和设计原则
 
 **第三步：分析与总结 (Analysis & Summarization)**
 

@@ -50,7 +50,7 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	// SyncMeetingDocSectionsTool - 暂时屏蔽，后端 docslot 服务未实现 sync endpoint
 	// registry.Register(&tools.SyncMeetingDocSectionsTool{})
 
-	// 旧项目文档工具已屏蔽：使用 aidg_read_document / aidg_edit_document / aidg_write_document。
+	// 旧项目文档工具已屏蔽：使用 read_document / edit_document / write_document。
 
 	// === 以下工具暂时屏蔽（代码保留但不注册） ===
 	// 多层级文档内容工具 (2个) - 暂时屏蔽
@@ -72,7 +72,7 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry.Register(&tools.GetProjectTaskPromptsTool{})
 	registry.Register(&tools.CreateProjectTaskPromptTool{})
 
-	// 旧任务章节工具已屏蔽：使用 aidg_read_document / aidg_edit_document / aidg_write_document。
+	// 旧任务章节工具已屏蔽：使用 read_document / edit_document / write_document。
 
 	// 项目进展和任务总结工具 - 暂时屏蔽 progress_summary 和 update_progress
 	// registry.Register(&tools.ProgressSummaryTool{})
