@@ -518,7 +518,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/docs/:slot/export": {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/docs/:slot/append": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/export": {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/append": {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/requirements/append": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/requirements/chunks": {users.ScopeTaskRead},
 		"DELETE /api/v1/projects/:id/tasks/:task_id/requirements/chunks/:seq": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/requirements/export": {users.ScopeTaskRead},
 		"POST /api/v1/projects/:id/tasks/:task_id/design/append": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/design/chunks": {users.ScopeTaskRead},
@@ -1874,8 +1874,8 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 		c.File(filepath.Join(frontendDistDir, "index.html"))
 	})
 
-	// ========== Start server (127.0.0.1 only) ==========
-	serverAddr := fmt.Sprintf("127.0.0.1:%s", cfg.Server.Port)
+	// Bind to all interfaces so Docker port publishing works in CI and local container runs.
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	srv := &http.Server{
 		Addr:    serverAddr,
 		Handler: r,
