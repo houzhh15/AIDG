@@ -104,14 +104,24 @@ jobs:
             -e MCP_PASSWORD=test-mcp \
             -p 8000:8000 -p 8001:8001 \
             aidg:ci-test
-          
-          # Wait for services to start
-          sleep 15
-          
-          # Check health endpoints
-          curl -f http://localhost:8000/health || exit 1
-          curl -f http://localhost:8001/health || exit 1
-          
-          # Cleanup
+
+          max_attempts=30
+          attempt=1
+          until curl -sSf http://localhost:8000/health >/dev/null 2>&1 && curl -sSf http://localhost:8001/health >/dev/null 2>&1; do
+            if [ $attempt -ge $max_attempts ]; then
+              echo "Health checks failed after $max_attempts attempts — dumping container logs"
+              docker logs aidg-test || true
+              docker ps -a || true
+              docker inspect aidg-test || true
+              docker stop aidg-test || true
+              docker rm aidg-test || true
+              exit 1
+            fi
+            echo "Waiting for services (attempt $attempt/$max_attempts)..."
+            attempt=$((attempt+1))
+            sleep 2
+          done
+
+          echo "Services are healthy"
           docker stop aidg-test
           docker rm aidg-test
