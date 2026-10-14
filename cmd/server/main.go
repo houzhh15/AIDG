@@ -1874,8 +1874,8 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 		c.File(filepath.Join(frontendDistDir, "index.html"))
 	})
 
-	// ========== Start server (127.0.0.1 only) ==========
-	serverAddr := fmt.Sprintf("127.0.0.1:%s", cfg.Server.Port)
+	// Bind to all interfaces so Docker port publishing works in CI and local container runs.
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	srv := &http.Server{
 		Addr:    serverAddr,
 		Handler: r,
