@@ -27,7 +27,10 @@ func RegisterUnifiedDocRoutes(router *gin.RouterGroup, svc docslot.UnifiedDocSer
 	}
 
 	// 任务文档路由 - 新统一路径，保留旧路径兼容
-	taskDocs := router.Group("/projects/:id/tasks/:task_id/docs/:slot")
+	// Keep the wildcard name aligned with the existing document tag routes.
+	// Gin requires routes that share a wildcard node to use the same parameter
+	// name, even when their trailing path segments differ.
+	taskDocs := router.Group("/projects/:id/tasks/:task_id/docs/:docType")
 	{
 		taskDocs.GET("/export", handleTaskDocExport(svc))
 		taskDocs.POST("/append", handleTaskDocAppend(svc))
@@ -130,7 +133,7 @@ func handleTaskDocExport(svc docslot.UnifiedDocService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
 		taskID := c.Param("task_id")
-		slotKey := c.Param("slot")
+		slotKey := c.Param("docType")
 
 		result, err := svc.ExportTask(projectID, taskID, slotKey)
 		if err != nil {
@@ -152,7 +155,7 @@ func handleTaskDocAppend(svc docslot.UnifiedDocService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
 		taskID := c.Param("task_id")
-		slotKey := c.Param("slot")
+		slotKey := c.Param("docType")
 
 		var req struct {
 			Content         string `json:"content"`
