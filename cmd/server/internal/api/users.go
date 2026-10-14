@@ -103,12 +103,6 @@ func HandleCreateUser(userManager *users.Manager) gin.HandlerFunc {
 			return
 		}
 
-		// 验证密码
-		if req.Password == "" {
-			badRequestResponse(c, "password is required")
-			return
-		}
-
 		// 创建用户
 		user, err := userManager.CreateUser(req.Username, req.Password, req.Scopes)
 		if err != nil {
