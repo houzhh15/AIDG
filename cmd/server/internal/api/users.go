@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
@@ -112,9 +113,12 @@ func HandleCreateUser(userManager *users.Manager) gin.HandlerFunc {
 		// 创建用户
 		user, err := userManager.CreateUser(req.Username, req.Password, req.Scopes)
 		if err != nil {
-			if err.Error() == "user already exists" {
+			switch {
+			case errors.Is(err, users.ErrUserExists):
 				errorResponse(c, http.StatusConflict, "user already exists")
-			} else {
+			case errors.Is(err, users.ErrUsernameRequired), errors.Is(err, users.ErrPasswordRequired):
+				badRequestResponse(c, err.Error())
+			default:
 				errorResponse(c, http.StatusInternalServerError, "failed to create user")
 			}
 			return
@@ -146,7 +150,7 @@ func HandleUpdateUser(userManager *users.Manager) gin.HandlerFunc {
 		// 更新用户
 		user, err := userManager.UpdateUser(username, req.Scopes)
 		if err != nil {
-			if err.Error() == "not found" {
+			if errors.Is(err, users.ErrUserNotFound) {
 				notFoundResponse(c, "user")
 			} else {
 				errorResponse(c, http.StatusInternalServerError, "failed to update user")
@@ -177,7 +181,7 @@ func HandleDeleteUser(userManager *users.Manager) gin.HandlerFunc {
 
 		// 删除用户
 		if err := userManager.DeleteUser(username); err != nil {
-			if err.Error() == "not found" {
+			if errors.Is(err, users.ErrUserNotFound) {
 				notFoundResponse(c, "user")
 			} else {
 				errorResponse(c, http.StatusInternalServerError, "failed to delete user")
@@ -211,10 +215,14 @@ func HandleChangePassword(userManager *users.Manager) gin.HandlerFunc {
 
 		// 修改密码
 		if err := userManager.ChangePassword(username, req.OldPassword, req.NewPassword); err != nil {
-			if err.Error() == "not found" {
+			if errors.Is(err, users.ErrUserNotFound) {
 				notFoundResponse(c, "user")
-			} else if err.Error() == "invalid password" {
+			} else if errors.Is(err, users.ErrInvalidCredentials) {
 				errorResponse(c, http.StatusUnauthorized, "old password is incorrect")
+			} else if errors.Is(err, users.ErrPasswordRequired) {
+				badRequestResponse(c, "new password is required")
+			} else if errors.Is(err, users.ErrExternalUser) {
+				badRequestResponse(c, "external users cannot change local passwords")
 			} else {
 				errorResponse(c, http.StatusInternalServerError, "failed to update password")
 			}

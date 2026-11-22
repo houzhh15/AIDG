@@ -1,18 +1,53 @@
 package users
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
+
+const (
+	maxUserStoreBytes = 8 << 20
+	maxUsers          = 10000
+	bcryptPrefix      = "$aidg-bcrypt-sha256$v1$"
+)
+
+var (
+	ErrUserNotFound       = errors.New("user not found")
+	ErrUserExists         = errors.New("user already exists")
+	ErrUsernameRequired   = errors.New("username required")
+	ErrPasswordRequired   = errors.New("password required")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrUserDisabled       = errors.New("user disabled")
+	ErrExternalUser       = errors.New("external user has no local password")
+	ErrCredentialUpgrade  = errors.New("credential hash upgrade failed")
+	ErrInvalidUserStore   = errors.New("invalid user store")
+)
+
+var legacyPasswordPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+type persistError struct {
+	err       error
+	committed bool
+}
+
+func (e *persistError) Error() string { return e.err.Error() }
+func (e *persistError) Unwrap() error { return e.err }
 
 // Scope definitions
 const (
@@ -118,70 +153,286 @@ func NewManager(storeDir string, secret []byte) (*Manager, error) {
 	return m, nil
 }
 
-// hashPassword 简单 sha256；生产系统应使用 bcrypt/argon2
-func hashPassword(pw string) string {
-	s := sha256.Sum256([]byte(pw))
-	return hex.EncodeToString(s[:])
+func legacyPasswordHash(password string) string {
+	sum := sha256.Sum256([]byte(password))
+	return hex.EncodeToString(sum[:])
 }
 
-// load 从文件读取
-func (m *Manager) load() error {
-	b, err := os.ReadFile(m.storePath)
+func hashPassword(password string) (string, error) {
+	digest := legacyPasswordHash(password)
+	hash, err := bcrypt.GenerateFromPassword([]byte(digest), bcrypt.DefaultCost)
 	if err != nil {
-		return nil // first run
+		return "", err
 	}
-	var arr []*User
-	if err := json.Unmarshal(b, &arr); err != nil {
-		return err
+	return bcryptPrefix + string(hash), nil
+}
+
+func verifyPassword(stored, password string) (bool, bool) {
+	if legacyPasswordPattern.MatchString(stored) {
+		return stored == legacyPasswordHash(password), true
 	}
-	for _, u := range arr {
-		m.users[u.Username] = u
+	if !strings.HasPrefix(stored, bcryptPrefix) {
+		return false, false
+	}
+	err := bcrypt.CompareHashAndPassword([]byte(strings.TrimPrefix(stored, bcryptPrefix)), []byte(legacyPasswordHash(password)))
+	return err == nil, false
+}
+
+func (m *Manager) load() error {
+	info, err := os.Lstat(m.storePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidUserStore, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: users.json must be a regular file", ErrInvalidUserStore)
+	}
+	file, err := os.Open(m.storePath)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidUserStore, err)
+	}
+	defer file.Close()
+	reader := bufio.NewReader(io.LimitReader(file, maxUserStoreBytes+1))
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	var users []*User
+	if err := decoder.Decode(&users); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidUserStore, err)
+	}
+	if len(users) > maxUsers {
+		return fmt.Errorf("%w: too many users", ErrInvalidUserStore)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("%w: trailing data", ErrInvalidUserStore)
+	}
+	if buffered, _ := io.ReadAll(reader); len(buffered) > 0 || info.Size() > maxUserStoreBytes {
+		return fmt.Errorf("%w: file exceeds size limit", ErrInvalidUserStore)
+	}
+	loaded := make(map[string]*User, len(users))
+	for _, user := range users {
+		if err := validateStoredUser(user); err != nil {
+			return err
+		}
+		if _, exists := loaded[user.Username]; exists {
+			return fmt.Errorf("%w: duplicate username", ErrInvalidUserStore)
+		}
+		loaded[user.Username] = cloneUser(user)
+	}
+	m.users = loaded
+	return nil
+}
+
+func validateStoredUser(user *User) error {
+	if user == nil || !validUsername(user.Username) {
+		return fmt.Errorf("%w: invalid username", ErrInvalidUserStore)
+	}
+	if user.Source == "" {
+		user.Source = SourceLocal
+	}
+	if user.Source == SourceLocal {
+		if !legacyPasswordPattern.MatchString(user.Password) && !validBcryptHash(user.Password) {
+			return fmt.Errorf("%w: invalid local password hash", ErrInvalidUserStore)
+		}
+	} else if user.Source != SourceExternal {
+		return fmt.Errorf("%w: invalid user source", ErrInvalidUserStore)
+	}
+	for _, scope := range user.Scopes {
+		if !validScope(scope) {
+			return fmt.Errorf("%w: invalid scope", ErrInvalidUserStore)
+		}
 	}
 	return nil
 }
 
-// save 写入文件（全量）
-func (m *Manager) save() error {
-	arr := []*User{}
-	for _, u := range m.users {
-		arr = append(arr, u)
+func validBcryptHash(hash string) bool {
+	if !strings.HasPrefix(hash, bcryptPrefix) {
+		return false
 	}
-	b, _ := json.MarshalIndent(arr, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(m.storePath), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(m.storePath, b, 0644)
+	_, err := bcrypt.Cost([]byte(strings.TrimPrefix(hash, bcryptPrefix)))
+	return err == nil
 }
 
-// EnsureDefaultAdmin 如果没有用户则创建 admin 默认用户
+func validUsername(username string) bool {
+	if username == "" || len(username) > 256 {
+		return false
+	}
+	for _, r := range username {
+		if r == 0 || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func validScope(scope string) bool {
+	for _, allowed := range allScopes {
+		if scope == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneUser(user *User) *User {
+	if user == nil {
+		return nil
+	}
+	copy := *user
+	copy.Scopes = append([]string(nil), user.Scopes...)
+	return &copy
+}
+
+func cloneUsers(users map[string]*User) map[string]*User {
+	copy := make(map[string]*User, len(users))
+	for username, user := range users {
+		copy[username] = cloneUser(user)
+	}
+	return copy
+}
+
+func (m *Manager) persist(users map[string]*User) error {
+	usernames := make([]string, 0, len(users))
+	for username := range users {
+		usernames = append(usernames, username)
+	}
+	sort.Strings(usernames)
+	items := make([]*User, 0, len(users))
+	for _, username := range usernames {
+		items = append(items, users[username])
+	}
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(m.storePath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	if existing, err := os.ReadFile(m.storePath); err == nil {
+		if err := writeAtomicFile(m.storePath+".bak", existing, 0o600); err != nil {
+			return fmt.Errorf("write user backup: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writeAtomicFile(m.storePath, data, 0o600)
+}
+
+func writeAtomicFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if info, err := os.Lstat(path); err == nil && (info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular()) {
+		return fmt.Errorf("refusing to replace non-regular file")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	file, err := os.CreateTemp(dir, ".users-tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return &persistError{err: err, committed: true}
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return &persistError{err: err, committed: true}
+	}
+	return nil
+}
+
+func (m *Manager) commit(users map[string]*User) error {
+	if err := m.persist(users); err != nil {
+		var persistence *persistError
+		if errors.As(err, &persistence) && persistence.committed {
+			m.users = users
+		}
+		return err
+	}
+	m.users = users
+	return nil
+}
+func (m *Manager) save() error {
+	return m.persist(m.users)
+}
+
+func (m *Manager) HasUsers() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.users) > 0
+}
+
+// EnsureDefaultAdmin creates the initial administrator only with an explicit password.
 func (m *Manager) EnsureDefaultAdmin(defaultPassword string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.users) > 0 {
 		return nil
 	}
+	if defaultPassword == "" {
+		return ErrPasswordRequired
+	}
+	hash, err := hashPassword(defaultPassword)
+	if err != nil {
+		return err
+	}
 	now := time.Now()
-	m.users["admin"] = &User{Username: "admin", Password: hashPassword(defaultPassword), Scopes: allScopes, CreatedAt: now, UpdatedAt: now}
-	return m.save()
+	next := cloneUsers(m.users)
+	next["admin"] = &User{Username: "admin", Password: hash, Scopes: append([]string(nil), allScopes...), CreatedAt: now, UpdatedAt: now, Source: SourceLocal}
+	return m.commit(next)
 }
 
-// CreateUser 创建用户（用户名唯一）
 func (m *Manager) CreateUser(username, password string, scopes []string) (*User, error) {
-	if username == "" {
-		return nil, errors.New("username required")
+	if !validUsername(username) {
+		return nil, ErrUsernameRequired
 	}
 	if password == "" {
-		password = "neteye@123"
+		return nil, ErrPasswordRequired
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.users[username]; exists {
-		return nil, errors.New("user exists")
+		return nil, ErrUserExists
 	}
 	now := time.Now()
-	u := &User{Username: username, Password: hashPassword(password), Scopes: dedupScopes(scopes), CreatedAt: now, UpdatedAt: now}
-	m.users[username] = u
-	return u, m.save()
+	u := &User{Username: username, Password: hash, Scopes: dedupScopes(scopes), CreatedAt: now, UpdatedAt: now, Source: SourceLocal}
+	next := cloneUsers(m.users)
+	next[username] = u
+	if err := m.commit(next); err != nil {
+		return nil, err
+	}
+	result := cloneUser(u)
+	result.Password = ""
+	return result, nil
 }
 
 // GetUser 获取单个
@@ -215,18 +466,18 @@ func (m *Manager) ListUsers() []*User {
 func (m *Manager) UpdateUser(username string, scopes []string) (*User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	u, ok := m.users[username]
-	if !ok {
-		return nil, errors.New("not found")
+	if _, ok := m.users[username]; !ok {
+		return nil, ErrUserNotFound
 	}
-	u.Scopes = dedupScopes(scopes)
-	u.UpdatedAt = time.Now()
-	if err := m.save(); err != nil {
+	next := cloneUsers(m.users)
+	next[username].Scopes = dedupScopes(scopes)
+	next[username].UpdatedAt = time.Now()
+	if err := m.commit(next); err != nil {
 		return nil, err
 	}
-	cpy := *u
-	cpy.Password = ""
-	return &cpy, nil
+	result := cloneUser(next[username])
+	result.Password = ""
+	return result, nil
 }
 
 // DeleteUser 删除
@@ -234,46 +485,89 @@ func (m *Manager) DeleteUser(username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.users[username]; !ok {
-		return errors.New("not found")
+		return ErrUserNotFound
 	}
-	delete(m.users, username)
-	return m.save()
+	next := cloneUsers(m.users)
+	delete(next, username)
+	return m.commit(next)
 }
 
 // ChangePassword 修改密码
 func (m *Manager) ChangePassword(username, oldPassword, newPassword string) error {
+	if newPassword == "" {
+		return ErrPasswordRequired
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u, ok := m.users[username]
 	if !ok {
-		return errors.New("not found")
+		return ErrUserNotFound
 	}
-	if u.Password != hashPassword(oldPassword) {
-		return errors.New("old password incorrect")
+	if u.Source == SourceExternal {
+		return ErrExternalUser
 	}
-	u.Password = hashPassword(newPassword)
-	u.UpdatedAt = time.Now()
-	return m.save()
+	valid, _ := verifyPassword(u.Password, oldPassword)
+	if !valid {
+		return ErrInvalidCredentials
+	}
+	hash, err := hashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	next := cloneUsers(m.users)
+	next[username].Password = hash
+	next[username].UpdatedAt = time.Now()
+	return m.commit(next)
 }
 
 // Authenticate 验证用户名密码
 func (m *Manager) Authenticate(username, password string) (*User, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	u, ok := m.users[username]
-	if !ok {
-		return nil, errors.New("invalid credentials")
+	if !ok || u.Source == SourceExternal {
+		m.mu.RUnlock()
+		return nil, ErrInvalidCredentials
 	}
-	// 检查用户是否被禁用
-	if u.Disabled {
-		return nil, errors.New("user is disabled")
+	stored := u.Password
+	disabled := u.Disabled
+	m.mu.RUnlock()
+	if disabled {
+		return nil, ErrUserDisabled
 	}
-	if u.Password != hashPassword(password) {
-		return nil, errors.New("invalid credentials")
+	valid, legacy := verifyPassword(stored, password)
+	if !valid {
+		return nil, ErrInvalidCredentials
 	}
-	cpy := *u
-	cpy.Password = ""
-	return &cpy, nil
+	var upgradedHash string
+	if legacy {
+		var err error
+		upgradedHash, err = hashPassword(password)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrCredentialUpgrade, err)
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, exists := m.users[username]
+	if !exists || current.Disabled || current.Source == SourceExternal {
+		return nil, ErrInvalidCredentials
+	}
+	validCurrent, currentLegacy := verifyPassword(current.Password, password)
+	if !validCurrent {
+		return nil, ErrInvalidCredentials
+	}
+	if legacy && currentLegacy {
+		next := cloneUsers(m.users)
+		next[username].Password = upgradedHash
+		next[username].UpdatedAt = time.Now()
+		if err := m.commit(next); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrCredentialUpgrade, err)
+		}
+		current = next[username]
+	}
+	result := cloneUser(current)
+	result.Password = ""
+	return result, nil
 }
 
 // GenerateToken 永久有效（不设置 exp），并记录 LastLoginAt
@@ -282,16 +576,16 @@ func (m *Manager) GenerateToken(username string) (string, error) {
 	defer m.mu.Unlock()
 	u, ok := m.users[username]
 	if !ok {
-		return "", errors.New("not found")
+		return "", ErrUserNotFound
 	}
-	// 记录最后登录时间
 	now := time.Now()
-	u.LastLoginAt = &now
-	u.UpdatedAt = now
-	if err := m.save(); err != nil {
-		// 保存失败不影响 token 生成，仅记录日志
-		// TODO: 添加日志记录
+	next := cloneUsers(m.users)
+	next[username].LastLoginAt = &now
+	next[username].UpdatedAt = now
+	if err := m.commit(next); err != nil {
+		return "", err
 	}
+	u = next[username]
 	claims := Claims{Username: u.Username, Scopes: u.Scopes, RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(time.Now())}}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tok.SignedString(m.secretKey)
@@ -354,185 +648,128 @@ func (m *Manager) DebugString() string {
 // FindOrCreateExternalUser 查找或创建外部用户
 // 如果用户不存在且 autoCreate 为 true，则创建新用户
 func (m *Manager) FindOrCreateExternalUser(extID, username, email, fullname, idpID string, defaultScopes []string, autoCreate bool) (*User, bool, error) {
+	if !validUsername(username) {
+		return nil, false, ErrUsernameRequired
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	// 先按 idpID 和 externalID 查找
-	for _, u := range m.users {
-		if u.IdpID == idpID && u.ExternalID == extID {
-			// 更新用户信息
-			changed := false
-			if email != "" && u.Email != email {
-				u.Email = email
-				changed = true
-			}
-			if fullname != "" && u.Fullname != fullname {
-				u.Fullname = fullname
-				changed = true
-			}
-			now := time.Now()
-			u.SyncedAt = &now
-			u.UpdatedAt = now
-			if changed {
-				if err := m.save(); err != nil {
-					return nil, false, err
-				}
-			}
-			cpy := *u
-			cpy.Password = ""
-			return &cpy, false, nil // 返回现有用户
-		}
-	}
-
-	// 检查用户名是否已存在（可能是本地用户）
-	if existing, exists := m.users[username]; exists {
-		// LDAP 优先策略：如果是本地用户（Source为空或"local"），将其转换为 LDAP 用户
-		if existing.Source == SourceLocal || existing.Source == "" {
-			now := time.Now()
-			existing.Password = "" // 清除本地密码
-			existing.Source = SourceExternal
-			existing.IdpID = idpID
-			existing.ExternalID = extID
+	next := cloneUsers(m.users)
+	now := time.Now()
+	for _, user := range next {
+		if user.IdpID == idpID && user.ExternalID == extID {
 			if email != "" {
-				existing.Email = email
+				user.Email = email
 			}
 			if fullname != "" {
-				existing.Fullname = fullname
+				user.Fullname = fullname
 			}
-			existing.SyncedAt = &now
-			existing.UpdatedAt = now
-			// 保留现有权限，不覆盖
-			if err := m.save(); err != nil {
-				return nil, false, fmt.Errorf("failed to convert local user to LDAP user: %w", err)
-			}
-			cpy := *existing
-			cpy.Password = ""
-			return &cpy, false, nil // 返回转换后的用户
-		}
-		// 如果是同一个 IdP 的外部用户，允许登录并更新信息
-		if existing.Source == SourceExternal && existing.IdpID == idpID {
-			now := time.Now()
-			existing.ExternalID = extID // 更新 External ID（可能 LDAP DN 变化了）
-			if email != "" {
-				existing.Email = email
-			}
-			if fullname != "" {
-				existing.Fullname = fullname
-			}
-			existing.SyncedAt = &now
-			existing.UpdatedAt = now
-			if err := m.save(); err != nil {
+			user.SyncedAt, user.UpdatedAt = &now, now
+			if err := m.commit(next); err != nil {
 				return nil, false, err
 			}
-			cpy := *existing
-			cpy.Password = ""
-			return &cpy, false, nil
+			result := cloneUser(user)
+			result.Password = ""
+			return result, false, nil
 		}
-		// 如果是其他 IdP 的外部用户，返回错误
-		return nil, false, fmt.Errorf("username %s already exists with different identity provider", username)
 	}
-
-	// 不存在，检查是否自动创建
+	if existing, exists := next[username]; exists {
+		if existing.Source == SourceLocal || existing.Source == "" {
+			existing.Password = ""
+			existing.Source = SourceExternal
+			existing.IdpID, existing.ExternalID = idpID, extID
+		} else if existing.Source == SourceExternal && existing.IdpID == idpID {
+			existing.ExternalID = extID
+		} else {
+			return nil, false, fmt.Errorf("username %s already exists with different identity provider", username)
+		}
+		if email != "" {
+			existing.Email = email
+		}
+		if fullname != "" {
+			existing.Fullname = fullname
+		}
+		existing.SyncedAt, existing.UpdatedAt = &now, now
+		if err := m.commit(next); err != nil {
+			return nil, false, err
+		}
+		result := cloneUser(existing)
+		result.Password = ""
+		return result, false, nil
+	}
 	if !autoCreate {
-		return nil, false, errors.New("user not found and auto-create is disabled")
+		return nil, false, ErrUserNotFound
 	}
-
-	// 创建新用户
-	now := time.Now()
-	u := &User{
-		Username:   username,
-		Password:   "", // 外部用户无本地密码
-		Scopes:     dedupScopes(defaultScopes),
-		Source:     SourceExternal,
-		IdpID:      idpID,
-		ExternalID: extID,
-		Email:      email,
-		Fullname:   fullname,
-		SyncedAt:   &now,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-
-	m.users[username] = u
-	if err := m.save(); err != nil {
-		delete(m.users, username)
+	user := &User{Username: username, Scopes: dedupScopes(defaultScopes), Source: SourceExternal, IdpID: idpID, ExternalID: extID,
+		Email: email, Fullname: fullname, SyncedAt: &now, CreatedAt: now, UpdatedAt: now}
+	next[username] = user
+	if err := m.commit(next); err != nil {
 		return nil, false, err
 	}
-
-	cpy := *u
-	return &cpy, true, nil // 返回新创建的用户
+	return cloneUser(user), true, nil
 }
 
 // UpdateExternalUserInfo 更新外部用户信息
 func (m *Manager) UpdateExternalUserInfo(username, email, fullname string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	u, ok := m.users[username]
 	if !ok {
-		return errors.New("not found")
+		return ErrUserNotFound
 	}
-
 	if u.Source != SourceExternal {
-		return errors.New("can only update external users")
+		return ErrExternalUser
 	}
-
+	next := cloneUsers(m.users)
+	updated := next[username]
 	changed := false
-	if email != "" && u.Email != email {
-		u.Email = email
+	if email != "" && updated.Email != email {
+		updated.Email = email
 		changed = true
 	}
-	if fullname != "" && u.Fullname != fullname {
-		u.Fullname = fullname
+	if fullname != "" && updated.Fullname != fullname {
+		updated.Fullname = fullname
 		changed = true
 	}
-
-	if changed {
-		now := time.Now()
-		u.SyncedAt = &now
-		u.UpdatedAt = now
-		return m.save()
+	if !changed {
+		return nil
 	}
-
-	return nil
+	now := time.Now()
+	updated.SyncedAt, updated.UpdatedAt = &now, now
+	return m.commit(next)
 }
 
 // DisableUser 禁用用户
 func (m *Manager) DisableUser(username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	u, ok := m.users[username]
 	if !ok {
-		return errors.New("not found")
+		return ErrUserNotFound
 	}
-
 	if u.Disabled {
-		return nil // 已禁用
+		return nil
 	}
-
-	u.Disabled = true
-	u.UpdatedAt = time.Now()
-	return m.save()
+	next := cloneUsers(m.users)
+	next[username].Disabled = true
+	next[username].UpdatedAt = time.Now()
+	return m.commit(next)
 }
 
 // EnableUser 启用用户
 func (m *Manager) EnableUser(username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	u, ok := m.users[username]
 	if !ok {
-		return errors.New("not found")
+		return ErrUserNotFound
 	}
-
 	if !u.Disabled {
-		return nil // 已启用
+		return nil
 	}
-
-	u.Disabled = false
-	u.UpdatedAt = time.Now()
-	return m.save()
+	next := cloneUsers(m.users)
+	next[username].Disabled = false
+	next[username].UpdatedAt = time.Now()
+	return m.commit(next)
 }
 
 // FindByExternalID 按外部 ID 查找用户

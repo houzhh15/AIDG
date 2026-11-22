@@ -14,6 +14,7 @@ import (
 // Default 对于未提供 level/环境时采用 info 与文本格式
 type Config struct {
 	Level       string
+	Format      string
 	Environment string
 	WithSource  bool
 }
@@ -47,7 +48,15 @@ func New(cfg Config) (*slog.Logger, error) {
 
 	handlerOpts := &slog.HandlerOptions{Level: lvl, AddSource: cfg.WithSource}
 	var handler slog.Handler
-	if strings.ToLower(cfg.Environment) == "prod" {
+	format := strings.ToLower(strings.TrimSpace(cfg.Format))
+	if format == "" {
+		if environment := strings.ToLower(cfg.Environment); environment == "prod" || environment == "production" {
+			format = "json"
+		} else {
+			format = "text"
+		}
+	}
+	if format == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, handlerOpts)
 	} else {
 		handler = slog.NewTextHandler(os.Stdout, handlerOpts)

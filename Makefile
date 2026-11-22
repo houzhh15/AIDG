@@ -5,7 +5,7 @@ BUILD_TIME := $(shell date +%Y%m%d_%H%M%S)
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS := -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)
 
-.PHONY: all install build build-prod test dev clean docker-build
+.PHONY: all install build build-prod test test-compat dev clean docker-build
 
 all: build
 
@@ -16,18 +16,13 @@ install:
 	go mod verify
 	@echo "Installing frontend dependencies..."
 	cd frontend && npm ci
-	@echo "Installing file converter dependencies..."
-	pip install -r file_converter/requirements.txt -q
-	@echo "Installing pyannote dependencies (for local dev)..."
-	pip install -r scripts/pyannote-requirements.txt -q
 
 # 开发构建
 build:
 	@echo "Building for development..."
 	go build -o bin/server ./cmd/server
 	go build -o bin/mcp-server ./cmd/mcp-server
-	go build -o bin/merge-segments ./cmd/merge-segments
-	@echo "Build complete: bin/server, bin/mcp-server, bin/merge-segments"
+	@echo "Build complete: bin/server, bin/mcp-server"
 
 # 生产构建
 build-prod:
@@ -43,6 +38,11 @@ test:
 	@echo "Running tests..."
 	go test -v -race -cover ./...
 
+# 无 Docker 的阶段 0 兼容基线
+# 仓库内样本均为 synthetic；真实脱敏生产样本需按 test/compat/README.md 导入。
+test-compat:
+	go test ./cmd/server/internal/users ./cmd/server/internal/api ./cmd/server/internal/domain/meetings -run Compat -count=1
+
 # 启动开发环境
 dev:
 	@echo "Starting development environment..."
@@ -51,16 +51,18 @@ dev:
 			echo "Loading .env file..."; \
 			set -a; source .env; set +a; \
 		fi; \
-		echo "Starting file converter on :5002..."; \
-		PYTHONPATH=$$PWD uvicorn file_converter.main:app --host 0.0.0.0 --port 5002 --reload &\
-		echo "Starting server on :8000..."; \
+		unset WHISPER_MODE WHISPER_PROGRAM_PATH WHISPER_API_URL DIARIZATION_SCRIPT_PATH EMBEDDING_SCRIPT_PATH PYTHON_PATH HF_HOME HUGGINGFACE_TOKEN DEPENDENCY_MODE; \
+		DEV_SERVER_PORT=$${AIDG_SERVER_PORT:-$${SERVER_PORT:-8000}}; \
+		export AIDG_SERVER_PORT=$$DEV_SERVER_PORT; \
+		export AIDG_MEETING_ASR_BACKEND=external; \
+		export AIDG_MEETING_V2_ENABLED=true; \
+		export VITE_API_BASE_URL=$${VITE_API_BASE_URL:-http://localhost:$$DEV_SERVER_PORT}; \
+		echo "Starting server on :$$DEV_SERVER_PORT (external ASR backend)..."; \
 		ENV=development \
 		JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars \
 		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars \
-		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword! \
+		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword \
 		DEPENDENCY_SHARED_VOLUME=./data \
-		DIARIZATION_SCRIPT_PATH=./cmd/server/internal/audio/diarization/pyannote_diarize.py \
-		EMBEDDING_SCRIPT_PATH=./cmd/server/internal/audio/diarization/generate_speaker_embeddings.py \
 		go run ./cmd/server & \
 		echo "Starting MCP server on :8081..."; \
 		ENV=development go run ./cmd/mcp-server & \

@@ -4,9 +4,8 @@ import (
 	// Standard library
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -39,6 +38,7 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/handlers"
 	"github.com/houzhh15/AIDG/cmd/server/internal/idp"
 	idpsync "github.com/houzhh15/AIDG/cmd/server/internal/idp/sync"
+	"github.com/houzhh15/AIDG/cmd/server/internal/meetingv2"
 	"github.com/houzhh15/AIDG/cmd/server/internal/middleware"
 	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 	"github.com/houzhh15/AIDG/cmd/server/internal/prompt"
@@ -48,15 +48,6 @@ import (
 	"github.com/houzhh15/AIDG/pkg/logger"
 	"github.com/houzhh15/AIDG/pkg/similarity"
 )
-
-// generateRandomPassword generates a cryptographically secure random password
-func generateRandomPassword(length int) string {
-	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
-		panic(fmt.Sprintf("failed to generate random password: %v", err))
-	}
-	return base64.URLEncoding.EncodeToString(bytes)[:length]
-}
 
 // sectionServiceAdapter adapts taskdocs.SectionService to similarity.SectionServiceInterface
 type sectionServiceAdapter struct {
@@ -92,69 +83,21 @@ func (a *sectionServiceAdapter) GetSection(projectID, taskID, docType, sectionID
 	}, nil
 }
 
-// proxyToFileConverter 代理请求到 file_converter 服务
-func proxyToFileConverter(c *gin.Context) {
-	// 获取 file_converter 服务地址
-	baseURL := os.Getenv("FILE_CONVERTER_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:5002"
-	}
-
-	// 构建目标 URL，移除 /api 或 /api/v1 前缀
-	targetPath := c.Request.URL.Path
-	if strings.HasPrefix(targetPath, "/api/v1/ocr/") {
-		targetPath = strings.Replace(targetPath, "/api/v1/ocr/", "/ocr/", 1)
-	} else if strings.HasPrefix(targetPath, "/api/ocr/") {
-		targetPath = strings.Replace(targetPath, "/api/ocr/", "/ocr/", 1)
-	}
-
-	targetURL := baseURL + targetPath
-	if c.Request.URL.RawQuery != "" {
-		targetURL += "?" + c.Request.URL.RawQuery
-	}
-
-	// 创建代理请求
-	proxyReq, err := http.NewRequest(c.Request.Method, targetURL, c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建代理请求失败"})
-		return
-	}
-
-	// 复制请求头（排除 Host）
-	for key, values := range c.Request.Header {
-		if key != "Host" {
-			for _, value := range values {
-				proxyReq.Header.Add(key, value)
-			}
-		}
-	}
-
-	// 发送请求
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(proxyReq)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "file_converter 服务不可用: " + err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
-	// 复制响应头
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Header(key, value)
-		}
-	}
-
-	// 返回响应
-	c.Status(resp.StatusCode)
-	io.Copy(c.Writer, resp.Body)
-}
-
 func main() {
+	// Load configuration before initializing logging so YAML and AIDG_LOG_*
+	// values affect the logger. Configuration errors are written to stderr
+	// because no logger exists yet.
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
 	logInstance, err := logger.Init(logger.Config{
-		Level:       os.Getenv("LOG_LEVEL"),
-		Environment: os.Getenv("ENV"),
-		WithSource:  !strings.EqualFold(os.Getenv("ENV"), "prod"),
+		Level:       cfg.Log.Level,
+		Format:      cfg.Log.Format,
+		Environment: cfg.Server.Env,
+		WithSource:  !cfg.IsProduction(),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "logger init failed: %v\n", err)
@@ -162,20 +105,8 @@ func main() {
 	}
 	appLogger := logInstance.With("component", "web-server")
 
-	// Load configuration
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		appLogger.Error("failed to load config", "error", err)
-		os.Exit(1)
-	}
-
-	// Lite mode: lightweight server for project/task only
-	if cfg.LiteMode {
-		runLiteMode(cfg, appLogger)
-		return
-	}
-
-	// Validate configuration
+	// Validate configuration. The root server is now the single runtime;
+	// legacy LITE_MODE deployments use the same authenticated API surface.
 	if err := config.ValidateConfig(cfg); err != nil {
 		appLogger.Error("invalid configuration", "error", err)
 		os.Exit(1)
@@ -229,20 +160,27 @@ func main() {
 	promptsHandler := api.NewPromptsHandler(promptStorage, promptPermChecker, userManager, promptsTriggerPath)
 	appLogger.Info("prompt system ready", "baseDir", dataRoot, "triggerPath", promptsTriggerPath)
 
-	// Ensure default admin with config-based password
+	// The bootstrap password is required only while the user store is empty.
 	adminPassword := cfg.Security.AdminDefaultPassword
-	if adminPassword == "" {
-		if cfg.Server.Env == "dev" {
-			// Generate random password for dev environment
-			adminPassword = generateRandomPassword(16)
-			appLogger.Warn("generated random admin password", "password", adminPassword)
-		} else {
-			appLogger.Error("admin default password not set in production/staging")
-			os.Exit(1)
-		}
+	if !userManager.HasUsers() && adminPassword == "" {
+		appLogger.Error("no users exist; explicit initial admin password is required")
+		os.Exit(1)
 	}
 	if err := userManager.EnsureDefaultAdmin(adminPassword); err != nil {
-		appLogger.Warn("failed to ensure default admin", "error", err)
+		appLogger.Error("failed to ensure default admin", "error", err)
+		os.Exit(1)
+	}
+
+	// LoadTasks may create legacy output directories, so the v2 service lock
+	// must be held before any meeting-root registry operation.
+	var meetingV2ServiceLock *meetingv2.ServiceLock
+	if cfg.MeetingV2.Enabled {
+		var lockErr error
+		meetingV2ServiceLock, lockErr = meetingv2.AcquireServiceLock(cfg.Data.MeetingsDir)
+		if lockErr != nil {
+			appLogger.Error("meeting v2 data root lock failed; stop every old/new instance sharing this volume before upgrade", "error", lockErr)
+			os.Exit(1)
+		}
 	}
 
 	// Load task and project registries
@@ -341,15 +279,74 @@ func main() {
 	envHandler := handlers.NewEnvironmentHandler()
 	appLogger.Info("environment handler ready")
 
+	var meetingV2Handler *api.MeetingV2Handler
+	var meetingV2Worker *meetingv2.Worker
+	var meetingV2Store *meetingv2.Store
+	if cfg.MeetingV2.Enabled {
+		store, storeErr := meetingv2.NewStore(cfg.Data.MeetingsDir, cfg.MeetingV2.MaxChunkSize)
+		meetingV2Store = store
+		if storeErr != nil {
+			appLogger.Error("meeting v2 store init failed", "error", storeErr)
+			os.Exit(1)
+		}
+		migrationResult, migrationErr := store.MigrateLegacy()
+		if migrationErr != nil {
+			appLogger.Error("meeting v2 legacy migration protocol failed", "error", migrationErr)
+			os.Exit(1)
+		}
+		appLogger.Info("meeting v2 legacy migration finished", "discovered", migrationResult.Discovered, "migrated", migrationResult.Migrated, "skipped", migrationResult.Skipped, "failed", migrationResult.Failed)
+
+		var provider meetingv2.ASRProvider
+		if cfg.ASR.Enabled {
+			requestTimeout, _ := time.ParseDuration(cfg.ASR.RequestTimeout)
+			healthTimeout, _ := time.ParseDuration(cfg.ASR.HealthTimeout)
+			retryInitialDelay, _ := time.ParseDuration(cfg.ASR.RetryInitialDelay)
+			retryMaxDelay, _ := time.ParseDuration(cfg.ASR.RetryMaxDelay)
+			provider, storeErr = meetingv2.NewOpenAICompatibleProvider(meetingv2.ProviderOptions{
+				Profile: cfg.ASR.Profile, Endpoint: cfg.ASR.Endpoint, Model: cfg.ASR.Model,
+				Language: cfg.ASR.Language, APIKey: cfg.ASR.APIKey, RequestTimeout: requestTimeout,
+				HealthTimeout: healthTimeout, AllowedHosts: cfg.ASR.AllowedHosts, AllowedCIDRs: cfg.ASR.AllowedCIDRs,
+			})
+			if storeErr != nil {
+				appLogger.Error("meeting v2 ASR provider init failed", "error", storeErr)
+				os.Exit(1)
+			}
+			meetingV2Worker, err = meetingv2.NewWorker(store, provider, meetingv2.WorkerOptions{
+				Concurrency: cfg.ASR.Concurrency, MaxAttempts: cfg.ASR.MaxAttempts,
+				RetryInitialDelay: retryInitialDelay, RetryMaxDelay: retryMaxDelay,
+				ProviderName: cfg.ASR.Profile, Model: cfg.ASR.Model, Language: cfg.ASR.Language,
+			})
+			if err != nil {
+				appLogger.Error("meeting v2 worker init failed", "error", err)
+				os.Exit(1)
+			}
+			if err := meetingV2Worker.Start(context.Background()); err != nil {
+				appLogger.Error("meeting v2 worker start failed", "error", err)
+				os.Exit(1)
+			}
+		} else if _, err := store.RecoverInterruptedJobs(); err != nil {
+			appLogger.Error("meeting v2 recovery failed", "error", err)
+			os.Exit(1)
+		}
+		meetingV2Handler = api.NewMeetingV2Handler(store, meetingV2Worker, provider, cfg.MeetingV2.MaxChunksPerSession, cfg.ASR.Enabled)
+		appLogger.Info("meeting v2 ready", "asr_enabled", cfg.ASR.Enabled, "provider", cfg.ASR.Profile, "model", cfg.ASR.Model)
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
 
-	// Add health check endpoints (no authentication required)
+	// Public runtime metadata used before login.
 	startTime := time.Now()
 	r.GET("/health", healthCheckHandler(cfg, startTime))
 	r.GET("/api/v1/health", healthCheckHandler(cfg, startTime)) // Alternative API path
 	r.GET("/readiness", readinessCheckHandler(cfg))
+	r.GET("/api/v1/app/config", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"lite_mode": false,
+			"version":   "2.0.0",
+		})
+	})
 
 	// Add Whisper service endpoints (no authentication required)
 	r.GET("/api/v1/services/whisper/models", api.HandleGetWhisperModels())
@@ -376,7 +373,10 @@ func main() {
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler, tagHandler, idpHandler)
+	if meetingV2Handler != nil {
+		meetingV2Handler.Register(r.Group("/api/v1/meeting-sessions"))
+	}
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler, tagHandler, idpHandler, meetingV2Store)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -393,8 +393,10 @@ func main() {
 	// Create HTTP server with graceful shutdown
 	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	srv := &http.Server{
-		Addr:    serverAddr,
-		Handler: r,
+		Addr:              serverAddr,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	// Start server in a goroutine
@@ -441,10 +443,30 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Attempt graceful shutdown
-	if err := srv.Shutdown(ctx); err != nil {
-		appLogger.Error("server forced to shutdown", "error", err)
+	// Stop accepting new uploads before cancelling external ASR requests.
+	shutdownErr := srv.Shutdown(ctx)
+	if shutdownErr != nil {
+		appLogger.Error("server forced to shutdown", "error", shutdownErr)
+	}
+	var workerShutdownErr error
+	if meetingV2Worker != nil {
+		workerShutdownErr = meetingV2Worker.Shutdown(ctx)
+		if workerShutdownErr != nil {
+			appLogger.Error("meeting v2 worker shutdown failed", "error", workerShutdownErr)
+		}
+	}
+	if shutdownErr != nil || workerShutdownErr != nil {
+		// Do not explicitly unlock while handlers or workers may still access the
+		// meetings root. Process termination releases flock only after all Go
+		// execution in this process has stopped.
+		appLogger.Error("shutdown did not drain meeting writers; terminating with data-root lock held")
 		os.Exit(1)
+	}
+	if meetingV2ServiceLock != nil {
+		if err := meetingV2ServiceLock.Close(); err != nil {
+			appLogger.Error("meeting v2 data root unlock failed", "error", err)
+			os.Exit(1)
+		}
 	}
 	appLogger.Info("server shutdown complete")
 }
@@ -518,7 +540,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/docs/:slot/export": {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/docs/:slot/append": {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/export": {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/append": {users.ScopeTaskWrite},
 		"POST /api/v1/projects/:id/tasks/:task_id/requirements/append": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/requirements/chunks": {users.ScopeTaskRead},
 		"DELETE /api/v1/projects/:id/tasks/:task_id/requirements/chunks/:seq": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/requirements/export": {users.ScopeTaskRead},
 		"POST /api/v1/projects/:id/tasks/:task_id/design/append": {users.ScopeTaskWrite}, "GET /api/v1/projects/:id/tasks/:task_id/design/chunks": {users.ScopeTaskRead},
@@ -689,14 +711,13 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// 跳过不需要认证的路由：登录、健康检查、服务状态、OPTIONS请求、非API路由、公开身份源列表、OIDC回调、OCR语言API
+		// Skip public bootstrap, health, login, and identity-provider routes.
 		if path == "/api/v1/login" ||
+			path == "/api/v1/app/config" ||
 			path == "/api/v1/health" ||
 			path == "/api/v1/services/status" ||
 			path == "/api/v1/identity-providers/public" ||
 			strings.HasPrefix(path, "/auth/") ||
-			strings.HasPrefix(path, "/api/ocr/") ||
-			strings.HasPrefix(path, "/api/v1/ocr/") ||
 			c.Request.Method == http.MethodOptions ||
 			!strings.HasPrefix(path, "/api/") {
 			c.Next()
@@ -861,9 +882,11 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 			}
 		}
 
-		// 4. 会议创建者权限注入
+		// 4. 会议创建者权限注入。资源级权限单独保存，供 Meeting v2
+		// handler 阻止仅有全局 scope 的用户跨会议访问。
+		meetingResourceScopes := []string{}
 		if meetingID != "" {
-			injectedScopes, err := injector.InjectMeetingOwnerPermissions(claims.Username, meetingID, effectiveScopes)
+			injectedScopes, err := injector.InjectMeetingOwnerPermissions(claims.Username, meetingID, nil)
 			if err != nil {
 				authLogger.Warn("failed to inject meeting owner permissions",
 					"user", claims.Username,
@@ -871,7 +894,8 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 					"error", err,
 				)
 			} else {
-				effectiveScopes = injectedScopes
+				meetingResourceScopes = injectedScopes
+				effectiveScopes = mergeScopes(effectiveScopes, injectedScopes)
 			}
 
 			// 额外检查会议ACL授权
@@ -883,16 +907,19 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 					"error", err,
 				)
 			} else {
-				if hasRead && !users.HasScope(effectiveScopes, "meeting.read") {
-					effectiveScopes = append(effectiveScopes, "meeting.read")
+				if hasRead {
+					meetingResourceScopes = mergeScopes(meetingResourceScopes, []string{"meeting.read"})
+					effectiveScopes = mergeScopes(effectiveScopes, []string{"meeting.read"})
 				}
-				if hasWrite && !users.HasScope(effectiveScopes, "meeting.write") {
-					effectiveScopes = append(effectiveScopes, "meeting.write")
+				if hasWrite {
+					meetingResourceScopes = mergeScopes(meetingResourceScopes, []string{"meeting.write"})
+					effectiveScopes = mergeScopes(effectiveScopes, []string{"meeting.write"})
 				}
 			}
 		}
 
 		c.Set("scopes", effectiveScopes)
+		c.Set("meeting_resource_scopes", meetingResourceScopes)
 		full := c.FullPath()
 		if full == "" {
 			full = path
@@ -932,7 +959,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 	})
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler, idpHandler *api.IdPHandler) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler, idpHandler *api.IdPHandler, meetingV2Store *meetingv2.Store) {
 	// ========== Environment Check ==========
 	r.GET("/api/v1/environment/status", func(c *gin.Context) {
 		envHandler.GetStatus(c.Writer, c.Request)
@@ -960,10 +987,18 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 		// Local authentication
 		u, err := userManager.Authenticate(cred.Username, cred.Password)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			if errors.Is(err, users.ErrCredentialUpgrade) {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "authentication temporarily unavailable"})
+				return
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 			return
 		}
-		token, _ := userManager.GenerateToken(u.Username)
+		token, err := userManager.GenerateToken(u.Username)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue token"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"token": token, "username": u.Username, "scopes": u.Scopes})
 	})
 
@@ -1172,10 +1207,10 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 
 	// ========== Meeting Task Document APIs for /tasks/:id (Legacy format) ==========
 	// Register Legacy routes for /tasks/:id/ format
-	r.GET("/api/v1/tasks/:id/meeting-summary", api.HandleGetTaskMeetingSummary(meetingsReg))
-	r.PUT("/api/v1/tasks/:id/meeting-summary", api.HandleUpdateTaskMeetingSummary(meetingsReg))
-	r.GET("/api/v1/tasks/:id/meeting-context", api.HandleGetTaskMeetingContext(meetingsReg))
-	r.PUT("/api/v1/tasks/:id/meeting-context", api.HandleUpdateTaskMeetingContext(meetingsReg))
+	r.GET("/api/v1/tasks/:id/meeting-summary", api.HandleGetTaskMeetingSummaryV2(meetingsReg, meetingV2Store, permissionInjector))
+	r.PUT("/api/v1/tasks/:id/meeting-summary", api.HandleUpdateTaskMeetingSummaryV2(meetingsReg, meetingV2Store, permissionInjector))
+	r.GET("/api/v1/tasks/:id/meeting-context", api.HandleGetTaskMeetingContextV2(meetingsReg, meetingV2Store, permissionInjector))
+	r.PUT("/api/v1/tasks/:id/meeting-context", api.HandleUpdateTaskMeetingContextV2(meetingsReg, meetingV2Store, permissionInjector))
 	r.GET("/api/v1/tasks/:id/topic", api.HandleGetTaskTopic(meetingsReg))
 	r.PUT("/api/v1/tasks/:id/topic", api.HandleUpdateTaskTopic(meetingsReg))
 	r.GET("/api/v1/tasks/:id/polish-annotations", api.HandleGetTaskPolishAnnotations(meetingsReg))
@@ -1500,17 +1535,7 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	unifiedDocsGroup := r.Group("/api/v1")
 	api.RegisterUnifiedDocRoutes(unifiedDocsGroup, unifiedDocSvc)
 
-	// ========== Documents API (21 endpoints) ==========
-	r.POST("/api/v1/projects/:id/documents/import", docHandler.ImportFile) // 新增：文件导入
-
-	// OCR API 代理到 file_converter 服务（同时支持 /api/ocr 和 /api/v1/ocr）
-	r.GET("/api/ocr/languages", proxyToFileConverter)
-	r.POST("/api/ocr/languages/:lang/download", proxyToFileConverter)
-	r.GET("/api/ocr/languages/:lang/download-status", proxyToFileConverter)
-	r.GET("/api/v1/ocr/languages", proxyToFileConverter)
-	r.POST("/api/v1/ocr/languages/:lang/download", proxyToFileConverter)
-	r.GET("/api/v1/ocr/languages/:lang/download-status", proxyToFileConverter)
-
+	// ========== Documents API ==========
 	r.POST("/api/v1/projects/:id/documents/nodes", docHandler.CreateNode)
 	r.GET("/api/v1/projects/:id/documents/tree", docHandler.GetTree)
 	r.PUT("/api/v1/projects/:id/documents/nodes/:node_id/move", docHandler.MoveNode)
@@ -2100,4 +2125,14 @@ func staticCacheMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func mergeScopes(base, additional []string) []string {
+	result := append([]string(nil), base...)
+	for _, scope := range additional {
+		if !users.HasScope(result, scope) {
+			result = append(result, scope)
+		}
+	}
+	return result
 }

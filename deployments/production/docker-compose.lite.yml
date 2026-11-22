@@ -1,6 +1,6 @@
 # 生产部署 - Lite 方案
 # 用途：生产环境快速部署，仅基础功能
-# 包含：仅主服务（server + mcp-server + file_converter）
+# 包含：仅主服务（server + mcp-server）
 # 镜像来源：ghcr.io/houzhh15
 
 services:
@@ -40,7 +40,6 @@ services:
       - ../../data/users:/app/data/users
       - ../../data/meetings:/app/data/meetings
       - ../../data/audit_logs:/app/data/audit_logs
-      - ../../models/tessdata:/usr/share/tessdata:ro
       - ../../config:/app/config:ro
     networks:
       - aidg-network

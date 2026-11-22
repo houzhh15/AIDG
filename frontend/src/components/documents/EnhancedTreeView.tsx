@@ -27,12 +27,9 @@ import {
   CompressOutlined,
   ShareAltOutlined,
   LinkOutlined,
-  DisconnectOutlined,
-  UploadOutlined
+  DisconnectOutlined
 } from '@ant-design/icons';
 import { DocumentTreeNode, DocumentType } from '../../types/documents';
-import { ImportMeta } from '../../api/documents';
-import FileUploadArea from './FileUploadArea';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
@@ -45,8 +42,7 @@ export type ReferenceSourceValue =
   | 'project_feature_list'
   | 'project_architecture'
   | 'meeting_details'
-  | 'meeting_summary'
-  | 'file_import';
+  | 'meeting_summary';
 
 export type ReferenceContextType = 'task' | 'meeting';
 
@@ -82,8 +78,6 @@ export interface AddNodePayload {
   type: DocumentType;
   referenceSource?: ReferenceSourceValue | null;
   referenceContext?: ReferenceContextSelection;
-  importedContent?: string;    // 新增：文件导入的内容
-  importMeta?: ImportMeta;     // 新增：文件导入的元数据
 }
 
 const treeTypographyStyle: React.CSSProperties = {
@@ -170,19 +164,9 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
   const [pendingParentId, setPendingParentId] = useState<string | null>(null);
   const referenceSource = Form.useWatch<ReferenceSourceValue | undefined>('referenceSource', addForm);
   
-  // 文件导入相关状态
-  const [importedContent, setImportedContent] = useState<string>('');
-  const [importMeta, setImportMeta] = useState<ImportMeta | null>(null);
-  
-  // OCR 相关状态
-  const [enableOcr, setEnableOcr] = useState<boolean>(false);
-  const [selectedOcrLang, setSelectedOcrLang] = useState<string>('chi_sim+eng');
-
-  // 文件导入始终可用，所以 hasReferenceOptions 总为 true
-  const hasReferenceOptions = true;
+  const hasReferenceOptions = Boolean(referenceOptions?.some(group => group.options.length > 0));
 
   const referenceSelectOptions = useMemo(() => {
-    // 直接使用传入的 referenceOptions，file_import 已经在 REFERENCE_SOURCE_META 中定义
     return referenceOptions?.map(group => ({
       label: group.label,
       options: group.options.map(option => ({
@@ -480,9 +464,6 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
     addForm.resetFields();
     setPendingParentId(null);
     setContextMenuNode(null);
-    // 重置文件导入状态
-    setImportedContent('');
-    setImportMeta(null);
   };
 
   const handleDeleteNode = (nodeId: string) => {
@@ -518,17 +499,11 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
 
   const handleModalOk = () => {
     addForm.validateFields().then((values: { title: string; type: DocumentType; referenceSource?: ReferenceSourceValue | null; referenceContextId?: string }) => {
-      // 校验文件导入场景下必须上传文件
-      if (values.referenceSource === 'file_import' && !importedContent) {
-        message.error('请先上传文件');
-        return;
-      }
-
       const parentId = pendingParentId ?? (contextMenuNode ? contextMenuNode.id : 'root');
       const referenceSourceValue = values.referenceSource ?? null;
       let referenceContext: ReferenceContextSelection | undefined;
 
-      if (referenceSourceValue && referenceSourceValue !== 'file_import') {
+      if (referenceSourceValue) {
         const option = referenceOptionLookup.get(referenceSourceValue);
         if (option?.contextType && values.referenceContextId) {
           referenceContext = {
@@ -542,9 +517,7 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
         title: values.title?.trim() || '',
         type: values.type,
         referenceSource: referenceSourceValue,
-        referenceContext,
-        importedContent: referenceSourceValue === 'file_import' ? importedContent : undefined,
-        importMeta: referenceSourceValue === 'file_import' ? importMeta ?? undefined : undefined
+        referenceContext
       };
 
       const maybePromise = onAdd?.(parentId, payload);
@@ -823,30 +796,6 @@ const EnhancedTreeView: React.FC<EnhancedTreeViewProps> = ({
             </Form.Item>
           )}
 
-          {referenceSource === 'file_import' && (
-            <Form.Item
-              label="上传文件"
-              required
-              tooltip="支持 PDF、PPT、DOC、EXCEL、SVG、图片格式，最大20MB。启用 OCR 可识别扫描件和图片中的文字。"
-            >
-              <FileUploadArea
-                projectId={projectId}
-                onImportComplete={(content, meta) => {
-                  setImportedContent(content);
-                  setImportMeta(meta);
-                }}
-                enableOcr={enableOcr}
-                selectedOcrLang={selectedOcrLang}
-                onEnableOcrChange={setEnableOcr}
-                onOcrLangChange={setSelectedOcrLang}
-              />
-              {importMeta && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#52c41a' }}>
-                  已导入: {importMeta.original_filename} ({(importMeta.file_size / 1024).toFixed(1)} KB)
-                </div>
-              )}
-            </Form.Item>
-          )}
         </Form>
       </Modal>
 

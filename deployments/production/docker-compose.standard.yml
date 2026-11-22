@@ -90,7 +90,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-in-production-at-least-32-chars}
       - USER_JWT_SECRET=${USER_JWT_SECRET:-dev-user-jwt-secret-at-least-32-chars}
       - IDP_ENCRYPTION_KEY=${IDP_ENCRYPTION_KEY:-change-this-to-32-char-secret-key}
-      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD:-admin123}
+      - ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
       - MCP_PASSWORD=${MCP_PASSWORD:-dev-mcp-password}
       # 数据目录
       - PROJECTS_DIR=/app/data/projects

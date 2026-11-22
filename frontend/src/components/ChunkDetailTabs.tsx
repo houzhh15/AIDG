@@ -205,10 +205,11 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
           <Input
             size="small"
             style={{ width:200 }}
-            placeholder="Whisper Model"
+            placeholder="ASR Model"
             value={asrModel}
             onChange={e=>setAsrModel(e.target.value)}
-            disabled={!allowWrite}
+            disabled
+            title="ASR 模型由管理员在 .env 中通过 AIDG_ASR_MODEL 配置"
           />
           <InputNumber
             size="small"
@@ -220,7 +221,8 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
               setAsrSeg(v);
             }}
             addonAfter="s"
-            disabled={!allowWrite}
+            disabled
+            title="外部 ASR 不再支持自定义分片长度"
           />
           <InputNumber
             size="small"
@@ -234,8 +236,9 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
               setAsrTemperature(v);
             }}
             addonBefore="Temp"
-            disabled={!allowWrite}
+            disabled
             placeholder="0.0"
+            title="外部 ASR 不再支持自定义温度"
           />
           <Button
             size="small"
@@ -279,21 +282,24 @@ export const ChunkDetailTabs: React.FC<Props> = ({ taskId, chunkId, canWriteMeet
     ) : k==='speakers' ? (
       <div style={{ display:'flex', flexDirection:'column', gap:8, height: '500px' }}>
         <Space wrap>
-          <Button size="small" disabled={!allowWrite || !chunkId} onClick={async()=>{ if(!allowWrite || !chunkId) return; try { await redoSpeakers(taskId, chunkId); message.success('已重新生成 SPEAKERS'); load(true); } catch(e:any){ message.error(e.message);} }}>重新生成(SPEAKERS)</Button>
+          <Button size="small" disabled title="外部 ASR 部署不再支持说话人分离">重新生成(SPEAKERS)</Button>
+          <Typography.Text type="secondary">说话人分离已停用，仅显示历史数据</Typography.Text>
         </Space>
         <pre style={{ flex:1, whiteSpace:'pre-wrap', fontFamily:'monospace', background:'#fafafa', padding:8, overflow:'auto', margin:0 }}>{raw}</pre>
       </div>
     ) : k==='embeddings' ? (
       <div style={{ display:'flex', flexDirection:'column', gap:8, height: '500px' }}>
         <Space wrap>
-          <Button size="small" disabled={!allowWrite || !chunkId} onClick={async()=>{ if(!allowWrite || !chunkId) return; try { await redoEmbeddings(taskId, chunkId); message.success('已重新生成 EMBEDDINGS'); load(true); } catch(e:any){ message.error(e.message);} }}>重新生成(EMBEDDINGS)</Button>
+          <Button size="small" disabled title="外部 ASR 部署不再支持嵌入生成">重新生成(EMBEDDINGS)</Button>
+          <Typography.Text type="secondary">嵌入生成已停用，仅显示历史数据</Typography.Text>
         </Space>
         <pre style={{ flex:1, whiteSpace:'pre-wrap', fontFamily:'monospace', background:'#fafafa', padding:8, overflow:'auto', margin:0 }}>{raw}</pre>
       </div>
     ) : k==='mapped' ? (
       <div style={{ display:'flex', flexDirection:'column', gap:8, height: '500px' }}>
         <Space wrap>
-          <Button size="small" disabled={!allowWrite || !chunkId} onClick={async()=>{ if(!allowWrite || !chunkId) return; try { await redoMapped(taskId, chunkId); message.success('已重新生成 MAPPED'); load(true); } catch(e:any){ message.error(e.message);} }}>重新生成(MAPPED)</Button>
+          <Button size="small" disabled title="说话人映射依赖嵌入生成">重新生成(MAPPED)</Button>
+          <Typography.Text type="secondary">说话人映射已停用，仅显示历史数据</Typography.Text>
         </Space>
         <pre style={{ flex:1, whiteSpace:'pre-wrap', fontFamily:'monospace', background:'#fafafa', padding:8, overflow:'auto', margin:0 }}>{raw}</pre>
       </div>

@@ -17,7 +17,6 @@ export type {
 } from './EnhancedTreeView';
 
 // 文件上传区域
-export { default as FileUploadArea } from './FileUploadArea';
 
 // 导出类型定义
 export type {

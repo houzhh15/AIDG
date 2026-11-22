@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    {
+      "id": "synthetic-relative-task",
+      "config": {"output_dir": "tasks/synthetic-relative-task"},
+      "state": "stopping"
+    }
+  ]
+}

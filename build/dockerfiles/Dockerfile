@@ -1,10 +1,4 @@
-# Lightweight Dockerfile for AIDG - Optimized for minimal size
-# Target: ~235-250MB (with Python file_converter)
-# Optimizations:
-# 1. Use Alpine instead of Debian (~90MB savings on base image)
-# 2. Minimize layer sizes
-# 3. Combine RUN commands to reduce layers
-# 4. Include lightweight Python file_converter for document import
+# Lightweight Dockerfile for AIDG - Go services and frontend only.
 
 # Stage 1: Build Go backends
 FROM golang:1.23-alpine AS backend-builder
@@ -62,35 +56,14 @@ RUN npm run build && \
     # Remove source maps to reduce size
     find dist -name "*.map" -type f -delete
 
-# Stage 3: Lightweight runtime image (Alpine-based with Python)
-FROM python:3.11-alpine
+# Stage 3: Lightweight runtime image
+FROM alpine:3.19
 
-# Install only essential runtime dependencies in a single layer
 RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     supervisor \
-    wget \
-    # OCR dependencies
-    tesseract-ocr \
-    poppler-utils \
-    # Build dependencies for Python packages (will be removed later)
-    && pip install --no-cache-dir --upgrade pip \
-    && rm -rf /var/cache/apk/*
-
-# Create tessdata directory and download English language pack
-RUN mkdir -p /usr/share/tessdata && \
-    wget -q -O /usr/share/tessdata/eng.traineddata \
-    https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
-
-# Set Tesseract data path
-ENV TESSDATA_PREFIX=/usr/share/tessdata
-
-# Install Python dependencies for file_converter
-COPY file_converter/requirements.txt /tmp/file_converter_requirements.txt
-RUN pip install --no-cache-dir -r /tmp/file_converter_requirements.txt \
-    && rm -rf /tmp/file_converter_requirements.txt \
-    && rm -rf /root/.cache/pip
+    wget
 
 # Create non-root user and all necessary directories in one layer
 RUN addgroup -g 1000 aidg && \
@@ -101,7 +74,6 @@ RUN addgroup -g 1000 aidg && \
              /app/data/audit_logs \
              /app/prompts \
              /app/frontend/dist \
-             /app/file_converter \
              /data \
              /models \
              /external/scripts && \
@@ -118,36 +90,27 @@ COPY --from=backend-builder --chown=aidg:aidg /app/cmd/mcp-server/prompts /app/p
 # Copy frontend dist
 COPY --from=frontend-builder --chown=aidg:aidg /app/frontend/dist /app/frontend/dist
 
-# Copy file_converter Python service
-COPY --chown=aidg:aidg file_converter /app/file_converter
-
 # Copy supervisor config
 COPY --chown=aidg:aidg deployments/docker/supervisord.conf /etc/supervisord.conf
 
 # Switch to non-root user
 USER aidg
 
-# Expose both ports
-EXPOSE 8000 8081 5002
+# Expose web and MCP ports
+EXPOSE 8000 8001
 
 # Environment variables for external dependencies
 ENV ENV=production \
     PORT=8000 \
-    MCP_HTTP_PORT=8081 \
-    FILE_CONVERTER_PORT=5002 \
+    MCP_HTTP_PORT=8001 \
     LOG_LEVEL=info \
     LOG_FORMAT=json \
-    FFMPEG_PATH=/usr/bin/ffmpeg \
-    PYTHON_PATH=/usr/bin/python3 \
-    DIARIZATION_SCRIPT=/external/scripts/pyannote_diarize.py \
-    ENABLE_AUDIO_CONVERSION=auto \
-    ENABLE_SPEAKER_DIARIZATION=auto
+    ENABLE_AUDIO_CONVERSION=false \
+    ENABLE_SPEAKER_DIARIZATION=false
 
-# Health check (including file_converter)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8000/health && \
-        wget --no-verbose --tries=1 --spider http://localhost:8081/health && \
-        wget --no-verbose --tries=1 --spider http://localhost:5002/health || exit 1
+        wget --no-verbose --tries=1 --spider http://localhost:8001/health || exit 1
 
 # Run with supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

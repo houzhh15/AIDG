@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,11 +14,16 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
+	"github.com/houzhh15/AIDG/cmd/server/internal/meetingv2"
 	orchestrator "github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
+	"github.com/houzhh15/AIDG/cmd/server/internal/services"
+	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
 
 // ============================================================================
 // Summary and Document Handlers (step-13-06)
+var errMeetingResponseWritten = errors.New("meeting response already written")
+
 // ============================================================================
 
 // HandleRegenerateMerged POST /api/v1/tasks/:id/regenerate_merged
@@ -106,10 +114,112 @@ func HandleGetPolish(reg *meetings.Registry) gin.HandlerFunc {
 
 // ============================================================================
 // Legacy Document Handlers (task-only format: /api/v1/tasks/:id/...)
+func authorizeMeetingV2TaskSession(c *gin.Context, session meetingv2.Session, requiredScope string, injectors ...services.PermissionInjector) bool {
+	username, _ := c.Get("user")
+	user, _ := username.(string)
+	if user != "" && user == session.Owner {
+		return true
+	}
+	// Migrated legacy task routes historically relied on the route-level
+	// meeting.read/meeting.write scope and had no resource owner or ACL. The
+	// middleware has already enforced requiredScope before this fallback.
+	if session.Metadata["migration_source"] == "legacy" {
+		return true
+	}
+	if len(injectors) > 0 && injectors[0] != nil {
+		read, write, err := injectors[0].CheckMeetingACL(user, session.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve meeting access"})
+			return false
+		}
+		if (requiredScope == users.ScopeMeetingRead && read) || (requiredScope == users.ScopeMeetingWrite && write) {
+			return true
+		}
+	}
+	value, exists := c.Get("meeting_resource_scopes")
+	if !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "meeting resource access denied"})
+		return false
+	}
+	scopes, ok := value.([]string)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": "meeting resource access denied"})
+		return false
+	}
+	for _, scope := range scopes {
+		if scope == requiredScope || scope == "*" {
+			return true
+		}
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "meeting resource access denied"})
+	return false
+}
+
+func loadMeetingV2TaskDocument(c *gin.Context, store *meetingv2.Store, taskID string, kind meetingv2.DocumentKind, injectors ...services.PermissionInjector) (string, bool, error) {
+	if store == nil {
+		return "", false, nil
+	}
+	session, err := store.FindSessionByTaskID(taskID)
+	if errors.Is(err, meetingv2.ErrSessionNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !authorizeMeetingV2TaskSession(c, session, users.ScopeMeetingRead, injectors...) {
+		return "", false, errMeetingResponseWritten
+	}
+	document, err := store.GetActiveDocument(session.ID, kind)
+	if errors.Is(err, meetingv2.ErrDocumentNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return document.Content, true, nil
+}
+
+func saveMeetingV2TaskDocument(c *gin.Context, store *meetingv2.Store, taskID string, kind meetingv2.DocumentKind, content, user, key string, injectors ...services.PermissionInjector) (bool, error) {
+	if store == nil {
+		return false, nil
+	}
+	session, err := store.FindSessionByTaskID(taskID)
+	if errors.Is(err, meetingv2.ErrSessionNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !authorizeMeetingV2TaskSession(c, session, users.ScopeMeetingWrite, injectors...) {
+		return false, errMeetingResponseWritten
+	}
+	if user == "" {
+		user = "legacy-api"
+	}
+	if key == "" {
+		hash := sha256.Sum256([]byte(content))
+		key = "legacy-" + string(kind) + "-" + hex.EncodeToString(hash[:])
+	}
+	_, _, err = store.PutDocumentLatest(session.ID, meetingv2.PutDocumentRequest{Kind: kind, Source: meetingv2.DocumentSourceUser, Content: content, IdempotencyKey: key, CreatedBy: user})
+	return true, err
+}
+
 // ============================================================================
 
 // HandleGetTaskMeetingSummary handles GET /tasks/{id}/meeting-summary
-func HandleGetTaskMeetingSummary(reg *meetings.Registry) gin.HandlerFunc {
+func HandleGetTaskMeetingSummary(reg *meetings.Registry, stores ...*meetingv2.Store) gin.HandlerFunc {
+	var v2 *meetingv2.Store
+	if len(stores) > 0 {
+		v2 = stores[0]
+	}
+	return handleGetTaskMeetingSummary(reg, v2, nil)
+}
+
+func HandleGetTaskMeetingSummaryV2(reg *meetings.Registry, store *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
+	return handleGetTaskMeetingSummary(reg, store, injector)
+}
+
+func handleGetTaskMeetingSummary(reg *meetings.Registry, v2 *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		taskID := c.Param("id")
 
@@ -129,9 +239,17 @@ func HandleGetTaskMeetingSummary(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "meeting-summary document not found",
-			})
+			content, exists, err = loadMeetingV2TaskDocument(c, v2, taskID, meetingv2.DocumentMeetingSummary, injector)
+			if err != nil {
+				if errors.Is(err, errMeetingResponseWritten) {
+					return
+				}
+				c.JSON(http.StatusConflict, gin.H{"error": "failed to resolve meeting v2 summary"})
+				return
+			}
+		}
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "meeting-summary document not found"})
 			return
 		}
 
@@ -143,7 +261,19 @@ func HandleGetTaskMeetingSummary(reg *meetings.Registry) gin.HandlerFunc {
 }
 
 // HandleUpdateTaskMeetingSummary handles PUT /tasks/{id}/meeting-summary
-func HandleUpdateTaskMeetingSummary(reg *meetings.Registry) gin.HandlerFunc {
+func HandleUpdateTaskMeetingSummary(reg *meetings.Registry, stores ...*meetingv2.Store) gin.HandlerFunc {
+	var v2 *meetingv2.Store
+	if len(stores) > 0 {
+		v2 = stores[0]
+	}
+	return handleUpdateTaskMeetingSummary(reg, v2, nil)
+}
+
+func HandleUpdateTaskMeetingSummaryV2(reg *meetings.Registry, store *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
+	return handleUpdateTaskMeetingSummary(reg, store, injector)
+}
+
+func handleUpdateTaskMeetingSummary(reg *meetings.Registry, v2 *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		taskID := c.Param("id")
 
@@ -165,6 +295,20 @@ func HandleUpdateTaskMeetingSummary(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
+		user, _ := c.Get("user")
+		username, _ := user.(string)
+		savedV2, err := saveMeetingV2TaskDocument(c, v2, taskID, meetingv2.DocumentMeetingSummary, req.Content, username, c.GetHeader("Idempotency-Key"), injector)
+		if err != nil {
+			if errors.Is(err, errMeetingResponseWritten) {
+				return
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": "failed to save meeting v2 summary"})
+			return
+		}
+		if savedV2 {
+			c.JSON(http.StatusOK, gin.H{"message": "meeting-summary document updated successfully"})
+			return
+		}
 		if err := meetings.SaveDocumentWithHistory(reg, taskID, meetings.DocTypeMeetingSummary, req.Content); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "failed to save meeting-summary document",
@@ -179,7 +323,19 @@ func HandleUpdateTaskMeetingSummary(reg *meetings.Registry) gin.HandlerFunc {
 }
 
 // HandleGetTaskMeetingContext handles GET /tasks/{id}/meeting-context
-func HandleGetTaskMeetingContext(reg *meetings.Registry) gin.HandlerFunc {
+func HandleGetTaskMeetingContext(reg *meetings.Registry, stores ...*meetingv2.Store) gin.HandlerFunc {
+	var v2 *meetingv2.Store
+	if len(stores) > 0 {
+		v2 = stores[0]
+	}
+	return handleGetTaskMeetingContext(reg, v2, nil)
+}
+
+func HandleGetTaskMeetingContextV2(reg *meetings.Registry, store *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
+	return handleGetTaskMeetingContext(reg, store, injector)
+}
+
+func handleGetTaskMeetingContext(reg *meetings.Registry, v2 *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		taskID := c.Param("id")
 
@@ -199,9 +355,17 @@ func HandleGetTaskMeetingContext(reg *meetings.Registry) gin.HandlerFunc {
 		}
 
 		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error": "meeting-context document not found",
-			})
+			content, exists, err = loadMeetingV2TaskDocument(c, v2, taskID, meetingv2.DocumentPolishedTranscript, injector)
+			if err != nil {
+				if errors.Is(err, errMeetingResponseWritten) {
+					return
+				}
+				c.JSON(http.StatusConflict, gin.H{"error": "failed to resolve meeting v2 context"})
+				return
+			}
+		}
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "meeting-context document not found"})
 			return
 		}
 
@@ -213,7 +377,19 @@ func HandleGetTaskMeetingContext(reg *meetings.Registry) gin.HandlerFunc {
 }
 
 // HandleUpdateTaskMeetingContext handles PUT /tasks/{id}/meeting-context
-func HandleUpdateTaskMeetingContext(reg *meetings.Registry) gin.HandlerFunc {
+func HandleUpdateTaskMeetingContext(reg *meetings.Registry, stores ...*meetingv2.Store) gin.HandlerFunc {
+	var v2 *meetingv2.Store
+	if len(stores) > 0 {
+		v2 = stores[0]
+	}
+	return handleUpdateTaskMeetingContext(reg, v2, nil)
+}
+
+func HandleUpdateTaskMeetingContextV2(reg *meetings.Registry, store *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
+	return handleUpdateTaskMeetingContext(reg, store, injector)
+}
+
+func handleUpdateTaskMeetingContext(reg *meetings.Registry, v2 *meetingv2.Store, injector services.PermissionInjector) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		taskID := c.Param("id")
 
@@ -235,6 +411,20 @@ func HandleUpdateTaskMeetingContext(reg *meetings.Registry) gin.HandlerFunc {
 			return
 		}
 
+		user, _ := c.Get("user")
+		username, _ := user.(string)
+		savedV2, err := saveMeetingV2TaskDocument(c, v2, taskID, meetingv2.DocumentPolishedTranscript, req.Content, username, c.GetHeader("Idempotency-Key"), injector)
+		if err != nil {
+			if errors.Is(err, errMeetingResponseWritten) {
+				return
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": "failed to save meeting v2 context"})
+			return
+		}
+		if savedV2 {
+			c.JSON(http.StatusOK, gin.H{"message": "meeting-context document updated successfully"})
+			return
+		}
 		if err := meetings.SaveDocumentWithHistory(reg, taskID, meetings.DocTypeMeetingContext, req.Content); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "failed to save meeting-context document",

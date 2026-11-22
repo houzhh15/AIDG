@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    {
+      "id": "synthetic-docker-task",
+      "config": {"output_dir": "/app/data/meetings/synthetic-docker-task"},
+      "state": "running"
+    }
+  ]
+}

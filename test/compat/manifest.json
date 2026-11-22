@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "status": "synthetic-baseline-only",
+  "real_production_samples_verified": 0,
+  "fixtures": [
+    {"id":"synthetic-lite-minimal","classification":"synthetic","production_sample":false,"source":"created for compatibility testing","redaction_status":"not_applicable"},
+    {"id":"synthetic-standard-chunks","classification":"synthetic","production_sample":false,"source":"created for compatibility testing","redaction_status":"not_applicable"},
+    {"id":"synthetic-full-speaker-artifacts","classification":"synthetic","production_sample":false,"source":"created for compatibility testing","redaction_status":"not_applicable"},
+    {"id":"compose-lite-reference","classification":"repository-reference","production_sample":false,"source":"deployments/production/docker-compose.lite.yml"},
+    {"id":"compose-standard-reference","classification":"repository-reference","production_sample":false,"source":"deployments/production/docker-compose.standard.yml"},
+    {"id":"compose-full-reference","classification":"repository-reference","production_sample":false,"source":"deployments/production/docker-compose.full.yml"}
+  ],
+  "redacted_production_template": {
+    "classification":"redacted-production",
+    "production_sample":true,
+    "source_release":"operator supplied",
+    "redacted_by":"REQUIRED",
+    "redacted_at":"REQUIRED",
+    "redaction_method":"REQUIRED",
+    "original_retained_outside_repository":true,
+    "contains_audio":false,
+    "reviewed_for_secrets":true,
+    "sha256":{}
+  }
+}

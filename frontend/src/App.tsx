@@ -181,7 +181,11 @@ const App: React.FC = () => {
   const [currentChunk, setCurrentChunk] = useState<string | undefined>();
   const [filterProductLine, setFilterProductLine] = useState<string | undefined>();
   const [filterMeetingDateRange, setFilterMeetingDateRange] = useState<[Dayjs, Dayjs] | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('project');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const path = window.location.pathname;
+    if (path === '/meeting' || path === '/') return 'meeting';
+    return 'project';
+  });
   const [currentProject, setCurrentProject] = useState<string | undefined>();
   const [currentProjectTask, setCurrentProjectTask] = useState<string | undefined>();
   const [projectTaskSidebarCollapsed, setProjectTaskSidebarCollapsed] = useState(false);
@@ -190,10 +194,25 @@ const App: React.FC = () => {
   const [svnRunning, setSvnRunning] = useState(false);
   const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [servicesStatus, setServicesStatus] = useState<ServicesStatus | null>(null);
-  
+
   // Lite mode detection
   const { liteMode, loading: liteModeLoading } = useLiteMode();
-  
+
+
+  useEffect(() => {
+    const onPopState = () => {
+      const path = window.location.pathname;
+      setViewMode(path === '/meeting' ? 'meeting' : 'project');
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const changeViewMode = (mode: ViewMode) => {
+    const nextPath = mode === 'meeting' ? '/meeting' : '/';
+    if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
+    setViewMode(mode);
+  };
   // 身份源权限检查
   const { hasPermission } = usePermission();
   const hasIdpReadPermission = hasPermission('idp.read');
@@ -542,7 +561,7 @@ const App: React.FC = () => {
             <div style={{ color:'#fff', fontWeight:600, letterSpacing:0.5, lineHeight:1 }}>Meeting & Project Copilot</div>
             <div 
               style={{color:'#d0e6f9', fontSize:11, lineHeight:1.2, cursor:'pointer', userSelect:'none'}} 
-              onClick={() => setViewMode('profile')}
+              onClick={() => changeViewMode('profile')}
               title="点击查看个人中心"
             >
               用户: {auth?.username}
@@ -551,10 +570,10 @@ const App: React.FC = () => {
           <Segmented
             size="small"
             value={viewMode}
-            onChange={(v)=> setViewMode(v as ViewMode)}
+            onChange={(v)=> changeViewMode(v as ViewMode)}
             options={[
-              {label:'会议', value:'meeting'}, 
-              {label:'项目', value:'project'}, 
+              {label:'会议', value:'meeting'},
+              {label:'项目', value:'project'},
               {label:'用户', value:'user'},
               // 仅当有身份源读取权限时显示
               ...(hasIdpReadPermission ? [{label:'身份源', value:'idp'}] : [])
@@ -619,7 +638,7 @@ const App: React.FC = () => {
             ghost 
             style={{color:'#fff',borderColor:'#fff'}} 
             icon={<UserOutlined />}
-            onClick={() => setViewMode('profile')}
+            onClick={() => changeViewMode('profile')}
             title="查看个人中心"
           >
             个人中心

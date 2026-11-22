@@ -491,3 +491,18 @@ AIDG/
 - [GitHub 仓库](https://github.com/houzhh15/AIDG)
 - [MCP 协议文档](https://modelcontextprotocol.io/)
 - [HuggingFace Token 获取](https://huggingface.co/settings/tokens)
+
+
+## Meeting v2 旧数据迁移约束
+
+启用 `meeting_v2` 后，服务会在 meetings 数据根持有 `.meetingv2-service.lock`，同一数据根只允许一个 AIDG 进程。阶段 2 旧会议迁移在 HTTP 路由开放前执行。
+
+从不支持该锁的旧版本升级时必须停机替换：
+
+1. 停止所有读写该 meetings volume 的旧 AIDG 实例并确认其完全退出；
+2. 备份 `server_tasks.json`、全部旧会议目录和用户数据；
+3. 启动一个新实例并检查 `migration-state.json`；
+4. 存在 `failed` 项时不要删除旧文件，修复源数据后重启即可幂等重试；
+5. 回滚时停止新实例，同时恢复完整数据备份后再启动旧镜像。
+
+禁止使用 rolling update，也禁止多个副本共享同一文件型 meetings 数据根。旧版本不会获取新版服务锁，锁文件本身不能代替停旧确认。

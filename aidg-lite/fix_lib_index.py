@@ -72,7 +72,6 @@ lines = [
     "// documents sub-components (direct imports to avoid type-re-export conflicts)",
     "export { default as MarkdownEditor } from '../components/documents/MarkdownEditor';",
     "export { default as EnhancedTreeView } from '../components/documents/EnhancedTreeView';",
-    "export { default as FileUploadArea } from '../components/documents/FileUploadArea';",
     "// permission sub-components",
     "export { default as NoPermission } from '../components/permission/NoPermission';",
     "export { default as PermissionGuard } from '../components/permission/PermissionGuard';",

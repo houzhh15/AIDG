@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "classification": "repository-contract-baseline",
+  "routes": [
+    {"method":"POST","path":"/api/v1/login","expected_statuses":[200,400,401,503]},
+    {"method":"GET","path":"/api/v1/tasks/{id}/meeting-summary","required_scope":"meeting.read","expected_statuses":[200,403,404,409]},
+    {"method":"PUT","path":"/api/v1/tasks/{id}/meeting-summary","required_scope":"meeting.write","expected_statuses":[200,400,403,409]},
+    {"method":"GET","path":"/api/v1/tasks/{id}/meeting-context","required_scope":"meeting.read","expected_statuses":[200,403,404,409]},
+    {"method":"PUT","path":"/api/v1/tasks/{id}/meeting-context","required_scope":"meeting.write","expected_statuses":[200,400,403,409]},
+    {"method":"GET","path":"/api/v1/meeting-sessions/capabilities","required_scope":"meeting.read","expected_statuses":[200,403]}
+  ]
+}

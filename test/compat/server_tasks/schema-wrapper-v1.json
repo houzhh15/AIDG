@@ -1,0 +1,10 @@
+{
+  "tasks": [
+    {
+      "id": "synthetic-wrapper-task",
+      "config": {"output_dir": "tasks/synthetic-wrapper-task"},
+      "state": "created",
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
