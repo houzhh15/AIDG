@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Layout, Spin, message, Modal } from 'antd'
+import { Alert, Button, Input, Layout, Space, Spin, message, Modal } from 'antd'
 import SectionTree, { FULL_DOCUMENT_ID } from './SectionTree'
 import SectionContentEditor from './SectionContentEditor'
 import { getTaskSections, getTaskSection, updateTaskSection, updateTaskSectionFull, getTaskDocument, saveTaskDocument } from '../api/tasks'
@@ -27,6 +27,8 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
   const [saving, setSaving] = useState(false)
   const [isFullEditMode, setIsFullEditMode] = useState(false) // 新增：是否为全文编辑模式
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false) // 新增：跟踪是否有未保存的更改
+  const [documentVersion, setDocumentVersion] = useState<number | null>(null)
+  const [conflict, setConflict] = useState<{ remoteContent: string; remoteVersion: number } | null>(null)
   
   // 获取刷新函数
   const { triggerRefreshForMultiple } = useTaskRefresh()
@@ -40,6 +42,7 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
 
   // 加载章节列表
   useEffect(() => {
+    setConflict(null)
     loadSections()
   }, [projectId, taskId, docType])
 
@@ -102,6 +105,7 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
     try {
       const response = await getTaskSections(projectId, taskId, docType)
       setSections(response)
+      setDocumentVersion(response.version)
 
       // 如果当前没有选中任何章节，并且没有提供初始章节，才自动选中第一个章节
       // 这样可以避免覆盖用户通过 initialSectionTitle/initialSectionId 指定的章节
@@ -127,6 +131,8 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
         console.log('[SectionEditor] Full document loaded, length:', response.content.length)
         console.log('[SectionEditor] Content preview (first 200 chars):', response.content.substring(0, 200))
         setIsFullEditMode(true)
+        if (typeof response.version !== 'number') throw new Error('document revision is unavailable')
+        setDocumentVersion(response.version)
         setSectionContent({
           id: FULL_DOCUMENT_ID,
           title: '📄 全文',
@@ -182,8 +188,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
         cancelText: '不保存',
         onOk: async () => {
           // 保存当前章节
-          await handleSave()
-          // 保存成功后切换章节
+          const saved = await handleSave()
+          if (!saved) return
+          // 仅保存成功后切换章节；409/422 等失败继续保留当前草稿。
           setCurrentSectionId(sectionId)
           setHasUnsavedChanges(false)
         },
@@ -207,7 +214,7 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
   }
 
   const handleSave = async () => {
-    if (!sectionContent) return
+    if (!sectionContent) return false
     
     // 全文模式不需要 sections
     if (sectionContent.id !== FULL_DOCUMENT_ID && !sections) return
@@ -219,8 +226,9 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
         console.log('[SectionEditor] Saving full document, content length:', sectionContent.content.length)
         console.log('[SectionEditor] Content preview (first 200 chars):', sectionContent.content.substring(0, 200))
         
-        // 全文档模式：直接调用 saveTaskDocument API
-        await saveTaskDocument(projectId, taskId, docType as 'requirements' | 'design' | 'test', sectionContent.content)
+        // 全文档模式：使用加载草稿时捕获的基线版本，禁止保存前重新 GET 扩大覆盖窗口。
+        if (documentVersion === null) throw new Error('document revision is unavailable')
+        await saveTaskDocument(projectId, taskId, docType as 'requirements' | 'design' | 'test', sectionContent.content, documentVersion)
         message.success('保存成功')
         
         console.log('[SectionEditor] Save completed, reloading sections...')
@@ -271,13 +279,23 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
       
       // 重置未保存状态
       setHasUnsavedChanges(false)
+      return true
     } catch (error: any) {
       if (error.response?.status === 409) {
-        message.error('版本冲突，请刷新后重试')
+        message.error('版本冲突：本地草稿已保留。请刷新远端版本、对比差异后再重试')
+        try {
+          const remote = await getTaskDocument(projectId, taskId, docType as 'requirements' | 'design' | 'test')
+          if (typeof remote.version === 'number') {
+            setConflict({ remoteContent: remote.content || '', remoteVersion: remote.version })
+          }
+        } catch {
+          // 对比加载失败不应清除本地草稿。
+        }
       } else {
         message.error('保存失败')
       }
       console.error(error)
+      return false
     } finally {
       setSaving(false)
     }
@@ -292,12 +310,11 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
         okText: '保存',
         cancelText: '不保存',
         onOk: async () => {
-          // 保存后关闭
-          await handleSave()
+          // 仅保存成功后关闭；冲突时继续停留并保留草稿。
+          const saved = await handleSave()
+          if (!saved) return Promise.reject(new Error('save failed'))
           setHasUnsavedChanges(false)
-          if (onCancel) {
-            onCancel()
-          }
+          onCancel?.()
         },
         onCancel: () => {
           // 不保存，直接关闭
@@ -325,6 +342,35 @@ const SectionEditor: React.FC<Props> = ({ projectId, taskId, docType, initialSec
 
   return (
     <Layout style={{ height: '100%', overflow: 'hidden' }}>
+      {conflict && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ position: 'absolute', top: 8, left: 316, right: 16, zIndex: 10 }}
+          message={`检测到远端新版本 v${conflict.remoteVersion}；本地草稿仍保留`}
+          description={(
+            <Space wrap>
+              <Button size="small" onClick={() => Modal.info({
+                width: 900,
+                title: '本地草稿与远端版本对比',
+                content: (
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <strong>本地草稿</strong>
+                    <Input.TextArea rows={7} value={sectionContent?.content || ''} readOnly />
+                    <strong>远端 v{conflict.remoteVersion}</strong>
+                    <Input.TextArea rows={7} value={conflict.remoteContent} readOnly />
+                  </Space>
+                ),
+              })}>对比差异</Button>
+              <Button size="small" type="primary" onClick={() => {
+                setDocumentVersion(conflict.remoteVersion)
+                setConflict(null)
+                message.info('已更新保存基线；本地草稿未改变，请确认后重试保存')
+              }}>以远端版本为新基线</Button>
+            </Space>
+          )}
+        />
+      )}
       {/* 左侧：章节树 */}
       <Sider 
         width={300} 

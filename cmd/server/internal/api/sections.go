@@ -19,6 +19,18 @@ func NewSectionHandlers(service taskdocs.SectionService) *SectionHandlers {
 	return &SectionHandlers{service: service}
 }
 
+func validateSectionPath(c *gin.Context, projectID, taskID, docType string) bool {
+	if !taskdocs.TaskExistsInProject(projectID, taskID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return false
+	}
+	if _, err := taskdocs.DocDir(projectID, taskID, docType); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project, task, or document identifier"})
+		return false
+	}
+	return true
+}
+
 // HandleGetSections 获取章节列表
 func (h *SectionHandlers) HandleGetSections(c *gin.Context) {
 	projectID := c.Param("id")
@@ -28,6 +40,9 @@ func (h *SectionHandlers) HandleGetSections(c *gin.Context) {
 	docType := extractDocTypeFromPath(c.Request.URL.Path)
 	if docType == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
+		return
+	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
 		return
 	}
 
@@ -58,6 +73,9 @@ func (h *SectionHandlers) HandleGetSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 	sectionID := c.Param("section_id")
 
 	// 解析查询参数
@@ -84,6 +102,9 @@ func (h *SectionHandlers) HandleUpdateSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 	sectionID := c.Param("section_id")
 
 	// 解析请求体
@@ -92,8 +113,8 @@ func (h *SectionHandlers) HandleUpdateSection(c *gin.Context) {
 		ExpectedVersion int    `json:"expected_version"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := BindDocumentWrite(c, &req); err != nil || req.ExpectedVersion < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid expected_version is required"})
 		return
 	}
 
@@ -122,6 +143,9 @@ func (h *SectionHandlers) HandleInsertSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 
 	// 解析请求体
 	var req struct {
@@ -131,8 +155,8 @@ func (h *SectionHandlers) HandleInsertSection(c *gin.Context) {
 		ExpectedVersion int     `json:"expected_version"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := BindDocumentWrite(c, &req); err != nil || req.ExpectedVersion < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid expected_version is required"})
 		return
 	}
 
@@ -162,6 +186,9 @@ func (h *SectionHandlers) HandleDeleteSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 	sectionID := c.Param("section_id")
 
 	// 解析查询参数
@@ -171,7 +198,10 @@ func (h *SectionHandlers) HandleDeleteSection(c *gin.Context) {
 	var req struct {
 		ExpectedVersion int `json:"expected_version"`
 	}
-	c.ShouldBindJSON(&req)
+	if err := BindDocumentWrite(c, &req); err != nil || req.ExpectedVersion < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid expected_version is required"})
+		return
+	}
 
 	// 删除章节
 	err := h.service.DeleteSection(projectID, taskID, docType, sectionID, cascade, req.ExpectedVersion)
@@ -194,6 +224,9 @@ func (h *SectionHandlers) HandleReorderSection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 
 	// 解析请求体
 	var req struct {
@@ -202,8 +235,8 @@ func (h *SectionHandlers) HandleReorderSection(c *gin.Context) {
 		ExpectedVersion int     `json:"expected_version"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := BindDocumentWrite(c, &req); err != nil || req.ExpectedVersion < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid expected_version is required"})
 		return
 	}
 
@@ -233,14 +266,17 @@ func (h *SectionHandlers) HandleUpdateSectionFull(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 
 	var req struct {
 		Content         string `json:"content" binding:"required"`
 		ExpectedVersion int    `json:"expected_version"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := BindDocumentWrite(c, &req); err != nil || req.ExpectedVersion < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid expected_version is required"})
 		return
 	}
 
@@ -268,20 +304,31 @@ func (h *SectionHandlers) HandleSyncSections(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid doc type in path"})
 		return
 	}
+	if !validateSectionPath(c, projectID, taskID, docType) {
+		return
+	}
 
 	// 解析请求体
 	var req struct {
 		Direction string `json:"direction" binding:"required"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := BindDocumentWrite(c, &req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 验证 direction
-	if req.Direction != "from_compiled" && req.Direction != "to_compiled" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid direction"})
+	// Sync is an explicit, one-time migration from compiled.md. Subsequent
+	// section writes must use revision-bound section operations.
+	if req.Direction != "from_compiled" {
+		c.JSON(http.StatusConflict, gin.H{"error": "to_compiled sync is not revision-bound; use section update APIs"})
+		return
+	}
+	if _, err := h.service.GetSections(projectID, taskID, docType); err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "sections already initialized"})
+		return
+	} else if !strings.Contains(err.Error(), "explicit sync required") {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
 

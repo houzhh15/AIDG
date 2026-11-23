@@ -1,14 +1,37 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/docslot"
 )
+
+const maxDocumentWriteBytes = 4 << 20
+
+func BindDocumentWrite(c *gin.Context, target any) error {
+	raw, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxDocumentWriteBytes))
+	if err != nil || !utf8.Valid(raw) {
+		return fmt.Errorf("invalid UTF-8 or oversized request")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(target); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return fmt.Errorf("multiple JSON values")
+	}
+	return nil
+}
 
 // RegisterUnifiedDocRoutes 注册统一文档 API 路由
 func RegisterUnifiedDocRoutes(router *gin.RouterGroup, svc docslot.UnifiedDocService) {
@@ -83,8 +106,12 @@ func handleAppend(svc docslot.UnifiedDocService, scope docslot.DocumentScope) gi
 			Source          string `json:"source"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
+			return
+		}
+		if req.ExpectedVersion == nil || *req.ExpectedVersion < 0 {
+			badRequestResponse(c, "expected_version must be non-negative")
 			return
 		}
 
@@ -161,8 +188,12 @@ func handleTaskDocAppend(svc docslot.UnifiedDocService) gin.HandlerFunc {
 			Source          string `json:"source"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
+			return
+		}
+		if req.ExpectedVersion == nil || *req.ExpectedVersion < 0 {
+			badRequestResponse(c, "expected_version must be non-negative")
 			return
 		}
 
@@ -290,7 +321,7 @@ func handleUpdateSection(svc docslot.UnifiedDocService, scope docslot.DocumentSc
 			ExpectedVersion int    `json:"expected_version"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
@@ -317,7 +348,7 @@ func handleInsertSection(svc docslot.UnifiedDocService, scope docslot.DocumentSc
 			ExpectedVersion int     `json:"expected_version"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
@@ -453,8 +484,12 @@ func handleMeetingAppend(svc docslot.UnifiedDocService) gin.HandlerFunc {
 			Op              string `json:"op"`
 			Source          string `json:"source"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
+			return
+		}
+		if req.ExpectedVersion == nil || *req.ExpectedVersion < 0 {
+			badRequestResponse(c, "expected_version must be non-negative")
 			return
 		}
 		if req.Op == "" {
@@ -553,7 +588,7 @@ func handleMeetingUpdateSection(svc docslot.UnifiedDocService) gin.HandlerFunc {
 			Content         string `json:"content"`
 			ExpectedVersion int    `json:"expected_version"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
@@ -575,7 +610,7 @@ func handleMeetingInsertSection(svc docslot.UnifiedDocService) gin.HandlerFunc {
 			AfterSectionID *string `json:"after_section_id"`
 			ExpectedVer    int     `json:"expected_version"`
 		}
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}

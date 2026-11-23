@@ -1,0 +1,11 @@
+{
+  "projects": [
+    {
+      "id": "project",
+      "name": "Project",
+      "product_line": "old",
+      "created_at": "0001-01-01T00:00:00Z",
+      "updated_at": "0001-01-01T00:00:00Z"
+    }
+  ]
+}

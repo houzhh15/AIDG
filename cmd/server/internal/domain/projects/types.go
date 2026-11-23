@@ -5,13 +5,17 @@ import (
 	"time"
 )
 
-// Project represents a project entity
+const CurrentSchemaVersion = 2
+
+// Project represents a project entity. A zero SchemaVersion means the project
+// predates explicit schema versioning; reads must not persistently upgrade it.
 type Project struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	ProductLine string    `json:"product_line"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	ProductLine   string    `json:"product_line"`
+	SchemaVersion int       `json:"schema_version"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // ProjectRegistry maintains a thread-safe collection of projects
@@ -83,9 +87,10 @@ func (r *ProjectRegistry) Update(id string, name, productLine string) *Project {
 
 // persistedProject is the structure saved to disk
 type persistedProject struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	ProductLine string    `json:"product_line"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	ProductLine   string    `json:"product_line"`
+	SchemaVersion int       `json:"schema_version,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

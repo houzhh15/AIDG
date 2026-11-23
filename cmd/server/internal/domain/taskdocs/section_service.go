@@ -50,13 +50,16 @@ func NewSectionService(basePath string) SectionService {
 }
 
 // getDocPath 获取文档路径
-func (s *sectionServiceImpl) getDocPath(projectID, taskID, docType string) string {
-	return filepath.Join(s.basePath, projectID, "tasks", taskID, "docs", docType)
+func (s *sectionServiceImpl) getDocPath(projectID, taskID, docType string) (string, error) {
+	return ResolveDocPath(s.basePath, projectID, taskID, docType)
 }
 
 // GetSections 获取章节列表
 func (s *sectionServiceImpl) GetSections(projectID, taskID, docType string) (*SectionMeta, error) {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return nil, err
+	}
 	metaPath := filepath.Join(docPath, "sections.json")
 	compiledPath := filepath.Join(docPath, "compiled.md")
 
@@ -74,11 +77,9 @@ func (s *sectionServiceImpl) GetSections(projectID, taskID, docType string) (*Se
 			}, nil
 		}
 
-		// compiled.md 存在但 sections.json 不存在：首次初始化
-		sm := NewSyncManager(docPath, docType)
-		if err := sm.SyncFromCompiled(); err != nil {
-			return nil, fmt.Errorf("init from compiled: %w", err)
-		}
+		// Reads are side-effect free. Call the explicit sync endpoint to create
+		// section metadata from compiled.md.
+		return nil, fmt.Errorf("section metadata missing: explicit sync required")
 	}
 	// 注意：不再执行 AutoSync，避免重复解析
 	// 如果需要同步，应该通过显式的 API 调用（如 POST /sections/sync）
@@ -94,7 +95,10 @@ func (s *sectionServiceImpl) GetSections(projectID, taskID, docType string) (*Se
 
 // GetSection 获取单个章节内容
 func (s *sectionServiceImpl) GetSection(projectID, taskID, docType, sectionID string, includeChildren bool) (*SectionContent, error) {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return nil, err
+	}
 
 	// 加载元数据
 	metaPath := filepath.Join(docPath, "sections.json")
@@ -141,7 +145,10 @@ func (s *sectionServiceImpl) UpdateSection(
 	projectID, taskID, docType, sectionID string,
 	content string, expectedVersion int,
 ) error {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return err
+	}
 	metaPath := filepath.Join(docPath, "sections.json")
 
 	// 1. 加载并验证版本
@@ -150,7 +157,10 @@ func (s *sectionServiceImpl) UpdateSection(
 		return fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -220,7 +230,10 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 	projectID, taskID, docType, sectionID string,
 	fullContent string, expectedVersion int,
 ) error {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return err
+	}
 	metaPath := filepath.Join(docPath, "sections.json")
 	sectionsDir := filepath.Join(docPath, "sections")
 
@@ -230,7 +243,10 @@ func (s *sectionServiceImpl) UpdateSectionFull(
 		return fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -384,7 +400,10 @@ func (s *sectionServiceImpl) InsertSection(
 	projectID, taskID, docType, title, content string,
 	afterSectionID *string, expectedVersion int,
 ) (*Section, error) {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return nil, err
+	}
 	metaPath := filepath.Join(docPath, "sections.json")
 
 	// 1. 加载并验证版本
@@ -393,7 +412,10 @@ func (s *sectionServiceImpl) InsertSection(
 		return nil, fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return nil, fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return nil, fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -457,7 +479,10 @@ func (s *sectionServiceImpl) DeleteSection(
 	projectID, taskID, docType, sectionID string,
 	cascade bool, expectedVersion int,
 ) error {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return err
+	}
 	metaPath := filepath.Join(docPath, "sections.json")
 
 	// 1. 加载并验证版本
@@ -466,7 +491,10 @@ func (s *sectionServiceImpl) DeleteSection(
 		return fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -554,7 +582,10 @@ func (s *sectionServiceImpl) ReorderSection(
 	projectID, taskID, docType, sectionID string,
 	afterSectionID *string, expectedVersion int,
 ) error {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return err
+	}
 	metaPath := filepath.Join(docPath, "sections.json")
 
 	// 1. 加载并验证版本
@@ -563,7 +594,10 @@ func (s *sectionServiceImpl) ReorderSection(
 		return fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -643,7 +677,10 @@ func (s *sectionServiceImpl) ReorderSection(
 
 // SyncSections 同步章节与 compiled.md
 func (s *sectionServiceImpl) SyncSections(projectID, taskID, docType string, direction string) error {
-	docPath := s.getDocPath(projectID, taskID, docType)
+	docPath, err := s.getDocPath(projectID, taskID, docType)
+	if err != nil {
+		return err
+	}
 	sm := NewSyncManager(docPath, docType)
 	return sm.ForceSync(direction)
 }

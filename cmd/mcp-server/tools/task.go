@@ -23,10 +23,10 @@ func (t *ListProjectTasksTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 		},
-		"required": []string{},
+		"required": []string{"project_id"},
 	}
 }
 
@@ -55,7 +55,7 @@ func (t *CreateProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"name": map[string]interface{}{
 				"type":        "string",
@@ -87,7 +87,7 @@ func (t *CreateProjectTaskTool) InputSchema() map[string]interface{} {
 				"description": "所属模块",
 			},
 		},
-		"required": []string{"name"},
+		"required": []string{"project_id", "name"},
 	}
 }
 
@@ -145,14 +145,14 @@ func (t *GetProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID（可选，缺失时从当前任务获取）",
+				"description": "任务ID（必填）",
 			},
 		},
-		"required": []string{},
+		"required": []string{"project_id", "task_id"},
 	}
 }
 
@@ -181,11 +181,11 @@ func (t *UpdateProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID（可选，缺失时从当前任务获取）",
+				"description": "任务ID（必填）",
 			},
 			"name": map[string]interface{}{
 				"type":        "string",
@@ -216,8 +216,13 @@ func (t *UpdateProjectTaskTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "所属模块",
 			},
+			"expected_revision": map[string]interface{}{
+				"type":        "number",
+				"minimum":     1,
+				"description": "期望任务 revision（必填）",
+			},
 		},
-		"required": []string{},
+		"required": []string{"project_id", "task_id", "expected_revision"},
 	}
 }
 
@@ -228,6 +233,11 @@ func (t *UpdateProjectTaskTool) Execute(arguments map[string]interface{}, client
 	}
 
 	body := map[string]interface{}{}
+	expectedRevision, err := shared.SafeGetInt(arguments, "expected_revision")
+	if err != nil || expectedRevision < 1 {
+		return "", fmt.Errorf("update_project_task: expected_revision must be a positive integer")
+	}
+	body["expected_revision"] = expectedRevision
 
 	// 处理可选参数 - 这些可以是nil，所以不使用safeGetString
 	if name, exists := arguments["name"]; exists && name != nil {
@@ -272,14 +282,14 @@ func (t *DeleteProjectTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID（可选，缺失时从当前任务获取）",
+				"description": "任务ID（必填）",
 			},
 		},
-		"required": []string{},
+		"required": []string{"project_id", "task_id"},
 	}
 }
 
@@ -308,14 +318,14 @@ func (t *GetProjectTaskPromptsTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID（可选，缺失时从当前任务获取）",
+				"description": "任务ID（必填）",
 			},
 		},
-		"required": []string{},
+		"required": []string{"project_id", "task_id"},
 	}
 }
 
@@ -344,11 +354,11 @@ func (t *CreateProjectTaskPromptTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"task_id": map[string]interface{}{
 				"type":        "string",
-				"description": "任务ID（可选，缺失时从当前任务获取）",
+				"description": "任务ID（必填）",
 			},
 			"username": map[string]interface{}{
 				"type":        "string",
@@ -401,7 +411,7 @@ func (t *GetNextIncompleteTaskTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"project_id": map[string]interface{}{
 				"type":        "string",
-				"description": "项目ID（可选，缺失时从当前任务获取）",
+				"description": "项目ID（必填）",
 			},
 			"doc_type": map[string]interface{}{
 				"type":        "string",
@@ -409,7 +419,7 @@ func (t *GetNextIncompleteTaskTool) InputSchema() map[string]interface{} {
 				"enum":        []string{"requirements", "design", "plan", "execution", "test"},
 			},
 		},
-		"required": []string{},
+		"required": []string{"project_id"},
 	}
 }
 

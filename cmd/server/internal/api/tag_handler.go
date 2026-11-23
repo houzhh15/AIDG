@@ -34,11 +34,25 @@ func NewTagHandler(projectsRoot string) *TagHandler {
 	}
 }
 
+func rejectHistoricalExecutionPlanTagWrite(c *gin.Context, docType string) bool {
+	if docType != "execution-plan" {
+		return false
+	}
+	c.JSON(http.StatusConflict, gin.H{
+		"error":   "historical_resource_read_only",
+		"message": "execution plan tags are historical read-only resources",
+	})
+	return true
+}
+
 // CreateTag 创建新的tag版本
 func (h *TagHandler) CreateTag(c *gin.Context) {
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 	docType := c.Param("docType")
+	if rejectHistoricalExecutionPlanTagWrite(c, docType) {
+		return
+	}
 
 	var req struct {
 		TagName string `json:"tag_name" binding:"required"`
@@ -200,6 +214,9 @@ func (h *TagHandler) SwitchTag(c *gin.Context) {
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 	docType := c.Param("docType")
+	if rejectHistoricalExecutionPlanTagWrite(c, docType) {
+		return
+	}
 	tagName := c.Param("tagName")
 
 	// 解析请求体中的force参数
@@ -365,6 +382,9 @@ func (h *TagHandler) DeleteTag(c *gin.Context) {
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 	docType := c.Param("docType")
+	if rejectHistoricalExecutionPlanTagWrite(c, docType) {
+		return
+	}
 	tagName := c.Param("tagName")
 
 	// 构造tag目录路径

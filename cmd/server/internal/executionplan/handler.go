@@ -49,7 +49,21 @@ func (h *Handler) RegisterRoutes(r gin.IRouter) {
 	r.POST("/api/v1/projects/:id/tasks/:task_id/execution-plan/reset", h.ResetExecutionPlan)
 }
 
+var historicalExecutionPlansReadOnly = true
+
+func writeHistoricalReadOnly(c *gin.Context) {
+	c.JSON(http.StatusConflict, gin.H{
+		"error":   "historical_resource_read_only",
+		"message": "execution plan is a historical read-only resource; use task status and review APIs",
+	})
+}
+
 func (h *Handler) UpdateExecutionPlan(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 
@@ -91,6 +105,11 @@ func (h *Handler) UpdateExecutionPlan(c *gin.Context) {
 }
 
 func (h *Handler) UpdatePlanStepStatus(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 	stepID := strings.TrimSpace(c.Param("step_id"))
@@ -225,6 +244,11 @@ func (h *Handler) GetExecutionPlan(c *gin.Context) {
 }
 
 func (h *Handler) SubmitExecutionPlan(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 
@@ -274,6 +298,11 @@ func (h *Handler) SubmitExecutionPlan(c *gin.Context) {
 }
 
 func (h *Handler) ApproveExecutionPlan(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 
@@ -321,6 +350,11 @@ func (h *Handler) ApproveExecutionPlan(c *gin.Context) {
 }
 
 func (h *Handler) RejectExecutionPlan(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 
@@ -372,6 +406,11 @@ func (h *Handler) RejectExecutionPlan(c *gin.Context) {
 // RestoreApproval 恢复执行计划到待审批状态 (Web API)
 // POST /api/v1/projects/:id/tasks/:task_id/execution-plan/restore-approval
 func (h *Handler) RestoreApproval(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 
@@ -423,6 +462,11 @@ func (h *Handler) RestoreApproval(c *gin.Context) {
 // UpdateExecutionPlanContent 更新执行计划内容 (Web API)
 // PUT /api/v1/projects/:id/tasks/:task_id/execution-plan
 func (h *Handler) UpdateExecutionPlanContent(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 
@@ -501,6 +545,11 @@ func (h *Handler) UpdateExecutionPlanContent(c *gin.Context) {
 // ResetExecutionPlan 重置或生成执行计划模板 (Web API)
 // POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reset
 func (h *Handler) ResetExecutionPlan(c *gin.Context) {
+	if historicalExecutionPlansReadOnly {
+		writeHistoricalReadOnly(c)
+		return
+	}
+
 	projectID := c.Param("id")
 	taskID := c.Param("task_id")
 

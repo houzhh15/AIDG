@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Button, List, Modal, Form, Input, Select, message, Spin, Dropdown, Tag, Collapse, Tooltip, Row, Col, Switch } from 'antd';
 import type { MenuProps } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SwapOutlined, CloudUploadOutlined, AimOutlined } from '@ant-design/icons';
-import { ProjectTask, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, transferProjectTask } from '../api/tasks';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UserOutlined, AppstoreOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, MoreOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SwapOutlined, CloudUploadOutlined } from '@ant-design/icons';
+import { ProjectTask, TaskStatus, TimeRangeFilter, getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, transferProjectTask } from '../api/tasks';
 import { getUsers, User } from '../api/users';
 import { listProjects, ProjectSummary } from '../api/projects';
-import { setCurrentTask } from '../api/currentTask';
 import { useTaskRefresh } from '../contexts/TaskRefreshContext';
 import MarkdownViewer from './MarkdownViewer';
 import CopyResourceDialog from './CopyResourceDialog';
@@ -14,15 +13,26 @@ const { TextArea } = Input;
 const { Option } = Select;
 
 const STATUS_OPTIONS = [
-  { value: 'in-progress', label: '进行中', color: 'blue' },
   { value: 'todo', label: '待开始', color: 'default' },
+  { value: 'in-progress', label: '进行中', color: 'blue' },
+  { value: 'review', label: '审核中', color: 'gold' },
   { value: 'completed', label: '已完成', color: 'green' },
-  { value: 'cancelled', label: '已取消', color: 'red' },
-];
+] as const;
 
 // 获取状态配置
 const getStatusConfig = (status?: string) => {
   return STATUS_OPTIONS.find(opt => opt.value === status) || { value: '', label: '未设置', color: 'default' };
+};
+
+const lifecycleErrorMessage = (error: any, fallback: string) => {
+  const status = error?.response?.status;
+  if (status === 401) return '登录状态已失效，请重新登录。';
+  if (status === 403) return '没有执行此操作的权限。';
+  if (status === 404) return '任务不存在，请刷新列表。';
+  if (status === 409) return '任务已被其他协作者更新；本地输入已保留，请刷新对比后重试。';
+  if (status === 422) return '当前状态或约束不允许此操作。';
+  if (status >= 500) return '服务暂时不可用，请稍后重试。';
+  return fallback;
 };
 
 interface Props {
@@ -53,7 +63,6 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [fuzzySearch, setFuzzySearch] = useState<boolean>(false); // 模糊搜索开关，默认关闭
   const [timeRangeFilter, setTimeRangeFilter] = useState<TimeRangeFilter | undefined>();
-  const [currentTaskId, setCurrentTaskId] = useState<string>('');
   const { triggerRefresh } = useTaskRefresh();
 
   const canDelete = scopes.includes('project.delete');
@@ -101,17 +110,6 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
     }
   };
 
-  const handleSetCurrentTask = async (task: ProjectTask) => {
-    try {
-      await setCurrentTask({ project_id: projectId, task_id: task.id });
-      setCurrentTaskId(task.id);
-      message.success(`已设为当前任务: ${task.name}`);
-    } catch (error) {
-      message.error('设置当前任务失败');
-      console.error(error);
-    }
-  };
-
   const handleCreate = () => {
     setEditingTask(null);
     form.resetFields();
@@ -132,7 +130,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       
       if (editingTask) {
         // 更新任务
-        await updateProjectTask(projectId, editingTask.id, values);
+        await updateProjectTask(projectId, editingTask.id, { ...values, expected_revision: editingTask.revision });
         message.success('任务更新成功');
       } else {
         // 创建任务
@@ -146,7 +144,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
       // 触发任务统计数据刷新
       triggerRefresh();
     } catch (error) {
-      message.error(editingTask ? '任务更新失败' : '任务创建失败');
+      message.error(lifecycleErrorMessage(error, editingTask ? '任务更新失败' : '任务创建失败'));
       console.error(error);
     }
   };
@@ -208,16 +206,16 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
     }
   };
 
-  const handleStatusChange = async (taskId: string, newStatus: string) => {
+  const handleStatusChange = async (task: ProjectTask, newStatus: TaskStatus) => {
     try {
-      await updateProjectTask(projectId, taskId, { status: newStatus });
+      await updateProjectTask(projectId, task.id, { status: newStatus, expected_revision: task.revision });
       const statusConfig = getStatusConfig(newStatus);
       message.success(`任务状态已更新为：${statusConfig.label}`);
       loadTasks();
       // 触发任务统计数据刷新
       triggerRefresh();
     } catch (error) {
-      message.error('状态更新失败');
+      message.error(lifecycleErrorMessage(error, '状态更新失败'));
       console.error(error);
     }
   };
@@ -232,10 +230,10 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
 
     // 按状态分组
     const grouped: Record<string, ProjectTask[]> = {
-      'in-progress': [],
       'todo': [],
+      'in-progress': [],
+      'review': [],
       'completed': [],
-      'cancelled': [],
     };
 
     filtered.forEach(task => {
@@ -378,9 +376,9 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                       items: [
                         {
                           key: 'status',
-                          label: '修改状态',
+                          label: '请求状态变更（服务端校验）',
                           icon: <CheckCircleOutlined />,
-                          children: STATUS_OPTIONS.map(opt => ({
+                          children: STATUS_OPTIONS.filter(opt => opt.value !== task.status).map(opt => ({
                             key: `status-${opt.value}`,
                             label: (
                               <span>
@@ -390,7 +388,7 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                             ),
                             onClick: () => {
                               if (task.status !== opt.value) {
-                                handleStatusChange(task.id, opt.value);
+                                handleStatusChange(task, opt.value);
                               }
                             },
                           })),
@@ -400,12 +398,6 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                           key: 'copy-id',
                           icon: <CopyOutlined />,
                           label: '复制任务ID',
-                        },
-                        {
-                          key: 'set-current',
-                          icon: <AimOutlined />,
-                          label: currentTaskId === task.id ? '✓ 当前任务' : '设为当前任务',
-                          disabled: currentTaskId === task.id,
                         },
                         {
                           key: 'edit',
@@ -435,9 +427,6 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                       onClick: ({ key }) => {
                         if (key === 'copy-id') {
                           handleCopyTaskId(task.id);
-                        }
-                        if (key === 'set-current') {
-                          handleSetCurrentTask(task);
                         }
                         if (key === 'edit') {
                           handleEdit(task);
@@ -476,14 +465,20 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                           <div style={{ display: 'flex', width: '100%', alignItems: 'flex-start', gap: 8 }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                {currentTaskId === task.id && (
-                                  <Tooltip title="当前任务">
-                                    <AimOutlined style={{ color: '#1890ff', fontSize: 12 }} />
-                                  </Tooltip>
-                                )}
                                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {task.name}({task.id})
                                 </span>
+                              </div>
+                              <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                                <Tag color={getStatusConfig(task.status).color} style={{ marginInlineEnd: 0 }}>
+                                  {getStatusConfig(task.status).label}
+                                </Tag>
+                                <Tooltip title="需求 / 设计 / 测试约束就绪数">
+                                  <Tag color={task.ready_count === 3 ? 'success' : 'default'} style={{ marginInlineEnd: 0 }}>
+                                    约束 {task.ready_count ?? 0}/3
+                                  </Tag>
+                                </Tooltip>
+                                {typeof task.revision === 'number' && <Tag style={{ marginInlineEnd: 0 }}>r{task.revision}</Tag>}
                               </div>
                               <div style={{ fontSize: 11, color: '#666' }}>
                                 <div style={{ marginBottom: 2 }}>
@@ -562,6 +557,26 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
               </Form.Item>
 
               <Form.Item
+                name="assignee"
+                label="负责人"
+              >
+                <Select
+                  placeholder="选择负责人"
+                  allowClear
+                  showSearch
+                  filterOption={(input, option) =>
+                    String(option?.children || '').toLowerCase().includes(input.toLowerCase())
+                  }
+                >
+                  {users.map(user => (
+                    <Option key={user.username} value={user.username}>
+                      {user.username}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              <Form.Item
                 name="feature_id"
                 label="关联特性ID"
               >
@@ -582,17 +597,10 @@ const ProjectTaskSidebar: React.FC<Props> = ({ projectId, currentTask, onTaskSel
                 <Input placeholder="输入模块名称" />
               </Form.Item>
 
-              <Form.Item
-                name="status"
-                label="状态"
-              >
-                <Select placeholder="选择状态" allowClear>
-                  <Option value="todo">待开始</Option>
-                  <Option value="in-progress">进行中</Option>
-                  <Option value="completed">已完成</Option>
-                  <Option value="cancelled">已取消</Option>
-                </Select>
-              </Form.Item>
+              <Form.Item name="status" hidden initialValue="todo"><Input /></Form.Item>
+              <div style={{ color: '#8c8c8c', fontSize: 12, marginBottom: 16 }}>
+                状态请在任务列表中按生命周期推进；约束未达到 3/3 时不能进入审核。
+              </div>
             </Col>
 
             {/* 右侧: 描述和预览 */}

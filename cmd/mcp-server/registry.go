@@ -15,6 +15,34 @@ type ToolRegistry struct {
 	tools map[string]shared.Tool // 工具名称 -> 工具实例的映射
 }
 
+type explicitIDTool struct{ shared.Tool }
+
+func (t explicitIDTool) InputSchema() map[string]interface{} {
+	schema := t.Tool.InputSchema()
+	properties, _ := schema["properties"].(map[string]interface{})
+	required, _ := schema["required"].([]string)
+	seen := make(map[string]bool, len(required))
+	for _, field := range required {
+		seen[field] = true
+	}
+	for _, field := range []string{"project_id", "task_id"} {
+		if field == "task_id" {
+			switch t.Name() {
+			case "read_document", "write_document", "edit_document":
+				continue // project-level document slots do not have a task_id
+			case "preview_schema_migration", "execute_schema_migration":
+				continue // task_id selects task scope; omission selects project scope
+			}
+		}
+		if _, declared := properties[field]; declared && !seen[field] {
+			required = append(required, field)
+			seen[field] = true
+		}
+	}
+	schema["required"] = required
+	return schema
+}
+
 // NewToolRegistry 创建新的工具注册表实例
 // 返回:
 //   - *ToolRegistry: 初始化的注册表实例
@@ -30,7 +58,7 @@ func NewToolRegistry() *ToolRegistry {
 //
 // 注意: 如果工具名称已存在，会覆盖原有工具
 func (r *ToolRegistry) Register(tool shared.Tool) {
-	r.tools[tool.Name()] = tool
+	r.tools[tool.Name()] = explicitIDTool{Tool: tool}
 }
 
 // Get 根据名称获取工具实例

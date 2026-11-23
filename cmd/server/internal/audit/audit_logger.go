@@ -13,12 +13,16 @@ import (
 type AuditAction string
 
 const (
-	ActionCreateRole     AuditAction = "create_role"
-	ActionUpdateRole     AuditAction = "update_role"
-	ActionDeleteRole     AuditAction = "delete_role"
-	ActionAssignRole     AuditAction = "assign_role"
-	ActionRevokeRole     AuditAction = "revoke_role"
-	ActionChangePassword AuditAction = "change_password"
+	ActionCreateRole          AuditAction = "create_role"
+	ActionUpdateRole          AuditAction = "update_role"
+	ActionDeleteRole          AuditAction = "delete_role"
+	ActionAssignRole          AuditAction = "assign_role"
+	ActionRevokeRole          AuditAction = "revoke_role"
+	ActionChangePassword      AuditAction = "change_password"
+	ActionProjectMutation     AuditAction = "project_mutation"
+	ActionProjectMutationDeny AuditAction = "project_mutation_denied"
+	ActionServiceMutation     AuditAction = "service_mutation"
+	ActionServiceMutationDeny AuditAction = "service_mutation_denied"
 )
 
 // AuditEntry 审计日志条目

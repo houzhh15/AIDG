@@ -33,6 +33,12 @@ var (
 
 	// ErrInvalidOp 无效的操作类型
 	ErrInvalidOp = errors.New("invalid operation type")
+
+	// ErrPathTraversal 资源路径逃逸配置数据根
+	ErrPathTraversal = errors.New("path traversal detected")
+
+	// ErrReadOnlySlot 通用文档接口不得写入专用槽位
+	ErrReadOnlySlot = errors.New("document slot is read-only")
 )
 
 // DocSlotError 文档槽位错误（包含上下文信息）

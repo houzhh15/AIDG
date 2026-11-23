@@ -65,11 +65,9 @@ func (s *sectionServiceWithPathImpl) GetSections() (*SectionMeta, error) {
 			}, nil
 		}
 
-		// compiled.md 存在但 sections.json 不存在：首次初始化
-		sm := NewSyncManager(s.docPath, s.docType)
-		if err := sm.SyncFromCompiled(); err != nil {
-			return nil, fmt.Errorf("init from compiled: %w", err)
-		}
+		// Reads are side-effect free. Call the explicit sync endpoint to create
+		// section metadata from compiled.md.
+		return nil, fmt.Errorf("section metadata missing: explicit sync required")
 	}
 
 	// 读取 sections.json
@@ -133,7 +131,10 @@ func (s *sectionServiceWithPathImpl) UpdateSection(sectionID string, content str
 		return fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -205,7 +206,10 @@ func (s *sectionServiceWithPathImpl) InsertSection(title, content string, afterS
 		return nil, fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return nil, fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return nil, fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 
@@ -271,7 +275,10 @@ func (s *sectionServiceWithPathImpl) DeleteSection(sectionID string, cascade boo
 		return fmt.Errorf("load meta: %w", err)
 	}
 
-	if expectedVersion > 0 && meta.Version != expectedVersion {
+	if expectedVersion < 1 {
+		return fmt.Errorf("expected version is required")
+	}
+	if meta.Version != expectedVersion {
 		return fmt.Errorf("version conflict: expected %d, got %d", expectedVersion, meta.Version)
 	}
 

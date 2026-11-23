@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 )
@@ -44,106 +45,34 @@ func GetCurrentTask(apiClient *APIClient, clientToken string) (*CurrentTaskInfo,
 	return response.Data, nil
 }
 
-// GetProjectIDWithFallback 获取 project_id，如果参数缺失或为空则从当前任务获取
-// 参数:
-//   - args: 工具参数 map
-//   - apiClient: API 客户端
-//   - clientToken: 认证 token
-//
-// 返回:
-//   - string: project_id 值
-//   - error: 如果既无参数又无法获取当前任务则返回错误
-func GetProjectIDWithFallback(args map[string]interface{}, apiClient *APIClient, clientToken string) (string, error) {
-	// 先尝试从参数获取
+// GetProjectIDWithFallback is retained for source compatibility. T02 removes
+// implicit current-task authority: business tools must pass project_id.
+func GetProjectIDWithFallback(args map[string]interface{}, _ *APIClient, _ string) (string, error) {
 	projectID, err := SafeGetString(args, "project_id")
-	if err == nil && projectID != "" {
-		return projectID, nil
-	}
-
-	// 参数缺失或为空，尝试从当前任务获取
-	currentTask, err := GetCurrentTask(apiClient, clientToken)
 	if err != nil {
-		return "", fmt.Errorf("无法获取当前任务: %w", err)
+		return "", fmt.Errorf("explicit project_id is required: %w", err)
 	}
-
-	if currentTask.ProjectID == "" {
-		return "", fmt.Errorf("当前任务未设置 project_id")
-	}
-
-	return currentTask.ProjectID, nil
+	return projectID, nil
 }
 
-// GetTaskIDWithFallback 获取 task_id，如果参数缺失或为空则从当前任务获取
-// 参数:
-//   - args: 工具参数 map
-//   - apiClient: API 客户端
-//   - clientToken: 认证 token
-//
-// 返回:
-//   - string: task_id 值
-//   - error: 如果既无参数又无法获取当前任务则返回错误
-func GetTaskIDWithFallback(args map[string]interface{}, apiClient *APIClient, clientToken string) (string, error) {
-	// 先尝试从参数获取
+// GetTaskIDWithFallback is retained for source compatibility. T02 removes
+// implicit current-task authority: business tools must pass task_id.
+func GetTaskIDWithFallback(args map[string]interface{}, _ *APIClient, _ string) (string, error) {
 	taskID, err := SafeGetString(args, "task_id")
-	if err == nil && taskID != "" {
-		return taskID, nil
-	}
-
-	// 参数缺失或为空，尝试从当前任务获取
-	currentTask, err := GetCurrentTask(apiClient, clientToken)
 	if err != nil {
-		return "", fmt.Errorf("无法获取当前任务: %w", err)
+		return "", fmt.Errorf("explicit task_id is required: %w", err)
 	}
-
-	if currentTask.TaskID == "" {
-		return "", fmt.Errorf("当前任务未设置 task_id")
-	}
-
-	return currentTask.TaskID, nil
+	return taskID, nil
 }
 
-// GetProjectAndTaskIDWithFallback 同时获取 project_id 和 task_id，支持从当前任务回退
-// 这是一个优化版本，只调用一次 API 来获取当前任务（如果需要回退的话）
-// 参数:
-//   - args: 工具参数 map
-//   - apiClient: API 客户端
-//   - clientToken: 认证 token
-//
-// 返回:
-//   - projectID: project_id 值
-//   - taskID: task_id 值
-//   - error: 如果任一参数缺失且无法从当前任务获取则返回错误
-func GetProjectAndTaskIDWithFallback(args map[string]interface{}, apiClient *APIClient, clientToken string) (projectID string, taskID string, err error) {
-	// 先尝试从参数获取
+// GetProjectAndTaskIDWithFallback is retained for source compatibility. T02
+// requires both identifiers explicitly and never reads current-task.
+func GetProjectAndTaskIDWithFallback(args map[string]interface{}, _ *APIClient, _ string) (projectID string, taskID string, err error) {
 	projectID, projectErr := SafeGetString(args, "project_id")
 	taskID, taskErr := SafeGetString(args, "task_id")
-
-	// 如果两个参数都存在且有效，直接返回
-	if projectErr == nil && projectID != "" && taskErr == nil && taskID != "" {
-		return projectID, taskID, nil
+	if projectErr != nil || taskErr != nil {
+		return "", "", fmt.Errorf("explicit project_id and task_id are required")
 	}
-
-	// 至少有一个参数需要从当前任务获取
-	currentTask, err := GetCurrentTask(apiClient, clientToken)
-	if err != nil {
-		return "", "", fmt.Errorf("无法获取当前任务: %w", err)
-	}
-
-	// 用当前任务的值填充缺失的参数
-	if projectErr != nil || projectID == "" {
-		if currentTask.ProjectID == "" {
-			return "", "", fmt.Errorf("当前任务未设置 project_id")
-		}
-		projectID = currentTask.ProjectID
-	}
-
-	if taskErr != nil || taskID == "" {
-		if currentTask.TaskID == "" {
-			return "", "", fmt.Errorf("当前任务未设置 task_id")
-		}
-		taskID = currentTask.TaskID
-	}
-
 	return projectID, taskID, nil
 }
 
@@ -270,13 +199,22 @@ func SafeGetInt(args map[string]interface{}, key string) (int, error) {
 		return 0, fmt.Errorf("parameter %s is nil", key)
 	}
 
-	// JSON数字通常解析为float64
+	maxInt := int64(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	// JSON numbers normally decode as float64. Reject fractional, non-finite,
+	// and out-of-range values rather than silently truncating at the boundary.
 	switch v := val.(type) {
 	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != math.Trunc(v) || v > float64(maxInt) || v < float64(minInt) {
+			return 0, fmt.Errorf("parameter %s must be an in-range integer", key)
+		}
 		return int(v), nil
 	case int:
 		return v, nil
 	case int64:
+		if v > maxInt || v < minInt {
+			return 0, fmt.Errorf("parameter %s must be an in-range integer", key)
+		}
 		return int(v), nil
 	default:
 		return 0, fmt.Errorf("parameter %s must be a number, got %T", key, val)

@@ -79,7 +79,7 @@ const App: React.FC = () => {
               ) : !currentProjectTask ? (
                 <Deliverables mode="project" targetId={currentProject} liteMode={true} />
               ) : (
-                <TaskDocuments projectId={currentProject} taskId={currentProjectTask} liteMode={true} />
+                <TaskDocuments key={`${currentProject}:${currentProjectTask}`} projectId={currentProject} taskId={currentProjectTask} liteMode={true} />
               )}
             </div>
           </Content>

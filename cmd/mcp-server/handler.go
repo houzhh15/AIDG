@@ -31,6 +31,14 @@ func NewMCPHandler(apiClient *shared.APIClient) *MCPHandler {
 	registry.Register(&tools.GetNextExecutableStepTool{})
 	registry.Register(&tools.UpdatePlanStepStatusTool{})
 
+	// 任务审核工具（固定 Mote AIDG Lite 合同）
+	registry.Register(&tools.GetTaskReviewTool{})
+	registry.Register(&tools.CreateTaskReviewTool{})
+	registry.Register(&tools.UpdateTaskReviewResultTool{})
+	registry.Register(&tools.PublishManifestTool{})
+	registry.Register(&tools.PreviewSchemaMigrationTool{})
+	registry.Register(&tools.ExecuteSchemaMigrationTool{})
+
 	// 会议列表工具 (1个)
 	registry.Register(&tools.ListAllMeetingsTool{})
 

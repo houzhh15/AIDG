@@ -149,20 +149,23 @@ func (t *AIDGEditDocumentTool) Execute(args map[string]interface{}, clientToken 
 
 func aidgDocumentBaseSchema(includeContent, edit bool) map[string]interface{} {
 	props := map[string]interface{}{
-		"project_id": map[string]interface{}{"type": "string", "description": "项目ID（可选，缺失时从当前任务获取）"},
-		"task_id":    map[string]interface{}{"type": "string", "description": "任务ID（任务文档可选，缺失时从当前任务获取；项目文档忽略）"},
+		"project_id": map[string]interface{}{"type": "string", "description": "项目ID（必填）"},
+		"task_id":    map[string]interface{}{"type": "string", "description": "任务ID（任务文档必填；项目文档忽略）"},
 		"slot_key": map[string]interface{}{
 			"type":        "string",
-			"description": "文档槽位。任务文档：requirements/design/test；项目文档：feature_list/architecture_design",
+			"description": "文档槽位。任务文档：requirements/design/test（review 仅可读）；项目文档：feature_list/architecture_design",
 			"enum":        []string{"requirements", "design", "test", "feature_list", "architecture_design"},
 		},
 	}
-	required := []string{"slot_key"}
+	if !includeContent && !edit {
+		props["slot_key"].(map[string]interface{})["enum"] = []string{"requirements", "design", "test", "review", "feature_list", "architecture_design"}
+	}
+	required := []string{"project_id", "slot_key"}
 	if includeContent {
 		props["append"] = map[string]interface{}{"type": "boolean", "description": "是否追加到现有文档。默认 false 表示覆盖"}
-		props["expected_version"] = map[string]interface{}{"type": "number", "description": "期望版本号（可选），用于乐观锁"}
+		props["expected_version"] = map[string]interface{}{"type": "number", "description": "期望版本号（必填），用于乐观锁"}
 		props["content"] = map[string]interface{}{"type": "string", "description": "要写入的 Markdown 文档内容"}
-		required = append(required, "content")
+		required = append(required, "content", "expected_version")
 	}
 	if edit {
 		props["old_text"] = map[string]interface{}{"type": "string", "description": "要替换的原始文本，必须精确匹配"}
@@ -239,7 +242,7 @@ func writeAIDGDocument(target aidgDocumentTarget, content string, appendMode boo
 
 func isAIDGTaskSlot(slotKey string) bool {
 	switch slotKey {
-	case "requirements", "design", "test":
+	case "requirements", "design", "test", "review":
 		return true
 	default:
 		return false

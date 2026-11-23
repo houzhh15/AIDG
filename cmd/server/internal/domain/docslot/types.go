@@ -38,7 +38,7 @@ func IsValidScope(scope DocumentScope) bool {
 
 // SlotConfig 定义各作用域支持的槽位配置
 var SlotConfig = map[DocumentScope][]string{
-	ScopeTask:    {"requirements", "design", "test"},
+	ScopeTask:    {"requirements", "design", "test", "review"},
 	ScopeProject: {"feature_list", "architecture_design"},
 	ScopeMeeting: {"polish", "summary", "topic"},
 }
@@ -58,6 +58,7 @@ var AllSlotConfigs = []ScopeConfigItem{
 	{ScopeTask, "requirements", "需求文档", "data/projects/{projectID}/tasks/{taskID}/docs/requirements", []string{"GET", "POST", "PUT", "DELETE"}},
 	{ScopeTask, "design", "设计文档", "data/projects/{projectID}/tasks/{taskID}/docs/design", []string{"GET", "POST", "PUT", "DELETE"}},
 	{ScopeTask, "test", "测试文档", "data/projects/{projectID}/tasks/{taskID}/docs/test", []string{"GET", "POST", "PUT", "DELETE"}},
+	{ScopeTask, "review", "审核文档", "data/projects/{projectID}/tasks/{taskID}/docs/review", []string{"GET"}},
 	// 项目文档槽位
 	{ScopeProject, "feature_list", "特性列表", "data/projects/{projectID}/docs/feature_list", []string{"GET", "POST", "PUT"}},
 	{ScopeProject, "architecture_design", "架构设计", "data/projects/{projectID}/docs/architecture_design", []string{"GET", "POST", "PUT"}},

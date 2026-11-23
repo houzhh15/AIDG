@@ -1,6 +1,15 @@
 import { ApiResponse } from '../types';
 import { authedApi } from './auth';
 
+export type TaskStatus = 'todo' | 'in-progress' | 'review' | 'completed';
+
+export interface ConstraintReadiness {
+  ready_count: number;
+  requirements: boolean;
+  design: boolean;
+  test: boolean;
+}
+
 export interface ProjectTask {
   id: string;
   name: string;
@@ -9,7 +18,10 @@ export interface ProjectTask {
   feature_name?: string;
   module?: string;
   description?: string;
-  status?: string;
+  status: TaskStatus;
+  revision?: number;
+  ready_count?: number;
+  constraint_readiness?: ConstraintReadiness;
   created_at: string;
   updated_at: string;
 }
@@ -17,6 +29,8 @@ export interface ProjectTask {
 export interface TaskDocument {
   exists: boolean;
   content: string;
+  version?: number;
+  etag?: string;
   recommendations?: Array<{
     task_id: string;
     doc_type: string;
@@ -34,17 +48,18 @@ export interface CreateTaskRequest {
   feature_name?: string;
   module?: string;
   description?: string;
-  status?: string;
+  status?: TaskStatus;
 }
 
 export interface UpdateTaskRequest {
+  expected_revision?: number;
   name?: string;
   assignee?: string;
   feature_id?: string;
   feature_name?: string;
   module?: string;
   description?: string;
-  status?: string;
+  status?: TaskStatus;
 }
 
 export interface TaskPrompt {
@@ -138,9 +153,15 @@ export async function getTaskDocument(
   return response.data;
 }
 
-// 保存任务文档
-export async function saveTaskDocument(projectId: string, taskId: string, docType: 'requirements' | 'design' | 'test', content: string): Promise<ApiResponse<void>> {
-  const response = await authedApi.put<ApiResponse<void>>(`${BASE_URL}/${projectId}/tasks/${taskId}/${docType}`, { content });
+// 保存任务文档：先取得明确基线，再以 expected_version 提交 replace_full。
+// 409 由编辑器保留本地草稿并提示刷新对比，绝不静默覆盖远端版本。
+export async function saveTaskDocument(projectId: string, taskId: string, docType: 'requirements' | 'design' | 'test', content: string, expectedVersion: number): Promise<ApiResponse<void>> {
+  const response = await authedApi.post<ApiResponse<void>>(`${BASE_URL}/${projectId}/tasks/${taskId}/${docType}/append`, {
+    content,
+    expected_version: expectedVersion,
+    op: 'replace_full',
+    source: 'ui',
+  });
   return response.data;
 }
 
@@ -184,71 +205,9 @@ export interface ExecutionPlan {
   content: string;
 }
 
-export interface ApprovalRequest {
-  comment?: string;
-}
-
-export interface RejectRequest {
-  comment?: string;
-  reason?: string;
-}
-
-// 获取执行计划
+// 历史执行计划只读查询。新版入口不得暴露任何 mutation。
 export async function getExecutionPlan(projectId: string, taskId: string): Promise<ApiResponse<ExecutionPlan>> {
   const response = await authedApi.get<ApiResponse<ExecutionPlan>>(`/projects/${projectId}/tasks/${taskId}/execution-plan`);
-  return response.data;
-}
-
-// 提交执行计划（Draft -> Pending Approval）
-export async function submitExecutionPlan(projectId: string, taskId: string, data: { comment?: string } = {}): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
-  const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/submit`, data);
-  return response.data;
-}
-
-// 批准执行计划
-export async function approveExecutionPlan(projectId: string, taskId: string, data: ApprovalRequest): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
-  const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/approve`, data);
-  return response.data;
-}
-
-// 拒绝执行计划
-export async function rejectExecutionPlan(projectId: string, taskId: string, data: RejectRequest): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
-  const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/reject`, data);
-  return response.data;
-}
-
-// 恢复执行计划到待审批状态
-export async function restoreApproval(projectId: string, taskId: string, data: { comment?: string } = {}): Promise<ApiResponse<{ plan_id: string; status: string; message: string }>> {
-  const response = await authedApi.post<ApiResponse<{ plan_id: string; status: string; message: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan/restore-approval`, data);
-  return response.data;
-}
-
-// 更新执行计划内容
-export async function updateExecutionPlanContent(projectId: string, taskId: string, content: string): Promise<ApiResponse<{ plan_id: string; status: string; updated_at: string }>> {
-  const response = await authedApi.put<ApiResponse<{ plan_id: string; status: string; updated_at: string }>>(`/projects/${projectId}/tasks/${taskId}/execution-plan`, { content });
-  return response.data;
-}
-
-// 重置执行计划（生成默认模板）
-export interface ResetPlanResponse {
-  plan_id: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  dependencies: ExecutionPlanDependency[];
-  steps: ExecutionPlanStep[];
-  content: string;
-}
-
-export async function resetExecutionPlan(
-  projectId: string,
-  taskId: string,
-  force: boolean = false
-): Promise<ApiResponse<ResetPlanResponse>> {
-  const response = await authedApi.post<ApiResponse<ResetPlanResponse>>(
-    `/projects/${projectId}/tasks/${taskId}/execution-plan/reset`,
-    { force }
-  );
   return response.data;
 }
 

@@ -91,8 +91,13 @@ func HandleGetUserCurrentTask(c *gin.Context) {
 		return
 	}
 
-	// 为任务信息添加完成状态
-	enrichTaskWithCompletionStatus(taskInfo, currentTask.ProjectID, currentTask.TaskID)
+	// Lifecycle status and n/3 readiness come from the task authority, never
+	// from execution plans or document existence.
+	taskInfo, err = taskLifecycleService().Get(currentTask.ProjectID, currentTask.TaskID)
+	if err != nil {
+		handleTaskLifecycleError(c, err)
+		return
+	}
 
 	// Return task info with project info
 	result := map[string]interface{}{

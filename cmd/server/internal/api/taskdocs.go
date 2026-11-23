@@ -25,7 +25,7 @@ func HandleAppendTaskDoc(svc *taskdocs.DocService, docType string) gin.HandlerFu
 			Source          string `json:"source"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		if err := BindDocumentWrite(c, &req); err != nil || strings.TrimSpace(req.Content) == "" || (req.ExpectedVersion == nil || *req.ExpectedVersion < 0) {
 			badRequestResponse(c, "invalid body")
 			return
 		}
@@ -75,7 +75,12 @@ func HandleListTaskDocChunks(svc *taskdocs.DocService, docType string) gin.Handl
 		projectID := c.Param("id")
 		taskID := c.Param("task_id")
 
-		chunks, meta, err := svc.List(projectID, taskID, docType)
+		basePath, err := taskdocs.DocDir(projectID, taskID, docType)
+		if err != nil {
+			badRequestResponse(c, "invalid project, task, or document identifier")
+			return
+		}
+		chunks, meta, err := taskdocs.ListChunksReadOnlyWithPath(basePath)
 		if err != nil {
 			internalErrorResponse(c, err)
 			return
@@ -160,7 +165,10 @@ func HandleSquashTaskDoc(svc *taskdocs.DocService, docType string) gin.HandlerFu
 		var body struct {
 			ExpectedVersion *int `json:"expected_version"`
 		}
-		_ = c.ShouldBindJSON(&body)
+		if err := BindDocumentWrite(c, &body); err != nil || (body.ExpectedVersion == nil || *body.ExpectedVersion < 0) {
+			badRequestResponse(c, "invalid body")
+			return
+		}
 
 		userVal, _ := c.Get("user")
 		username, _ := userVal.(string)
@@ -191,17 +199,18 @@ func HandleExportTaskDoc(svc *taskdocs.DocService, docType string) gin.HandlerFu
 		projectID := c.Param("id")
 		taskID := c.Param("task_id")
 
-		compiledPath, err := taskdocs.DocCompiledPath(projectID, taskID, docType)
+		basePath, err := taskdocs.DocDir(projectID, taskID, docType)
 		if err != nil {
-			internalErrorResponse(c, err)
+			badRequestResponse(c, "invalid project, task, or document identifier")
 			return
 		}
-
-		b, _ := os.ReadFile(compiledPath)
-		meta, _ := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
-
+		content, meta, err := taskdocs.ExportReadOnlyWithPath(basePath)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
-			"content": string(b),
+			"content": content,
 			"version": meta.Version,
 			"etag":    meta.ETag,
 		})

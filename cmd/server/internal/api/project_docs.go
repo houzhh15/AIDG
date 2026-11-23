@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/docslot"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/meetings"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 )
@@ -20,35 +22,25 @@ import (
 func HandlePutProjectFeatureList(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-
-		// 获取项目目录
-		p := reg.Get(id)
-		if p == nil {
+		if reg.Get(id) == nil {
 			notFoundResponse(c, "project")
 			return
 		}
-
 		var req struct {
-			Content string `json:"content"`
+			Content         string `json:"content"`
+			ExpectedVersion *int   `json:"expected_version,omitempty"`
 		}
-
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil || (req.ExpectedVersion == nil || *req.ExpectedVersion < 0) {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
-
-		// 保存文档（使用历史管理）
-		projDir := filepath.Join(projectsRoot(), p.ID)
-		if err := saveContentWithHistory(projDir, "docs/feature_list.md", req.Content); err != nil {
-			log.Printf("[ERROR] HandlePutProjectFeatureList: failed to save feature list for project %s: %v", p.ID, err)
-			errorResponse(c, http.StatusInternalServerError, fmt.Sprintf("failed to save feature list: %v", err))
+		result, err := docslot.NewUnifiedDocService(projectsRoot()).Append(docslot.ScopeProject, id, "feature_list", req.Content, c.GetString("user"), req.ExpectedVersion, "replace_full", "project_api")
+		if err != nil {
+			handleDocSlotError(c, err)
 			return
 		}
-
-		successResponse(c, gin.H{
-			"success": true,
-			"message": "feature list updated",
-		})
+		c.Header("ETag", result.ETag)
+		successResponse(c, gin.H{"success": true, "version": result.Version, "etag": result.ETag})
 	}
 }
 
@@ -58,33 +50,25 @@ func HandlePutProjectFeatureList(reg *projects.ProjectRegistry) gin.HandlerFunc 
 func HandlePutProjectArchitectureDesign(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-
-		p := reg.Get(id)
-		if p == nil {
+		if reg.Get(id) == nil {
 			notFoundResponse(c, "project")
 			return
 		}
-
 		var req struct {
-			Content string `json:"content"`
+			Content         string `json:"content"`
+			ExpectedVersion *int   `json:"expected_version,omitempty"`
 		}
-
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil || (req.ExpectedVersion == nil || *req.ExpectedVersion < 0) {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
-
-		projDir := filepath.Join(projectsRoot(), p.ID)
-		if err := saveContentWithHistory(projDir, "docs/architecture_design.md", req.Content); err != nil {
-			log.Printf("[ERROR] HandlePutProjectArchitectureDesign: failed to save architecture design for project %s: %v", p.ID, err)
-			errorResponse(c, http.StatusInternalServerError, fmt.Sprintf("failed to save architecture design: %v", err))
+		result, err := docslot.NewUnifiedDocService(projectsRoot()).Append(docslot.ScopeProject, id, "architecture_design", req.Content, c.GetString("user"), req.ExpectedVersion, "replace_full", "project_api")
+		if err != nil {
+			handleDocSlotError(c, err)
 			return
 		}
-
-		successResponse(c, gin.H{
-			"success": true,
-			"message": "architecture design updated",
-		})
+		c.Header("ETag", result.ETag)
+		successResponse(c, gin.H{"success": true, "version": result.Version, "etag": result.ETag})
 	}
 }
 
@@ -105,13 +89,17 @@ func HandlePutProjectTechDesign(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			Content string `json:"content"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
 
-		// 使用与 GET 接口一致的文件名逻辑
-		projDir := filepath.Join(projectsRoot(), p.ID)
+		// Use the same symlink-contained project resolver as all legacy reads.
+		projDir, err := getProjectDir(reg, p.ID)
+		if err != nil {
+			badRequestResponse(c, "project path escapes configured data root")
+			return
+		}
 		filename := "docs/tech_design.md"
 
 		if err := saveContentWithHistory(projDir, filename, req.Content); err != nil {
@@ -142,11 +130,12 @@ func HandleCopyFromTask(projectsReg *projects.ProjectRegistry, meetingsReg *meet
 		}
 
 		var req struct {
-			SourceTaskID string   `json:"sourceTaskId"`
-			Kinds        []string `json:"kinds"`
+			SourceTaskID     string         `json:"sourceTaskId"`
+			Kinds            []string       `json:"kinds"`
+			ExpectedVersions map[string]int `json:"expected_versions"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.SourceTaskID) == "" {
+		if err := BindDocumentWrite(c, &req); err != nil || strings.TrimSpace(req.SourceTaskID) == "" {
 			badRequestResponse(c, "invalid request: sourceTaskId is required")
 			return
 		}
@@ -164,34 +153,38 @@ func HandleCopyFromTask(projectsReg *projects.ProjectRegistry, meetingsReg *meet
 			kinds = []string{"feature-list", "architecture-design", "tech-design"}
 		}
 
-		projectDir := filepath.Join(projectsRoot(), p.ID)
+		projectDir, err := getProjectDir(projectsReg, p.ID)
+		if err != nil {
+			badRequestResponse(c, "project path escapes configured data root")
+			return
+		}
 		copied := []string{}
 
 		for _, kind := range kinds {
 			switch kind {
-			case "feature-list":
-				srcPath := filepath.Join(sourceTask.Cfg.OutputDir, "feature_list.md")
-				if content, err := os.ReadFile(srcPath); err == nil {
-					destPath := filepath.Join(projectDir, "docs/feature_list.md")
-					// Ensure docs directory exists
-					if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0755); err == nil {
-						if err := os.WriteFile(destPath, content, 0644); err == nil {
-							copied = append(copied, kind)
-						}
-					}
+			case "feature-list", "architecture-design":
+				expected, ok := req.ExpectedVersions[kind]
+				if !ok || expected < 0 {
+					badRequestResponse(c, "expected_versions is required for feature-list and architecture-design")
+					return
 				}
-
-			case "architecture-design":
-				srcPath := filepath.Join(sourceTask.Cfg.OutputDir, "architecture_new.md")
-				if content, err := os.ReadFile(srcPath); err == nil {
-					destPath := filepath.Join(projectDir, "docs/architecture_design.md")
-					// Ensure docs directory exists
-					if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0755); err == nil {
-						if err := os.WriteFile(destPath, content, 0644); err == nil {
-							copied = append(copied, kind)
-						}
-					}
+				sourceName, slot := "feature_list.md", "feature_list"
+				if kind == "architecture-design" {
+					sourceName, slot = "architecture_new.md", "architecture_design"
 				}
+				content, readErr := os.ReadFile(filepath.Join(sourceTask.Cfg.OutputDir, sourceName))
+				if readErr != nil {
+					continue
+				}
+				if len(content) > maxDocumentWriteBytes || !utf8.Valid(content) {
+					badRequestResponse(c, "source document exceeds size limit or is not UTF-8")
+					return
+				}
+				if _, err := docslot.NewUnifiedDocService(projectsRoot()).Append(docslot.ScopeProject, projectID, slot, string(content), c.GetString("user"), &expected, "replace_full", "copy_from_task"); err != nil {
+					handleDocSlotError(c, err)
+					return
+				}
+				copied = append(copied, kind)
 
 			case "tech-design":
 				// 查找源任务中的 tech_design_*.md 文件

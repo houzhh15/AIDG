@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -13,130 +12,11 @@ import (
 // appendChunkInternal执行追加逻辑(内部实现)
 // 返回 duplicate=true 表示未写入
 func appendChunkInternal(projectID, taskID, docType, content, op, user, source string, expectedVersion *int) (meta DocMeta, newChunk *DocChunk, duplicate bool, err error) {
-	start := time.Now()
-
-	meta, err = loadOrInitMeta(projectID, taskID, docType)
+	basePath, err := docBaseDir(projectID, taskID, docType)
 	if err != nil {
 		return
 	}
-
-	if expectedVersion != nil && meta.Version != *expectedVersion {
-		err = fmt.Errorf("version_mismatch")
-		return
-	}
-
-	h := hashDocContent(content)
-
-	// 重复检测: 若命中哈希窗口则直接返回
-	if containsHash(meta.HashWindow, h) {
-		compiledPath, _ := docCompiledPath(projectID, taskID, docType)
-		var compiledSize int64
-		if fi, statErr := os.Stat(compiledPath); statErr == nil {
-			compiledSize = fi.Size()
-		}
-		log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s seq=%d ver=%d op=%s duplicate=true content_size=%d total_chunks=%d compiled_size=%d dur_ms=%d",
-			projectID, taskID, docType, meta.LastSequence, meta.Version, op, len(content), meta.ChunkCount, compiledSize, time.Since(start).Milliseconds())
-		return meta, nil, true, nil
-	}
-
-	if op == "" {
-		op = "add_full"
-	}
-	if source == "" {
-		source = "api"
-	}
-
-	seq := meta.LastSequence + 1
-	ck := DocChunk{
-		Sequence:  seq,
-		Timestamp: time.Now(),
-		Op:        op,
-		Content:   content,
-		User:      user,
-		Source:    source,
-		Hash:      h,
-		Active:    true,
-	}
-
-	// 写入 chunk
-	cp, err := docChunksPath(projectID, taskID, docType)
-	if err != nil {
-		return
-	}
-
-	if err = os.MkdirAll(filepath.Dir(cp), 0755); err != nil {
-		return
-	}
-
-	f, err := os.OpenFile(cp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return
-	}
-
-	enc, _ := json.Marshal(ck)
-	if _, err = f.Write(append(enc, '\n')); err != nil {
-		f.Close()
-		return
-	}
-	f.Close()
-
-	// 更新 compiled
-	compiledPath, _ := docCompiledPath(projectID, taskID, docType)
-	needSectionSync := false
-	if op == "replace_full" {
-		_ = os.WriteFile(compiledPath, []byte(content), 0644)
-		needSectionSync = true // 全文替换后需要重新解析章节
-	} else if strings.HasPrefix(op, "section_") && strings.HasSuffix(op, "_no_parse") {
-		// 🔧 特殊操作：章节级操作已经在 SectionService 中处理了同步，不需要再次解析
-		_ = os.WriteFile(compiledPath, []byte(content), 0644)
-		needSectionSync = false
-	} else {
-		// append 模式
-		if _, statErr := os.Stat(compiledPath); statErr == nil {
-			rf, _ := os.OpenFile(compiledPath, os.O_WRONLY|os.O_APPEND, 0644)
-			if rf != nil {
-				_, _ = rf.Write([]byte("\n" + content))
-				rf.Close()
-			}
-		} else {
-			_ = os.WriteFile(compiledPath, []byte(content), 0644)
-		}
-	}
-
-	compiledBytes, _ := os.ReadFile(compiledPath)
-
-	// 更新 meta
-	meta.Version++
-	meta.LastSequence = seq
-	meta.HashWindow = pushHashWindow(meta.HashWindow, h)
-	meta.ChunkCount++
-	meta.UpdatedAt = time.Now()
-	meta.ETag = hashDocContent(string(compiledBytes))
-
-	if err = writeMetaAtomic(projectID, taskID, docType, meta); err != nil {
-		return
-	}
-
-	// 如果是 replace_full 操作，重新解析章节结构
-	if needSectionSync {
-		docPath, pathErr := docBaseDir(projectID, taskID, docType)
-		if pathErr == nil {
-			sm := NewSyncManager(docPath, docType)
-			log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s section_sync_start compiled_size=%d", projectID, taskID, docType, len(compiledBytes))
-			if syncErr := sm.SyncFromCompiled(); syncErr != nil {
-				log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s section_sync_error=%v", projectID, taskID, docType, syncErr)
-			} else {
-				// 重新读取 compiled.md 确认内容
-				verifyBytes, _ := os.ReadFile(compiledPath)
-				log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s section_sync=success compiled_size_after=%d", projectID, taskID, docType, len(verifyBytes))
-			}
-		}
-	}
-
-	log.Printf("[DOC_APPEND] pid=%s tid=%s doc=%s seq=%d ver=%d op=%s duplicate=false content_size=%d total_chunks=%d compiled_size=%d dur_ms=%d",
-		projectID, taskID, docType, seq, meta.Version, op, len(content), meta.ChunkCount, len(compiledBytes), time.Since(start).Milliseconds())
-
-	return meta, &ck, false, nil
+	return appendChunkInternalWithPath(basePath, content, op, user, source, expectedVersion)
 }
 
 // rebuildCompiled 全量重建 compiled 与 meta
@@ -161,14 +41,12 @@ func rebuildCompiled(projectID, taskID, docType string) (DocMeta, error) {
 
 		if ck.Active {
 			activeCount++
-			if ck.Content != "" {
-				// 如果是 replace_full 或 section_full_no_parse，清空之前的内容，从这个 chunk 开始重新构建
-				if ck.Op == "replace_full" || ck.Op == "section_full_no_parse" {
-					bldr = []string{ck.Content}
-				} else {
-					// 其他操作类型（add_full 等）都是追加
-					bldr = append(bldr, ck.Content)
-				}
+			// 全文替换操作即使内容为空，也必须清空之前的结果。
+			if operationReplacesCompiled(ck.Op) {
+				bldr = []string{ck.Content}
+			} else if ck.Content != "" {
+				// 其他操作类型（add_full 等）都是追加
+				bldr = append(bldr, ck.Content)
 			}
 			lastHashes = pushHashWindow(lastHashes, ck.Hash)
 		} else {
@@ -230,7 +108,10 @@ func logicalDeleteChunk(projectID, taskID, docType string, seq int) (DocMeta, er
 		}
 	}
 
-	meta, _ := loadOrInitMeta(projectID, taskID, docType)
+	meta, err := loadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return DocMeta{}, err
+	}
 
 	if !changed {
 		log.Printf("[DOC_DELETE] pid=%s tid=%s doc=%s seq=%d found=false ver=%d dur_ms=%d",
@@ -337,7 +218,10 @@ func (s *DocService) Toggle(projectID, taskID, docType string, seq int) (DocMeta
 		}
 	}
 
-	meta, _ := loadOrInitMeta(projectID, taskID, docType)
+	meta, err := loadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return DocMeta{}, err
+	}
 
 	if !changed {
 		log.Printf("[DOC_TOGGLE] pid=%s tid=%s doc=%s seq=%d found=false ver=%d dur_ms=%d",
@@ -368,6 +252,9 @@ func (s *DocService) Toggle(projectID, taskID, docType string, seq int) (DocMeta
 
 // Squash 合并所有 active chunks 为单一 chunk
 func (s *DocService) Squash(projectID, taskID, docType, user string, expectedVersion *int) (DocMeta, error) {
+	if expectedVersion == nil || *expectedVersion < 0 {
+		return DocMeta{}, fmt.Errorf("expected version is required")
+	}
 	l := s.GetLock(projectID, taskID, docType)
 	l.Lock()
 	defer l.Unlock()

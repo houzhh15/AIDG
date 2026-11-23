@@ -27,15 +27,15 @@ export const Deliverables: React.FC<DeliverablesProps> = ({ taskId, mode='task',
   // TODO: project 模式下将引入 ProjectFeatureList / ProjectArchitecture / ProjectTechDesign
   const renderFeature = () => {
     if(mode==='task') return <FeatureList taskId={effectiveTaskId} />;
-    return effectiveProjectId ? <ProjectFeatureList projectId={effectiveProjectId} /> : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
+    return effectiveProjectId ? <ProjectFeatureList key={effectiveProjectId} projectId={effectiveProjectId} /> : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
   };
   const renderArchitecture = () => {
     if(mode==='task') return <ArchitectureDesign taskId={effectiveTaskId} />;
-    return effectiveProjectId ? <ProjectArchitectureDesign projectId={effectiveProjectId} /> : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
+    return effectiveProjectId ? <ProjectArchitectureDesign key={effectiveProjectId} projectId={effectiveProjectId} /> : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
   };
   const renderTech = () => {
     if(mode==='task') return <TechDesign taskId={effectiveTaskId} />;
-    return effectiveProjectId ? <ProjectTechDesign projectId={effectiveProjectId} /> : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
+    return effectiveProjectId ? <ProjectTechDesign key={effectiveProjectId} projectId={effectiveProjectId} /> : <div style={{ padding:12, color:'#999' }}>请选择项目</div>;
   };
   
 

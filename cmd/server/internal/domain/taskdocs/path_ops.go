@@ -2,6 +2,7 @@ package taskdocs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -46,6 +47,9 @@ func (s *DocService) RebuildWithPath(basePath string) (DocMeta, error) {
 
 // SquashWithPath 使用自定义路径压缩 chunks
 func (s *DocService) SquashWithPath(basePath, user, source string, expectedVersion *int) (DocMeta, error) {
+	if expectedVersion == nil || *expectedVersion < 0 {
+		return DocMeta{}, fmt.Errorf("expected version is required")
+	}
 	lockKey := basePath
 	l := s.getLockByKey(lockKey)
 	l.Lock()
@@ -103,8 +107,7 @@ func loadOrInitMetaWithPath(basePath string) (DocMeta, error) {
 
 	var meta DocMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		docType := filepath.Base(basePath)
-		return initDocMeta(docType), nil
+		return DocMeta{}, fmt.Errorf("decode meta: %w", err)
 	}
 
 	return meta, nil
@@ -137,6 +140,15 @@ func writeMetaAtomicWithPath(basePath string, meta DocMeta) error {
 // appendChunkInternalWithPath 使用自定义路径追加 chunk
 func appendChunkInternalWithPath(basePath, content, op, user, source string, expectedVersion *int) (meta DocMeta, newChunk *DocChunk, duplicate bool, err error) {
 	start := time.Now()
+	basePath, err = filepath.Abs(basePath)
+	if err != nil {
+		return
+	}
+	unlock := lockAppendPath(basePath)
+	defer unlock()
+	if err = recoverPendingWithPath(basePath); err != nil {
+		return
+	}
 
 	meta, err = loadOrInitMetaWithPath(basePath)
 	if err != nil {
@@ -150,21 +162,27 @@ func appendChunkInternalWithPath(basePath, content, op, user, source string, exp
 
 	h := hashDocContent(content)
 
-	// 重复检测
-	if containsHash(meta.HashWindow, h) {
-		compiledPath := docCompiledPathFromBase(basePath)
-		var compiledSize int64
-		if fi, statErr := os.Stat(compiledPath); statErr == nil {
-			compiledSize = fi.Size()
-		}
-		log.Printf("[DOC_APPEND_PATH] path=%s seq=%d ver=%d op=%s duplicate=true content_size=%d compiled_size=%d dur_ms=%d",
-			basePath, meta.LastSequence, meta.Version, op, len(content), compiledSize, time.Since(start).Milliseconds())
-		return meta, nil, true, nil
-	}
-
 	if op == "" {
 		op = "add_full"
 	}
+
+	// 重复检测。replace_full 只有在当前 compiled.md 已经等于目标内容时才是 no-op；
+	// 不能仅凭历史 HashWindow 判断，否则会阻止恢复到早先出现过的内容。
+	compiledPath := docCompiledPathFromBase(basePath)
+	if containsHash(meta.HashWindow, h) {
+		compiledBytes, readErr := os.ReadFile(compiledPath)
+		if readErr != nil {
+			err = fmt.Errorf("read compiled for dedup: %w", readErr)
+			return
+		}
+		if op != "replace_full" || hashDocContent(string(compiledBytes)) == h {
+			compiledSize := int64(len(compiledBytes))
+			log.Printf("[DOC_APPEND_PATH] seq=%d ver=%d op=%s duplicate=true content_size=%d compiled_size=%d dur_ms=%d",
+				meta.LastSequence, meta.Version, op, len(content), compiledSize, time.Since(start).Milliseconds())
+			return meta, nil, true, nil
+		}
+	}
+
 	if source == "" {
 		source = "api"
 	}
@@ -186,76 +204,72 @@ func appendChunkInternalWithPath(basePath, content, op, user, source string, exp
 		return
 	}
 
-	// 写入 chunk
 	cp := docChunksPathFromBase(basePath)
-	f, err := os.OpenFile(cp, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	chunksBefore, oldChunks, err := stateOf(cp)
 	if err != nil {
-		return
+		return meta, nil, false, err
 	}
-
-	enc, _ := json.Marshal(ck)
-	if _, err = f.Write(append(enc, '\n')); err != nil {
-		f.Close()
-		return
+	compiledBefore, oldCompiled, err := stateOf(compiledPath)
+	if err != nil {
+		return meta, nil, false, err
 	}
-	f.Close()
-
-	// 更新 compiled
-	compiledPath := docCompiledPathFromBase(basePath)
-	needSectionSync := false
-	if op == "replace_full" {
-		_ = os.WriteFile(compiledPath, []byte(content), 0644)
-		needSectionSync = true
-	} else if strings.HasPrefix(op, "section_") && strings.HasSuffix(op, "_no_parse") {
-		_ = os.WriteFile(compiledPath, []byte(content), 0644)
-		needSectionSync = false
-	} else {
-		// append 模式
-		if _, statErr := os.Stat(compiledPath); statErr == nil {
-			rf, _ := os.OpenFile(compiledPath, os.O_WRONLY|os.O_APPEND, 0644)
-			if rf != nil {
-				_, _ = rf.Write([]byte("\n" + content))
-				rf.Close()
-			}
-		} else {
-			_ = os.WriteFile(compiledPath, []byte(content), 0644)
+	metaPath := docMetaPathFromBase(basePath)
+	metaBefore, _, err := stateOf(metaPath)
+	if err != nil {
+		return meta, nil, false, err
+	}
+	enc, marshalErr := json.Marshal(ck)
+	if marshalErr != nil {
+		return meta, nil, false, marshalErr
+	}
+	targetChunks := append(append([]byte(nil), oldChunks...), append(enc, '\n')...)
+	needSectionSync := op == "replace_full"
+	targetCompiled := []byte(content)
+	if !operationReplacesCompiled(op) {
+		if len(oldCompiled) > 0 {
+			targetCompiled = append(append(append([]byte(nil), oldCompiled...), '\n'), []byte(content)...)
 		}
 	}
-
-	compiledBytes, _ := os.ReadFile(compiledPath)
-
-	// 更新 meta
 	meta.Version++
 	meta.LastSequence = seq
 	meta.HashWindow = pushHashWindow(meta.HashWindow, h)
 	meta.ChunkCount++
 	meta.UpdatedAt = time.Now()
-	meta.ETag = hashDocContent(string(compiledBytes))
-
-	if err = writeMetaAtomicWithPath(basePath, meta); err != nil {
+	meta.ETag = hashDocContent(string(targetCompiled))
+	intent := pendingCommit{Protocol: 1, OperationID: fmt.Sprintf("%d-%s", time.Now().UnixNano(), h[:12]), BeforeVersion: meta.Version - 1, TargetVersion: meta.Version, BeforeChunks: chunksBefore, BeforeCompiled: compiledBefore, BeforeMeta: metaBefore, TargetChunks: targetChunks, TargetCompiled: targetCompiled, TargetMeta: meta, NeedSectionSync: needSectionSync, CreatedAt: time.Now()}
+	if err = persistPending(basePath, intent); err != nil {
 		return
 	}
-
-	// 如果需要同步章节
-	if needSectionSync {
-		docType := filepath.Base(basePath)
-		sm := NewSyncManager(basePath, docType)
-		log.Printf("[DOC_APPEND_PATH] path=%s section_sync_start compiled_size=%d", basePath, len(compiledBytes))
-		if syncErr := sm.SyncFromCompiled(); syncErr != nil {
-			log.Printf("[DOC_APPEND_PATH] path=%s section_sync_error=%v", basePath, syncErr)
-		}
+	if err = recoverPendingWithPath(basePath); err != nil {
+		return
 	}
+	compiledBytes := targetCompiled
 
-	log.Printf("[DOC_APPEND_PATH] path=%s seq=%d ver=%d op=%s duplicate=false content_size=%d compiled_size=%d dur_ms=%d",
-		basePath, seq, meta.Version, op, len(content), len(compiledBytes), time.Since(start).Milliseconds())
+	log.Printf("[DOC_APPEND_PATH] seq=%d ver=%d op=%s duplicate=false content_size=%d compiled_size=%d dur_ms=%d",
+		seq, meta.Version, op, len(content), len(compiledBytes), time.Since(start).Milliseconds())
 
 	return meta, &ck, false, nil
 }
 
 // listChunksWithPath 使用自定义路径列出 chunks
 func listChunksWithPath(basePath string) ([]DocChunk, DocMeta, error) {
+	basePath, err := filepath.Abs(basePath)
+	if err != nil {
+		return nil, DocMeta{}, err
+	}
+	unlock := lockAppendPath(basePath)
+	defer unlock()
+	return listChunksUnlockedWithPath(basePath)
+}
+func listChunksUnlockedWithPath(basePath string) ([]DocChunk, DocMeta, error) {
+	if err := recoverPendingWithPath(basePath); err != nil {
+		return nil, DocMeta{}, err
+	}
 	cp := docChunksPathFromBase(basePath)
-	meta, _ := loadOrInitMetaWithPath(basePath)
+	meta, err := loadOrInitMetaWithPath(basePath)
+	if err != nil {
+		return nil, DocMeta{}, err
+	}
 
 	data, err := os.ReadFile(cp)
 	if err != nil {
@@ -303,12 +317,10 @@ func rebuildCompiledWithPath(basePath string) (DocMeta, error) {
 
 		if ck.Active {
 			activeCount++
-			if ck.Content != "" {
-				if ck.Op == "replace_full" || ck.Op == "section_full_no_parse" {
-					bldr = []string{ck.Content}
-				} else {
-					bldr = append(bldr, ck.Content)
-				}
+			if operationReplacesCompiled(ck.Op) {
+				bldr = []string{ck.Content}
+			} else if ck.Content != "" {
+				bldr = append(bldr, ck.Content)
 			}
 			lastHashes = pushHashWindow(lastHashes, ck.Hash)
 		} else {
@@ -331,8 +343,8 @@ func rebuildCompiledWithPath(basePath string) (DocMeta, error) {
 		return meta, err
 	}
 
-	log.Printf("[DOC_REBUILD_PATH] path=%s total_chunks=%d active_chunks=%d deleted_chunks=%d compiled_size=%d dur_ms=%d",
-		basePath, len(chunks), activeCount, deleted, len(compiled), time.Since(start).Milliseconds())
+	log.Printf("[DOC_REBUILD_PATH] total_chunks=%d active_chunks=%d deleted_chunks=%d compiled_size=%d dur_ms=%d",
+		len(chunks), activeCount, deleted, len(compiled), time.Since(start).Milliseconds())
 
 	return meta, nil
 }
@@ -340,81 +352,90 @@ func rebuildCompiledWithPath(basePath string) (DocMeta, error) {
 // squashWithPath 使用自定义路径压缩 chunks
 func squashWithPath(basePath, user, source string, expectedVersion *int) (DocMeta, error) {
 	start := time.Now()
+	basePath, err := filepath.Abs(basePath)
+	if err != nil {
+		return DocMeta{}, err
+	}
+	unlock := lockAppendPath(basePath)
+	defer unlock()
+	if err = recoverPendingWithPath(basePath); err != nil {
+		return DocMeta{}, err
+	}
 
 	meta, err := loadOrInitMetaWithPath(basePath)
 	if err != nil {
 		return meta, err
 	}
-
 	if expectedVersion != nil && meta.Version != *expectedVersion {
 		return meta, fmt.Errorf("version_mismatch")
 	}
 
-	// 先 rebuild 确保一致性
-	if _, err := rebuildCompiledWithPath(basePath); err != nil {
+	cp := docChunksPathFromBase(basePath)
+	chunksBefore, oldChunks, err := stateOf(cp)
+	if err != nil {
 		return meta, err
 	}
-
+	merged, chunks, err := compileTargetChunks(oldChunks)
+	if err != nil {
+		return meta, fmt.Errorf("replay chunks before squash: %w", err)
+	}
+	if len(chunks) != meta.ChunkCount || hashDocContent(merged) != meta.ETag {
+		return meta, errors.New("document state inconsistent before squash")
+	}
 	compiledPath := docCompiledPathFromBase(basePath)
-	compiledBytes, err := os.ReadFile(compiledPath)
+	compiledBefore, compiledBytes, err := stateOf(compiledPath)
+	if err != nil {
+		return meta, err
+	}
+	if string(compiledBytes) != merged {
+		return meta, errors.New("compiled content inconsistent before squash")
+	}
+	metaPath := docMetaPathFromBase(basePath)
+	metaBefore, _, err := stateOf(metaPath)
 	if err != nil {
 		return meta, err
 	}
 
-	merged := string(compiledBytes)
-
-	// 归档旧文件
-	cp := docChunksPathFromBase(basePath)
-	if _, statErr := os.Stat(cp); statErr == nil {
-		backup := cp + ".bak-" + time.Now().Format("20060102T150405")
-		_ = os.Rename(cp, backup)
-	}
-
-	// 创建新的单一 chunk
 	seq := meta.LastSequence + 1
 	if source == "" {
 		source = "squash"
 	}
-	ck := DocChunk{
-		Sequence:  seq,
-		Timestamp: time.Now(),
-		Op:        "replace_full",
-		Content:   merged,
-		User:      user,
-		Source:    source,
-		Hash:      hashDocContent(merged),
-		Active:    true,
-	}
-
-	enc, _ := json.Marshal(ck)
-	if err := os.WriteFile(cp, append(enc, '\n'), 0644); err != nil {
+	ck := DocChunk{Sequence: seq, Timestamp: time.Now(), Op: "replace_full", Content: merged, User: user, Source: source, Hash: hashDocContent(merged), Active: true}
+	enc, err := json.Marshal(ck)
+	if err != nil {
 		return meta, err
 	}
-
-	if err := os.WriteFile(compiledPath, []byte(merged), 0644); err != nil {
-		return meta, err
-	}
-
+	targetChunks := append(enc, '\n')
 	meta.Version++
 	meta.LastSequence = seq
 	meta.ChunkCount = 1
 	meta.DeletedCount = 0
-	meta.HashWindow = pushHashWindow([]string{}, ck.Hash)
+	meta.HashWindow = []string{ck.Hash}
 	meta.UpdatedAt = time.Now()
-	meta.ETag = hashDocContent(merged)
-
-	if err := writeMetaAtomicWithPath(basePath, meta); err != nil {
+	meta.ETag = ck.Hash
+	intent := pendingCommit{Protocol: 1, OperationID: fmt.Sprintf("%d-squash", time.Now().UnixNano()), BeforeVersion: meta.Version - 1, TargetVersion: meta.Version, BeforeChunks: chunksBefore, BeforeCompiled: compiledBefore, BeforeMeta: metaBefore, TargetChunks: targetChunks, TargetCompiled: []byte(merged), TargetMeta: meta, NeedSectionSync: false, CreatedAt: time.Now()}
+	if err = persistPending(basePath, intent); err != nil {
+		return meta, err
+	}
+	if err = recoverPendingWithPath(basePath); err != nil {
 		return meta, err
 	}
 
-	log.Printf("[DOC_SQUASH_PATH] path=%s seq=%d ver=%d merged_size=%d dur_ms=%d",
-		basePath, seq, meta.Version, len(merged), time.Since(start).Milliseconds())
-
+	log.Printf("[DOC_SQUASH_PATH] seq=%d ver=%d merged_size=%d dur_ms=%d", seq, meta.Version, len(merged), time.Since(start).Milliseconds())
 	return meta, nil
 }
 
 // ExportWithPath 导出文档内容
 func ExportWithPath(basePath string) (content string, meta DocMeta, err error) {
+	basePath, err = filepath.Abs(basePath)
+	if err != nil {
+		return
+	}
+	unlock := lockAppendPath(basePath)
+	defer unlock()
+	if err = recoverPendingWithPath(basePath); err != nil {
+		return
+	}
 	compiledPath := docCompiledPathFromBase(basePath)
 	meta, err = loadOrInitMetaWithPath(basePath)
 	if err != nil {
@@ -430,4 +451,37 @@ func ExportWithPath(basePath string) (content string, meta DocMeta, err error) {
 	}
 
 	return string(data), meta, nil
+}
+
+// appendPathLocks coordinates the canonical Append implementation across instances.
+// Other operations still require the outer docslot lock; this is not a transaction.
+var appendPathLocks = struct {
+	sync.Mutex
+	entries map[string]*appendPathLock
+}{entries: make(map[string]*appendPathLock)}
+
+type appendPathLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func lockAppendPath(path string) func() {
+	appendPathLocks.Lock()
+	entry := appendPathLocks.entries[path]
+	if entry == nil {
+		entry = &appendPathLock{}
+		appendPathLocks.entries[path] = entry
+	}
+	entry.refs++
+	appendPathLocks.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		appendPathLocks.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(appendPathLocks.entries, path)
+		}
+		appendPathLocks.Unlock()
+	}
 }

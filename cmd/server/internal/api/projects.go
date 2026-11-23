@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,223 +10,57 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/docslot"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/taskdocs"
-	"github.com/houzhh15/AIDG/cmd/server/internal/executionplan"
-	"github.com/houzhh15/AIDG/cmd/server/internal/models"
-	"github.com/houzhh15/AIDG/cmd/server/internal/services"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/tasklifecycle"
 	"github.com/houzhh15/AIDG/cmd/server/internal/simhash"
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 )
 
-// enrichTaskWithCompletionStatus 为任务信息添加5个文档槽位的完成状态
-// 槽位: requirements(需求文档), design(设计文档), plan(执行计划), execution(执行完成), test(测试文档)
-// 状态: "" (空/未完成) 或 "completed" (已完成)
-func enrichTaskWithCompletionStatus(task map[string]interface{}, projectID, taskID string) {
-	completion := map[string]string{
-		"requirements": "",
-		"design":       "",
-		"plan":         "",
-		"execution":    "",
-		"test":         "",
-	}
-
-	if checkDocSlotCompleted(projectID, taskID, "requirements") {
-		completion["requirements"] = "completed"
-	}
-	if checkDocSlotCompleted(projectID, taskID, "design") {
-		completion["design"] = "completed"
-	}
-	if checkExecutionPlanCompleted(projectID, taskID) {
-		completion["plan"] = "completed"
-	}
-	if checkExecutionCompleted(projectID, taskID) {
-		completion["execution"] = "completed"
-	}
-	if checkDocSlotCompleted(projectID, taskID, "test") {
-		completion["test"] = "completed"
-	}
-
-	task["completion"] = completion
-}
-
-// checkDocSlotCompleted 检查某个文档槽位是否已有内容
-func checkDocSlotCompleted(projectID, taskID, docType string) bool {
-	compiledPath, err := taskdocs.DocCompiledPath(projectID, taskID, docType)
-	if err != nil {
-		return false
-	}
-	data, err := os.ReadFile(compiledPath)
-	if err != nil {
-		// 尝试 legacy 路径
-		legacyPath := filepath.Join(projectsRoot(), projectID, "tasks", taskID, docType+".md")
-		data, err = os.ReadFile(legacyPath)
-		if err != nil {
-			return false
-		}
-	}
-	return len(strings.TrimSpace(string(data))) > 0
-}
-
-// checkExecutionPlanCompleted 检查执行计划是否已完成（非 Draft 状态即视为已有计划）
-func checkExecutionPlanCompleted(projectID, taskID string) bool {
-	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
-	if err != nil {
-		return false
-	}
-	svc := services.NewExecutionPlanService(repo)
-	plan, err := svc.Load(context.Background())
-	if err != nil {
-		return false
-	}
-	// Draft 状态是默认模板，不算已完成
-	return plan.Status != models.PlanStatusDraft
-}
-
-// checkExecutionCompleted 检查执行计划的所有步骤是否全部执行完成
-func checkExecutionCompleted(projectID, taskID string) bool {
-	repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
-	if err != nil {
-		return false
-	}
-	svc := services.NewExecutionPlanService(repo)
-	plan, err := svc.Load(context.Background())
-	if err != nil {
-		return false
-	}
-	return plan.Status == models.PlanStatusCompleted
-}
-
-// HandleGetNextIncompleteTask GET /api/v1/projects/:id/tasks/next-incomplete
-// 获取下一个有未完成文档的任务
-// 可选参数 doc_type: requirements, design, plan, test
+// HandleGetNextIncompleteTask returns the first non-completed task. Task status
+// is the lifecycle authority; doc_type only filters the three derived constraint slots.
 func HandleGetNextIncompleteTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
-		docTypeFilter := c.Query("doc_type") // 可选: requirements, design, plan, test
-
-		// Verify project exists
+		docTypeFilter := c.Query("doc_type")
 		if reg.Get(projectID) == nil {
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		projDir := filepath.Join(projectsRoot(), projectID)
-		tasksFile := filepath.Join(projDir, "tasks.json")
-
-		if _, err := os.Stat(tasksFile); os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "message": "no tasks found"})
-			return
-		}
-
-		data, err := os.ReadFile(tasksFile)
-		if err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to read tasks: %w", err))
-			return
-		}
-
-		var taskList []map[string]interface{}
-		if err := json.Unmarshal(data, &taskList); err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "message": "no tasks found"})
-			return
-		}
-
-		// 验证 doc_type 参数
-		validDocTypes := map[string]bool{"requirements": true, "design": true, "plan": true, "execution": true, "test": true}
+		validDocTypes := map[string]bool{"requirements": true, "design": true, "test": true}
 		if docTypeFilter != "" && !validDocTypes[docTypeFilter] {
-			badRequestResponse(c, "invalid doc_type, must be one of: requirements, design, plan, execution, test")
+			badRequestResponse(c, "invalid doc_type, must be one of: requirements, design, test")
 			return
 		}
-
-		// 遍历任务列表，找到第一个满足条件的任务
-		for _, task := range taskList {
-			taskID, ok := task["id"].(string)
-			if !ok || taskID == "" {
+		tasks, err := taskLifecycleService().List(projectID)
+		if err != nil {
+			handleTaskLifecycleError(c, err)
+			return
+		}
+		for _, task := range tasks {
+			if task["status"] == tasklifecycle.StatusCompleted {
 				continue
 			}
-
-			// 计算各文档槽位的状态
-			reqCompleted := checkDocSlotCompleted(projectID, taskID, "requirements")
-			designCompleted := checkDocSlotCompleted(projectID, taskID, "design")
-			planCompleted := checkExecutionPlanCompleted(projectID, taskID)
-			execCompleted := checkExecutionCompleted(projectID, taskID)
-			testCompleted := checkDocSlotCompleted(projectID, taskID, "test")
-
-			// 判断是否满足筛选条件
-			var matchesFilter bool
-			switch docTypeFilter {
-			case "requirements":
-				matchesFilter = !reqCompleted
-			case "design":
-				matchesFilter = !designCompleted
-			case "plan":
-				matchesFilter = !planCompleted
-			case "execution":
-				matchesFilter = !execCompleted
-			case "test":
-				matchesFilter = !testCompleted
-			default:
-				// 无筛选时，任意一项未完成即匹配
-				matchesFilter = !reqCompleted || !designCompleted || !planCompleted || !execCompleted || !testCompleted
-			}
-
-			if !matchesFilter {
+			readiness, _ := task["constraint_readiness"].(tasklifecycle.Readiness)
+			missing := map[string]bool{"requirements": !readiness.Requirements, "design": !readiness.Design, "test": !readiness.Test}
+			if docTypeFilter != "" && !missing[docTypeFilter] {
 				continue
 			}
-
-			// 构建完成状态
-			completion := map[string]string{
-				"requirements": "",
-				"design":       "",
-				"plan":         "",
-				"execution":    "",
-				"test":         "",
-			}
-			if reqCompleted {
-				completion["requirements"] = "completed"
-			}
-			if designCompleted {
-				completion["design"] = "completed"
-			}
-			if planCompleted {
-				completion["plan"] = "completed"
-			}
-			if execCompleted {
-				completion["execution"] = "completed"
-			}
-			if testCompleted {
-				completion["test"] = "completed"
-			}
-			task["completion"] = completion
-
-			// 推荐下一个要完成的内容，按优先级: requirements > design > plan > execution > test
 			recommended := ""
-			if !reqCompleted {
-				recommended = "requirements"
-			} else if !designCompleted {
-				recommended = "design"
-			} else if !planCompleted {
-				recommended = "plan"
-			} else if !execCompleted {
-				recommended = "execution"
-			} else if !testCompleted {
-				recommended = "test"
+			for _, slot := range []string{"requirements", "design", "test"} {
+				if missing[slot] {
+					recommended = slot
+					break
+				}
 			}
-
-			c.JSON(http.StatusOK, gin.H{
-				"success": true,
-				"data": gin.H{
-					"task":        task,
-					"recommended": recommended,
-				},
-			})
+			c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"task": task, "recommended": recommended}})
 			return
 		}
-
-		// 没有满足条件的任务
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": nil, "message": "all tasks completed"})
 	}
 }
@@ -239,6 +72,29 @@ func projectsRoot() string {
 	}
 	projects.InitPaths()
 	return projects.ProjectsRoot
+}
+
+func taskLifecycleService() *tasklifecycle.Service {
+	return tasklifecycle.NewService(projectsRoot(), taskdocs.NewDocService())
+}
+
+func handleTaskLifecycleError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, tasklifecycle.ErrInvalidID), errors.Is(err, tasklifecycle.ErrInvalidInput), errors.Is(err, tasklifecycle.ErrInvalidStatus):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_input", "message": err.Error()})
+	case errors.Is(err, tasklifecycle.ErrInvalidTransition):
+		c.JSON(http.StatusConflict, gin.H{"error": "invalid_transition", "message": err.Error()})
+	case errors.Is(err, tasklifecycle.ErrReviewRequired), errors.Is(err, tasklifecycle.ErrReviewNotFound):
+		c.JSON(http.StatusConflict, gin.H{"error": "review_required", "message": err.Error()})
+	case errors.Is(err, tasklifecycle.ErrVersionConflict):
+		c.JSON(http.StatusConflict, gin.H{"error": "version_conflict", "message": err.Error()})
+	case errors.Is(err, tasklifecycle.ErrUnauthorized):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "message": err.Error()})
+	case errors.Is(err, tasklifecycle.ErrNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "message": err.Error()})
+	default:
+		internalErrorResponse(c, err)
+	}
 }
 
 // hasProjectPermission 检查用户是否对指定项目有权限
@@ -322,11 +178,12 @@ func HandleListProjects(reg *projects.ProjectRegistry) gin.HandlerFunc {
 					continue
 				}
 				out = append(out, gin.H{
-					"id":           p.ID,
-					"name":         p.Name,
-					"product_line": p.ProductLine,
-					"created_at":   p.CreatedAt,
-					"updated_at":   p.UpdatedAt,
+					"id":             p.ID,
+					"name":           p.Name,
+					"product_line":   p.ProductLine,
+					"schema_version": p.SchemaVersion,
+					"created_at":     p.CreatedAt,
+					"updated_at":     p.UpdatedAt,
 				})
 			}
 		}
@@ -374,11 +231,12 @@ func HandleCreateProject(reg *projects.ProjectRegistry) gin.HandlerFunc {
 
 		now := time.Now()
 		p := &projects.Project{
-			ID:          name,
-			Name:        name,
-			ProductLine: strings.TrimSpace(body.ProductLine),
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:            name,
+			Name:          name,
+			ProductLine:   strings.TrimSpace(body.ProductLine),
+			SchemaVersion: projects.CurrentSchemaVersion,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		}
 
 		reg.Set(p)
@@ -389,11 +247,12 @@ func HandleCreateProject(reg *projects.ProjectRegistry) gin.HandlerFunc {
 		// For now, skip this feature
 
 		c.JSON(http.StatusOK, gin.H{
-			"id":           p.ID,
-			"name":         p.Name,
-			"product_line": p.ProductLine,
-			"created_at":   p.CreatedAt,
-			"updated_at":   p.UpdatedAt,
+			"id":             p.ID,
+			"name":           p.Name,
+			"product_line":   p.ProductLine,
+			"schema_version": p.SchemaVersion,
+			"created_at":     p.CreatedAt,
+			"updated_at":     p.UpdatedAt,
 		})
 	}
 }
@@ -411,11 +270,12 @@ func HandleGetProject(reg *projects.ProjectRegistry) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"id":           p.ID,
-			"name":         p.Name,
-			"product_line": p.ProductLine,
-			"created_at":   p.CreatedAt,
-			"updated_at":   p.UpdatedAt,
+			"id":             p.ID,
+			"name":           p.Name,
+			"product_line":   p.ProductLine,
+			"schema_version": p.SchemaVersion,
+			"created_at":     p.CreatedAt,
+			"updated_at":     p.UpdatedAt,
 		})
 	}
 }
@@ -455,11 +315,12 @@ func HandlePatchProject(reg *projects.ProjectRegistry) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"id":           p.ID,
-			"name":         p.Name,
-			"product_line": p.ProductLine,
-			"created_at":   p.CreatedAt,
-			"updated_at":   p.UpdatedAt,
+			"id":             p.ID,
+			"name":           p.Name,
+			"product_line":   p.ProductLine,
+			"schema_version": p.SchemaVersion,
+			"created_at":     p.CreatedAt,
+			"updated_at":     p.UpdatedAt,
 		})
 	}
 }
@@ -516,52 +377,10 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			return
 		}
 
-		projDir := filepath.Join(projectsRoot(), projectID)
-		tasksFile := filepath.Join(projDir, "tasks.json")
-
-		// If tasks.json doesn't exist, return empty list
-		if _, err := os.Stat(tasksFile); os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{"success": true, "data": []map[string]interface{}{}})
-			return
-		}
-
-		// Read tasks.json
-		data, err := os.ReadFile(tasksFile)
+		taskList, err := taskLifecycleService().List(projectID)
 		if err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to read tasks: %w", err))
+			handleTaskLifecycleError(c, err)
 			return
-		}
-
-		var taskList []map[string]interface{}
-		if err := json.Unmarshal(data, &taskList); err != nil {
-			// If unmarshal fails, return empty list
-			c.JSON(http.StatusOK, gin.H{"success": true, "data": []map[string]interface{}{}})
-			return
-		}
-
-		// 懒加载：为旧任务自动补全 simhash 字段
-		needsSave := false
-		for i, task := range taskList {
-			// 如果任务有 name 但没有 simhash，自动计算
-			if name, ok := task["name"].(string); ok && name != "" {
-				if _, hasSimhash := task["simhash"]; !hasSimhash {
-					hash := simhash.CalculateSimHash(name)
-					task["simhash"] = hash
-					taskList[i] = task
-					needsSave = true
-					fmt.Printf("DEBUG: Lazy-loaded simhash for task %s: %d (0x%x)\n",
-						task["id"], hash, hash)
-				}
-			}
-		}
-
-		// 如果有任务更新了 simhash，保存回文件
-		if needsSave {
-			if data, err := json.MarshalIndent(taskList, "", "  "); err == nil {
-				os.WriteFile(tasksFile, data, 0644)
-				fmt.Printf("INFO: Saved lazy-loaded simhash for %s tasks in project %s\n",
-					"some", projectID)
-			}
 		}
 
 		originalCount := len(taskList)
@@ -778,13 +597,6 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 				projectID, query, timeRange, len(taskList), originalCount)
 		}
 
-		// 为每个任务添加完成状态
-		for _, task := range taskList {
-			if id, ok := task["id"].(string); ok {
-				enrichTaskWithCompletionStatus(task, projectID, id)
-			}
-		}
-
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": taskList})
 	}
 }
@@ -793,79 +605,28 @@ func HandleListProjectTasks(reg *projects.ProjectRegistry) gin.HandlerFunc {
 func HandleCreateProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
-
-		// Verify project exists
 		if reg.Get(projectID) == nil {
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		var taskData map[string]interface{}
-		if err := c.ShouldBindJSON(&taskData); err != nil {
+		var taskData map[string]json.RawMessage
+		if err := BindDocumentWrite(c, &taskData); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
-
-		// Generate task ID (using nanosecond timestamp to avoid collisions)
-		taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
-		taskData["id"] = taskID
-		taskData["created_at"] = time.Now().Format(time.RFC3339)
-		taskData["updated_at"] = time.Now().Format(time.RFC3339)
-
-		// Set default status if not provided
-		if _, ok := taskData["status"]; !ok {
-			taskData["status"] = "todo"
-		}
-
-		// 预计算 SimHash 指纹（如果有 name 字段）
-		if name, ok := taskData["name"].(string); ok && name != "" {
-			hash := simhash.CalculateSimHash(name)
-			taskData["simhash"] = hash
-			fmt.Printf("DEBUG: Calculated simhash for task %s: %d (0x%x)\n", taskID, hash, hash)
-		}
-
-		projDir := filepath.Join(projectsRoot(), projectID)
-		tasksFile := filepath.Join(projDir, "tasks.json")
-		taskDir := filepath.Join(projDir, "tasks", taskID)
-
-		// Create task directory
-		if err := os.MkdirAll(taskDir, 0755); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to create task directory: %w", err))
-			return
-		}
-
-		// Generate default execution plan template
-		repo, err := executionplan.NewFileRepository(projectsRoot(), projectID, taskID)
-		if err == nil {
-			generator := executionplan.NewTemplateGenerator()
-			opts := executionplan.TemplateOptions{Force: false}
-			if err := generator.Ensure(c.Request.Context(), repo, taskID, opts); err != nil {
-				// Log warning but don't block task creation
-				if !errors.Is(err, executionplan.ErrPlanExists) {
-					fmt.Printf("[WARN] Failed to generate execution plan template for task %s: %v\n", taskID, err)
-				}
-			} else {
-				fmt.Printf("[INFO] Generated execution plan template for task %s\n", taskID)
+		if rawName, ok := taskData["name"]; ok {
+			var name string
+			if json.Unmarshal(rawName, &name) == nil && name != "" {
+				hash, _ := json.Marshal(simhash.CalculateSimHash(name))
+				taskData["simhash"] = hash
 			}
-		} else {
-			fmt.Printf("[WARN] Failed to create execution plan repository for task %s: %v\n", taskID, err)
 		}
-
-		// Read existing tasks or create new list
-		var taskList []map[string]interface{}
-		if data, err := os.ReadFile(tasksFile); err == nil {
-			json.Unmarshal(data, &taskList)
-		} // Add new task
-		taskList = append(taskList, taskData)
-
-		// Save tasks.json
-		data, _ := json.MarshalIndent(taskList, "", "  ")
-		if err := os.WriteFile(tasksFile, data, 0644); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to save task: %w", err))
+		task, err := taskLifecycleService().Create(projectID, taskData)
+		if err != nil {
+			handleTaskLifecycleError(c, err)
 			return
 		}
-
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": taskData})
+		c.JSON(http.StatusCreated, gin.H{"success": true, "data": task})
 	}
 }
 
@@ -874,39 +635,16 @@ func HandleGetProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
 		taskID := c.Param("task_id")
-
-		// Verify project exists
 		if reg.Get(projectID) == nil {
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		projDir := filepath.Join(projectsRoot(), projectID)
-		tasksFile := filepath.Join(projDir, "tasks.json")
-
-		// Read tasks.json
-		data, err := os.ReadFile(tasksFile)
+		task, err := taskLifecycleService().Get(projectID, taskID)
 		if err != nil {
-			notFoundResponse(c, "task not found")
+			handleTaskLifecycleError(c, err)
 			return
 		}
-
-		var taskList []map[string]interface{}
-		if err := json.Unmarshal(data, &taskList); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to parse tasks: %w", err))
-			return
-		}
-
-		// Find the task
-		for _, task := range taskList {
-			if task["id"] == taskID {
-				enrichTaskWithCompletionStatus(task, projectID, taskID)
-				c.JSON(http.StatusOK, gin.H{"success": true, "data": task})
-				return
-			}
-		}
-
-		notFoundResponse(c, "task not found")
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": task})
 	}
 }
 
@@ -915,84 +653,38 @@ func HandleUpdateProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		projectID := c.Param("id")
 		taskID := c.Param("task_id")
-
-		// Verify project exists
 		if reg.Get(projectID) == nil {
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		var updateData map[string]interface{}
-		if err := c.ShouldBindJSON(&updateData); err != nil {
+		var updateData map[string]json.RawMessage
+		if err := BindDocumentWrite(c, &updateData); err != nil {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
-
-		projDir := filepath.Join(projectsRoot(), projectID)
-		tasksFile := filepath.Join(projDir, "tasks.json")
-
-		// Read tasks.json
-		data, err := os.ReadFile(tasksFile)
-		if err != nil {
-			notFoundResponse(c, "task not found")
-			return
+		var expectedRevision *int
+		if raw, ok := updateData["expected_revision"]; ok {
+			var revision int
+			if json.Unmarshal(raw, &revision) != nil || revision < 1 {
+				badRequestResponse(c, "invalid expected_revision")
+				return
+			}
+			expectedRevision = &revision
+			delete(updateData, "expected_revision")
 		}
-
-		var taskList []map[string]interface{}
-		if err := json.Unmarshal(data, &taskList); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to parse tasks: %w", err))
-			return
-		}
-
-		// Find and update the task
-		found := false
-		for i, task := range taskList {
-			if task["id"] == taskID {
-				// Update fields (don't allow updating id or created_at)
-				nameChanged := false
-				oldName := ""
-				if oldNameValue, ok := task["name"].(string); ok {
-					oldName = oldNameValue
-				}
-
-				for k, v := range updateData {
-					if k != "id" && k != "created_at" {
-						task[k] = v
-						if k == "name" {
-							nameChanged = true
-						}
-					}
-				}
-				task["updated_at"] = time.Now().Format(time.RFC3339)
-
-				// 如果 name 改变了，重新计算 SimHash
-				if nameChanged {
-					if newName, ok := task["name"].(string); ok && newName != "" && newName != oldName {
-						hash := simhash.CalculateSimHash(newName)
-						task["simhash"] = hash
-						fmt.Printf("DEBUG: Recalculated simhash for task %s: %d (0x%x)\n", taskID, hash, hash)
-					}
-				}
-
-				taskList[i] = task
-				found = true
-				break
+		if rawName, ok := updateData["name"]; ok {
+			var name string
+			if json.Unmarshal(rawName, &name) == nil && name != "" {
+				hash, _ := json.Marshal(simhash.CalculateSimHash(name))
+				updateData["simhash"] = hash
 			}
 		}
-
-		if !found {
-			notFoundResponse(c, "task not found")
+		task, err := taskLifecycleService().Update(projectID, taskID, updateData, expectedRevision)
+		if err != nil {
+			handleTaskLifecycleError(c, err)
 			return
 		}
-
-		// Save tasks
-		data, _ = json.MarshalIndent(taskList, "", "  ")
-		if err := os.WriteFile(tasksFile, data, 0644); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to save task: %w", err))
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{"success": true})
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": task})
 	}
 }
 
@@ -1007,51 +699,10 @@ func HandleDeleteProjectTask(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		projDir := filepath.Join(projectsRoot(), projectID)
-		tasksFile := filepath.Join(projDir, "tasks.json")
-
-		// Read tasks.json
-		data, err := os.ReadFile(tasksFile)
-		if err != nil {
-			notFoundResponse(c, "task not found")
+		if err := taskLifecycleService().Delete(projectID, taskID); err != nil {
+			handleTaskLifecycleError(c, err)
 			return
 		}
-
-		var taskList []map[string]interface{}
-		if err := json.Unmarshal(data, &taskList); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to parse tasks: %w", err))
-			return
-		}
-
-		// Find and remove the task
-		found := false
-		newTaskList := []map[string]interface{}{}
-		for _, task := range taskList {
-			if task["id"] == taskID {
-				found = true
-				// Don't add this task to the new list
-			} else {
-				newTaskList = append(newTaskList, task)
-			}
-		}
-
-		if !found {
-			notFoundResponse(c, "task not found")
-			return
-		}
-
-		// Save tasks
-		data, _ = json.MarshalIndent(newTaskList, "", "  ")
-		if err := os.WriteFile(tasksFile, data, 0644); err != nil {
-			internalErrorResponse(c, fmt.Errorf("failed to save tasks: %w", err))
-			return
-		}
-
-		// Optionally, delete task directory
-		taskDir := filepath.Join(projDir, "tasks", taskID)
-		os.RemoveAll(taskDir)
-
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	}
 }
@@ -1158,11 +809,34 @@ func getProjectDir(reg *projects.ProjectRegistry, projectID string) (string, err
 	if p == nil {
 		return "", fmt.Errorf("project not found")
 	}
-	dir := filepath.Join(projectsRoot(), projectID)
+	resolver := docslot.NewPathResolver(projectsRoot())
+	slotPath, err := resolver.ResolvePath(docslot.ScopeProject, projectID, "feature_list")
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Dir(filepath.Dir(slotPath))
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("directory missing")
 	}
 	return dir, nil
+}
+
+func readLegacyProjectDocument(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > maxDocumentWriteBytes {
+		return nil, fmt.Errorf("legacy document is not a bounded regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(data) {
+		return nil, fmt.Errorf("legacy document is not UTF-8")
+	}
+	return data, nil
 }
 
 // HandleGetFeatureList GET /api/v1/projects/:id/feature-list
@@ -1174,20 +848,21 @@ func HandleGetFeatureList(reg *projects.ProjectRegistry) gin.HandlerFunc {
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		// Try new path first, fallback to old path for backward compatibility
-		filePath := filepath.Join(dir, "docs/feature_list.md")
-		data, err := os.ReadFile(filePath)
+		result, err := docslot.NewUnifiedDocService(projectsRoot()).Export(docslot.ScopeProject, projectID, "feature_list")
 		if err != nil {
-			// Fallback to old path
-			filePath = filepath.Join(dir, "feature_list.md")
-			data, err = os.ReadFile(filePath)
-			if err != nil {
-				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
-				return
+			handleDocSlotError(c, err)
+			return
+		}
+		if !result.Exists {
+			for _, legacy := range []string{filepath.Join(dir, "docs/feature_list.md"), filepath.Join(dir, "feature_list.md")} {
+				if data, readErr := readLegacyProjectDocument(legacy); readErr == nil {
+					result.Content, result.Exists, result.ETag = string(data), true, tasklifecycle.ContentETag(string(data))
+					break
+				}
 			}
 		}
-		c.JSON(http.StatusOK, gin.H{"content": string(data), "exists": true})
+		c.Header("ETag", result.ETag)
+		c.JSON(http.StatusOK, result)
 	}
 }
 
@@ -1274,20 +949,21 @@ func HandleGetArchitectureDesign(reg *projects.ProjectRegistry) gin.HandlerFunc 
 			notFoundResponse(c, "project not found")
 			return
 		}
-
-		// Try new path first, fallback to old path for backward compatibility
-		filePath := filepath.Join(dir, "docs/architecture_design.md")
-		data, err := os.ReadFile(filePath)
+		result, err := docslot.NewUnifiedDocService(projectsRoot()).Export(docslot.ScopeProject, projectID, "architecture_design")
 		if err != nil {
-			// Fallback to old path
-			filePath = filepath.Join(dir, "architecture_new.md")
-			data, err = os.ReadFile(filePath)
-			if err != nil {
-				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
-				return
+			handleDocSlotError(c, err)
+			return
+		}
+		if !result.Exists {
+			for _, legacy := range []string{filepath.Join(dir, "docs/architecture_design.md"), filepath.Join(dir, "architecture_new.md")} {
+				if data, readErr := readLegacyProjectDocument(legacy); readErr == nil {
+					result.Content, result.Exists, result.ETag = string(data), true, tasklifecycle.ContentETag(string(data))
+					break
+				}
 			}
 		}
-		c.JSON(http.StatusOK, gin.H{"content": string(data), "exists": true})
+		c.Header("ETag", result.ETag)
+		c.JSON(http.StatusOK, result)
 	}
 }
 
@@ -1303,15 +979,16 @@ func HandleGetTechDesign(reg *projects.ProjectRegistry) gin.HandlerFunc {
 
 		// Try new path first, fallback to old path for backward compatibility
 		filePath := filepath.Join(dir, "docs/tech_design.md")
-		data, err := os.ReadFile(filePath)
+		data, err := readLegacyProjectDocument(filePath)
 		if err != nil {
-			// Fallback to old path (glob pattern)
+			// Fallback to old path (glob pattern). Every selected file is still
+			// checked as a bounded regular UTF-8 file before reading.
 			files, _ := filepath.Glob(filepath.Join(dir, "tech_design_*.md"))
 			if len(files) == 0 {
 				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
 				return
 			}
-			data, err = os.ReadFile(files[0])
+			data, err = readLegacyProjectDocument(files[0])
 			if err != nil {
 				c.JSON(http.StatusOK, gin.H{"content": "", "exists": false})
 				return

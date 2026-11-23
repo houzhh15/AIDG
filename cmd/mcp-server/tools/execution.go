@@ -8,6 +8,9 @@ import (
 )
 
 // GetExecutionPlanTool 获取执行计划工具
+
+var historicalExecutionPlanToolsReadOnly = true
+
 type GetExecutionPlanTool struct{}
 
 func (t *GetExecutionPlanTool) Name() string {
@@ -20,9 +23,12 @@ func (t *GetExecutionPlanTool) Description() string {
 
 func (t *GetExecutionPlanTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-		"required":   []string{},
+		"type": "object",
+		"properties": map[string]interface{}{
+			"project_id": map[string]interface{}{"type": "string", "description": "项目ID（必填）"},
+			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID（必填）"},
+		},
+		"required": []string{"project_id", "task_id"},
 	}
 }
 
@@ -42,20 +48,26 @@ func (t *UpdateExecutionPlanTool) Name() string {
 }
 
 func (t *UpdateExecutionPlanTool) Description() string {
-	return "全文覆盖更新执行计划"
+	return "历史只读入口：执行计划写入已冻结，固定返回 historical_resource_read_only"
 }
 
 func (t *UpdateExecutionPlanTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"content": map[string]interface{}{"type": "string", "description": "执行计划 Markdown 全文"},
+			"project_id": map[string]interface{}{"type": "string", "description": "项目ID（必填）"},
+			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID（必填）"},
+			"content":    map[string]interface{}{"type": "string", "description": "执行计划 Markdown 全文"},
 		},
-		"required": []string{"content"},
+		"required": []string{"project_id", "task_id", "content"},
 	}
 }
 
 func (t *UpdateExecutionPlanTool) Execute(args map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
+	if historicalExecutionPlanToolsReadOnly {
+		return "", fmt.Errorf("historical_resource_read_only: execution plan is read-only; use task status and review tools")
+	}
+
 	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("update_execution_plan: %w", err)
@@ -77,9 +89,12 @@ func (t *GetNextExecutableStepTool) Description() string {
 
 func (t *GetNextExecutableStepTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
-		"required":   []string{},
+		"type": "object",
+		"properties": map[string]interface{}{
+			"project_id": map[string]interface{}{"type": "string", "description": "项目ID（必填）"},
+			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID（必填）"},
+		},
+		"required": []string{"project_id", "task_id"},
 	}
 }
 
@@ -99,13 +114,15 @@ func (t *UpdatePlanStepStatusTool) Name() string {
 }
 
 func (t *UpdatePlanStepStatusTool) Description() string {
-	return "更新执行计划中单个步骤的状态。状态值必须是以下之一：pending（待开始）、in-progress（进行中）、succeeded（成功完成）、failed（失败）、cancelled（已取消）"
+	return "历史只读入口：执行计划步骤写入已冻结，固定返回 historical_resource_read_only"
 }
 
 func (t *UpdatePlanStepStatusTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
+			"project_id": map[string]interface{}{"type": "string", "description": "项目ID（必填）"},
+			"task_id":    map[string]interface{}{"type": "string", "description": "任务ID（必填）"},
 			"step_id": map[string]interface{}{
 				"type":        "string",
 				"description": "步骤ID",
@@ -120,11 +137,15 @@ func (t *UpdatePlanStepStatusTool) InputSchema() map[string]interface{} {
 				"description": "步骤执行输出（可选）",
 			},
 		},
-		"required": []string{"step_id", "status"},
+		"required": []string{"project_id", "task_id", "step_id", "status"},
 	}
 }
 
 func (t *UpdatePlanStepStatusTool) Execute(args map[string]interface{}, clientToken string, apiClient *shared.APIClient) (string, error) {
+	if historicalExecutionPlanToolsReadOnly {
+		return "", fmt.Errorf("historical_resource_read_only: execution plan is read-only; use task status and review tools")
+	}
+
 	projectID, taskID, err := shared.GetProjectAndTaskIDWithFallback(args, apiClient, clientToken)
 	if err != nil {
 		return "", fmt.Errorf("update_plan_step_status: %w", err)

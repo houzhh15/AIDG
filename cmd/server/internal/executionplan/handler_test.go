@@ -17,6 +17,7 @@ func init() {
 }
 
 func TestHandleUpdatePlan_Success(t *testing.T) {
+	t.Skip("T02 freezes historical execution-plan mutators; covered by TestExecutionPlanMutatorsAreReadOnly")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -72,6 +73,7 @@ dependencies: []
 }
 
 func TestHandleUpdateStepStatus_Success(t *testing.T) {
+	t.Skip("T02 freezes historical execution-plan mutators; covered by TestExecutionPlanMutatorsAreReadOnly")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -302,6 +304,7 @@ dependencies: []
 }
 
 func TestHandleApprovePlan_Success(t *testing.T) {
+	t.Skip("T02 freezes historical execution-plan mutators; covered by TestExecutionPlanMutatorsAreReadOnly")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -360,6 +363,7 @@ dependencies: []
 }
 
 func TestHandleApprovePlan_InvalidStatus(t *testing.T) {
+	t.Skip("T02 freezes historical execution-plan mutators; covered by TestExecutionPlanMutatorsAreReadOnly")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -401,6 +405,7 @@ dependencies: []
 }
 
 func TestHandleRejectPlan_Success(t *testing.T) {
+	t.Skip("T02 freezes historical execution-plan mutators; covered by TestExecutionPlanMutatorsAreReadOnly")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -466,6 +471,7 @@ dependencies: []
 
 // TestUpdateExecutionPlanContent_Success 测试编辑执行计划内容成功的场景
 func TestUpdateExecutionPlanContent_Success(t *testing.T) {
+	t.Skip("T02 freezes historical execution-plan mutators; covered by TestExecutionPlanMutatorsAreReadOnly")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -555,6 +561,7 @@ dependencies: []
 
 // TestUpdateExecutionPlanContent_Unauthorized 测试未认证用户无法编辑
 func TestUpdateExecutionPlanContent_Unauthorized(t *testing.T) {
+	t.Skip("T02 stable read-only response precedes historical handler authorization branches")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -579,6 +586,7 @@ func TestUpdateExecutionPlanContent_Unauthorized(t *testing.T) {
 
 // TestUpdateExecutionPlanContent_PermissionDenied 测试非任务负责人无法编辑
 func TestUpdateExecutionPlanContent_PermissionDenied(t *testing.T) {
+	t.Skip("T02 stable read-only response precedes historical handler authorization branches")
 	tmpDir := t.TempDir()
 	projectsRoot := filepath.Join(tmpDir, "projects")
 	projectID := "proj-1"
@@ -659,4 +667,75 @@ dependencies: []
 // contains 是一个辅助函数，检查字符串是否包含子串
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || bytes.Contains([]byte(s), []byte(substr))))
+}
+
+func TestExecutionPlanMutatorsAreReadOnly(t *testing.T) {
+	root := t.TempDir()
+	projectID, taskID := "p1", "t1"
+	base := filepath.Join(root, projectID, "tasks", taskID, "execution-plan")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(base, "sentinel.txt")
+	before := []byte("unchanged")
+	if err := os.WriteFile(sentinel, before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewHandler(root)
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		method  string
+		path    string
+		handler gin.HandlerFunc
+	}{
+		{http.MethodPut, "/execution-plan", handler.UpdateExecutionPlan},
+		{http.MethodPut, "/steps/s1", handler.UpdatePlanStepStatus},
+		{http.MethodPost, "/submit", handler.SubmitExecutionPlan},
+		{http.MethodPost, "/approve", handler.ApproveExecutionPlan},
+		{http.MethodPost, "/reject", handler.RejectExecutionPlan},
+		{http.MethodPost, "/restore", handler.RestoreApproval},
+		{http.MethodPut, "/content", handler.UpdateExecutionPlanContent},
+		{http.MethodPost, "/reset", handler.ResetExecutionPlan},
+	}
+	for _, tc := range tests {
+		t.Run(tc.method+tc.path, func(t *testing.T) {
+			router := gin.New()
+			router.Handle(tc.method, "/api/v1/projects/:id/tasks/:task_id"+tc.path, tc.handler)
+			req := httptest.NewRequest(tc.method, "/api/v1/projects/"+projectID+"/tasks/"+taskID+tc.path, bytes.NewBufferString(`{"content":"mutate"}`))
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+			if response.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["error"] != "historical_resource_read_only" {
+				t.Fatalf("unexpected error body: %#v", body)
+			}
+			after, err := os.ReadFile(sentinel)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("historical mutator changed storage: %q %v", after, err)
+			}
+		})
+	}
+}
+
+func TestGetExecutionPlanDoesNotInitializeStorage(t *testing.T) {
+	root := t.TempDir()
+	handler := NewHandler(root)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/projects/:id/tasks/:task_id/execution-plan", handler.GetExecutionPlan)
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/p/tasks/t/execution-plan", nil)
+	router.ServeHTTP(response, req)
+	if response.Code != http.StatusNotFound && response.Code != http.StatusOK {
+		t.Fatalf("unexpected historical read status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "p", "tasks", "t")); !os.IsNotExist(err) {
+		t.Fatalf("historical read initialized storage: %v", err)
+	}
 }

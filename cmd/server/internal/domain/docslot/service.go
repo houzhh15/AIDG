@@ -2,6 +2,7 @@ package docslot
 
 import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/taskdocs"
+	"github.com/houzhh15/AIDG/cmd/server/internal/domain/tasklifecycle"
 )
 
 // UnifiedDocService 统一文档服务接口
@@ -95,6 +96,13 @@ func (s *unifiedDocServiceImpl) PathResolver() PathResolver {
 	return s.pathResolver
 }
 
+func valueOrZero(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
 // resolveAndValidate 解析并验证路径
 // 对于 ScopeTask 会返回错误，需要使用 resolveTaskPath
 func (s *unifiedDocServiceImpl) resolveAndValidate(scope DocumentScope, scopeID, slotKey string) (string, error) {
@@ -133,6 +141,9 @@ func (s *unifiedDocServiceImpl) Append(scope DocumentScope, scopeID, slotKey, co
 	// 委托给 DocService
 	meta, chunk, duplicate, err := s.docService.AppendWithPath(basePath, content, op, user, source, expectedVersion)
 	if err != nil {
+		if err.Error() == "version_mismatch" {
+			return nil, NewVersionMismatchError(scope, scopeID, slotKey, valueOrZero(expectedVersion), meta.Version)
+		}
 		return nil, WrapError(scope, scopeID, slotKey, err)
 	}
 
@@ -158,7 +169,7 @@ func (s *unifiedDocServiceImpl) Export(scope DocumentScope, scopeID, slotKey str
 	}
 
 	// 读取内容
-	content, meta, err := taskdocs.ExportWithPath(basePath)
+	content, meta, err := taskdocs.ExportReadOnlyWithPath(basePath)
 	if err != nil {
 		return nil, WrapError(scope, scopeID, slotKey, err)
 	}
@@ -180,7 +191,7 @@ func (s *unifiedDocServiceImpl) ListChunks(scope DocumentScope, scopeID, slotKey
 		return nil, nil, err
 	}
 
-	chunks, meta, err := s.docService.ListWithPath(basePath)
+	chunks, meta, err := taskdocs.ListChunksReadOnlyWithPath(basePath)
 	if err != nil {
 		return nil, nil, WrapError(scope, scopeID, slotKey, err)
 	}
@@ -206,6 +217,9 @@ func (s *unifiedDocServiceImpl) Squash(scope DocumentScope, scopeID, slotKey, us
 
 // AppendTask 任务文档追加
 func (s *unifiedDocServiceImpl) AppendTask(projectID, taskID, slotKey, content, user string, expectedVersion *int, op, source string) (*AppendResult, error) {
+	if slotKey == "review" {
+		return nil, &DocSlotError{Code: ErrCodeInvalidSlot, Message: "review is read-only in the generic document API", Scope: ScopeTask, ScopeID: projectID + "/" + taskID, SlotKey: slotKey, Err: ErrReadOnlySlot}
+	}
 	// 解析路径
 	basePath, err := s.resolveTaskPath(projectID, taskID, slotKey)
 	if err != nil {
@@ -215,6 +229,9 @@ func (s *unifiedDocServiceImpl) AppendTask(projectID, taskID, slotKey, content, 
 	// 委托给 DocService
 	meta, chunk, duplicate, err := s.docService.AppendWithPath(basePath, content, op, user, source, expectedVersion)
 	if err != nil {
+		if err.Error() == "version_mismatch" {
+			return nil, NewVersionMismatchError(ScopeTask, projectID+"/"+taskID, slotKey, valueOrZero(expectedVersion), meta.Version)
+		}
 		return nil, WrapError(ScopeTask, projectID+"/"+taskID, slotKey, err)
 	}
 
@@ -233,6 +250,13 @@ func (s *unifiedDocServiceImpl) AppendTask(projectID, taskID, slotKey, content, 
 
 // ExportTask 导出任务文档
 func (s *unifiedDocServiceImpl) ExportTask(projectID, taskID, slotKey string) (*ExportResult, error) {
+	if slotKey == "review" {
+		review, err := tasklifecycle.NewService(s.basePath, s.docService).Review(projectID, taskID)
+		if err != nil {
+			return nil, err
+		}
+		return &ExportResult{Content: review.Content, Version: review.Version, ETag: review.ETag, UpdatedAt: review.UpdatedAt, Exists: review.Exists}, nil
+	}
 	// 解析路径
 	basePath, err := s.resolveTaskPath(projectID, taskID, slotKey)
 	if err != nil {
@@ -240,7 +264,7 @@ func (s *unifiedDocServiceImpl) ExportTask(projectID, taskID, slotKey string) (*
 	}
 
 	// 读取内容
-	content, meta, err := taskdocs.ExportWithPath(basePath)
+	content, meta, err := taskdocs.ExportReadOnlyWithPath(basePath)
 	if err != nil {
 		return nil, WrapError(ScopeTask, projectID+"/"+taskID, slotKey, err)
 	}
@@ -262,7 +286,7 @@ func (s *unifiedDocServiceImpl) ListTaskChunks(projectID, taskID, slotKey string
 		return nil, nil, err
 	}
 
-	chunks, meta, err := s.docService.ListWithPath(basePath)
+	chunks, meta, err := taskdocs.ListChunksReadOnlyWithPath(basePath)
 	if err != nil {
 		return nil, nil, WrapError(ScopeTask, projectID+"/"+taskID, slotKey, err)
 	}

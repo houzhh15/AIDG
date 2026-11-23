@@ -1,27 +1,25 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, List, Card, Drawer, Badge, Modal, Form, Input } from 'antd';
+import { Tabs, Spin, Button, message, Descriptions, Tag, Space, Typography, Drawer, Badge, Modal, Form, Input } from 'antd';
 import {
   FileTextOutlined,
   EditOutlined,
   SaveOutlined,
   InfoCircleOutlined,
   ProjectOutlined,
-  MessageOutlined,
-  FolderOutlined,
   UserOutlined,
   AppstoreOutlined,
   ClockCircleOutlined,
   ReloadOutlined,
   BulbOutlined,
   VerticalAlignTopOutlined,
+  CheckCircleOutlined,
 } from '@ant-design/icons';
-import { getTaskDocument, saveTaskDocument, getProjectTask, getTaskPrompts, getExecutionPlan, getTaskSection, ProjectTask, TaskPrompt } from '../api/tasks';
+import { getTaskDocument, saveTaskDocument, getProjectTask, getExecutionPlan, getTaskSection, ProjectTask } from '../api/tasks';
 import { addCustomResource } from '../api/resourceApi';
 import { loadAuth } from '../api/auth';
 import MarkdownViewer from './MarkdownViewer';
 import ExecutionPlanView from './ExecutionPlanView';
-import TaskDocIncremental from './TaskDocIncremental';
-import TaskLinkedDocuments from './TaskLinkedDocuments';
+import TaskReviewPanel from './TaskReviewPanel';
 import SectionEditor from './SectionEditor';
 import DocumentTOC from './DocumentTOC';
 import TaskSummaryPanel from './TaskSummaryPanel';
@@ -35,11 +33,11 @@ const { Text } = Typography;
 interface Props {
   projectId: string;
   taskId: string;
-  liteMode?: boolean; // lite 模式下隐藏提示词记录、历史记录、关联文档
+  liteMode?: boolean; // 保留调用兼容；任务页在两种模式下使用同一组 Tab
 }
 
-const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false }) => {
-  const [activeTab, setActiveTab] = useState<'info' | 'requirements' | 'design' | 'test' | 'prompts' | 'incremental' | 'documents' | 'execution-plan'>('info');
+const TaskDocuments: React.FC<Props> = ({ projectId, taskId }) => {
+  const [activeTab, setActiveTab] = useState<'info' | 'requirements' | 'design' | 'test' | 'review' | 'execution-plan'>('info');
   const [showBackTop, setShowBackTop] = useState(false);
   const lastScrollElementRef = useRef<HTMLElement | null>(null);
   const [documents, setDocuments] = useState<Record<string, { 
@@ -59,9 +57,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
     test: { content: '', exists: false },
   });
   const [taskInfo, setTaskInfo] = useState<ProjectTask | null>(null);
-  const [prompts, setPrompts] = useState<TaskPrompt[]>([]);
   const [loading, setLoading] = useState(false);
-  const [promptsLoading, setPromptsLoading] = useState(false);
   const [executionPlanExists, setExecutionPlanExists] = useState(false);
   
   // 编辑模式状态：每个文档类型单独控制是否进入章节编辑模式
@@ -151,7 +147,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
     loading: boolean;
   } | null>(null);
 
-  const { refreshTrigger } = useTaskRefresh();
+  const { refreshTrigger, triggerRefresh } = useTaskRefresh();
 
   // 使用全局滚动监听 - 监听页面上所有的滚动事件
   useEffect(() => {
@@ -217,18 +213,15 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
     if (!projectId || !taskId) return;
     
     setLoading(true);
-    setPromptsLoading(true);
     
     try {
       // 并行请求所有数据
-      const [documentsResult, taskInfoResult, promptsResult, executionPlanResult] = await Promise.allSettled([
+      const [documentsResult, taskInfoResult, executionPlanResult] = await Promise.allSettled([
         // 1. 加载三个文档（requirements, design, test）
         loadDocumentsData(),
         // 2. 加载任务信息
         getProjectTask(projectId, taskId),
-        // 3. 加载提示词
-        getTaskPrompts(projectId, taskId),
-        // 4. 加载执行计划状态
+        // 3. 加载执行计划状态
         getExecutionPlan(projectId, taskId),
       ]);
 
@@ -257,19 +250,6 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
         setTaskInfo(null);
       }
 
-      // 处理提示词
-      if (promptsResult.status === 'fulfilled') {
-        setPrompts(promptsResult.value.data || []);
-      } else {
-        // 对403/500等权限/服务器错误不显示提示
-        const error = promptsResult.reason;
-        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
-          message.error('加载提示词失败');
-        }
-        console.error(promptsResult.reason);
-        setPrompts([]);
-      }
-
       // 处理执行计划状态
       if (executionPlanResult.status === 'fulfilled') {
         const executionPlan = executionPlanResult.value.data;
@@ -287,7 +267,6 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
       console.error(error);
     } finally {
       setLoading(false);
-      setPromptsLoading(false);
     }
   };
 
@@ -331,25 +310,6 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
       }
       console.error(error);
       setTaskInfo(null);
-    }
-  };
-
-  const loadPrompts = async () => {
-    if (!projectId || !taskId) return;
-    setPromptsLoading(true);
-    
-    try {
-      const result = await getTaskPrompts(projectId, taskId);
-      setPrompts(result.data || []);
-    } catch (error: any) {
-      // 对403/500等权限/服务器错误不显示提示
-      if (error?.response?.status !== 403 && error?.response?.status !== 500) {
-        message.error('加载提示词失败');
-      }
-      console.error(error);
-      setPrompts([]);
-    } finally {
-      setPromptsLoading(false);
     }
   };
 
@@ -631,18 +591,15 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
     if (!projectId || !taskId) return;
 
     setLoading(true);
-    setPromptsLoading(true);
 
     try {
       // 并行请求所有数据
-      const [documentsResult, taskInfoResult, promptsResult, executionPlanResult] = await Promise.allSettled([
+      const [documentsResult, taskInfoResult, executionPlanResult] = await Promise.allSettled([
         // 1. 加载三个文档（requirements, design, test）
         loadDocumentsData(),
         // 2. 加载任务信息
         getProjectTask(projectId, taskId),
-        // 3. 加载提示词
-        getTaskPrompts(projectId, taskId),
-        // 4. 加载执行计划状态
+        // 3. 加载执行计划状态
         getExecutionPlan(projectId, taskId),
       ]);
 
@@ -671,19 +628,6 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
         setTaskInfo(null);
       }
 
-      // 处理提示词
-      if (promptsResult.status === 'fulfilled') {
-        setPrompts(promptsResult.value.data || []);
-      } else {
-        // 对403/500等权限/服务器错误不显示提示
-        const error = promptsResult.reason;
-        if (error?.response?.status !== 403 && error?.response?.status !== 500) {
-          message.error('加载提示词失败');
-        }
-        console.error(promptsResult.reason);
-        setPrompts([]);
-      }
-
       // 处理执行计划状态
       if (executionPlanResult.status === 'fulfilled') {
         const executionPlan = executionPlanResult.value.data;
@@ -703,7 +647,6 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
       console.error(error);
     } finally {
       setLoading(false);
-      setPromptsLoading(false);
     }
   };
 
@@ -1099,62 +1042,13 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
     );
   };
 
-  const renderPrompts = () => {
-    return (
-      <div style={{ padding: '16px' }}>
-        <Spin spinning={promptsLoading}>
-          {prompts.length === 0 ? (
-            <div style={{ textAlign: 'center', color: '#999', padding: '40px 0' }}>
-              <MessageOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
-              <div>暂无提示词记录</div>
-            </div>
-          ) : (
-            <List
-              dataSource={prompts}
-              renderItem={(prompt) => (
-                <List.Item>
-                  <Card
-                    style={{ width: '100%' }}
-                    size="small"
-                    title={
-                      <Space>
-                        <UserOutlined />
-                        <Typography.Text strong>{prompt.username}</Typography.Text>
-                        <Typography.Text type="secondary">
-                          {new Date(prompt.created_at).toLocaleString('zh-CN')}
-                        </Typography.Text>
-                      </Space>
-                    }
-                  >
-                    <Typography.Paragraph
-                      style={{
-                        margin: 0,
-                        whiteSpace: 'pre-wrap',
-                        backgroundColor: '#fafafa',
-                        padding: '12px',
-                        borderRadius: '6px',
-                        border: '1px solid #f0f0f0'
-                      }}
-                    >
-                      {prompt.content}
-                    </Typography.Paragraph>
-                  </Card>
-                </List.Item>
-              )}
-            />
-          )}
-        </Spin>
-      </div>
-    );
-  };
-
   const tabItems = [
     {
       key: 'info',
       label: (
         <span>
           <InfoCircleOutlined />
-          基本信息
+          描述
         </span>
       ),
       children: (
@@ -1172,7 +1066,7 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
       label: (
         <span>
           <FileTextOutlined />
-          需求文档
+          需求约束
           {documents.requirements.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
         </span>
       ),
@@ -1183,18 +1077,52 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
       label: (
         <span>
           <FileTextOutlined />
-          设计文档
+          架构与编码约束
           {documents.design.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
         </span>
       ),
       children: <div key={`design-${refreshTrigger}`}>{renderDocument('design')}</div>,
     },
     {
+      key: 'test',
+      label: (
+        <span>
+          <FileTextOutlined />
+          验收标准
+          {documents.test.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
+        </span>
+      ),
+      children: <div key={`test-${refreshTrigger}`}>{renderDocument('test')}</div>,
+    },
+    {
+      key: 'review',
+      label: (
+        <span>
+          <CheckCircleOutlined />
+          审核结果
+        </span>
+      ),
+      children: (
+        <div style={{ padding: 16 }}>
+          <TaskReviewPanel
+            projectId={projectId}
+            taskId={taskId}
+            taskRevision={taskInfo?.revision}
+            readyCount={taskInfo?.ready_count ?? 0}
+            onChanged={() => {
+              void loadTaskInfo();
+              triggerRefresh();
+            }}
+          />
+        </div>
+      ),
+    },
+    {
       key: 'execution-plan',
       label: (
         <span>
           <ProjectOutlined />
-          执行计划
+          历史执行计划
           {executionPlanExists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
         </span>
       ),
@@ -1207,58 +1135,6 @@ const TaskDocuments: React.FC<Props> = ({ projectId, taskId, liteMode = false })
         </div>
       )
     },
-    {
-      key: 'test',
-      label: (
-        <span>
-          <FileTextOutlined />
-          测试文档
-          {documents.test.exists && <span style={{ color: '#52c41a', marginLeft: 4 }}>●</span>}
-        </span>
-      ),
-      children: <div key={`test-${refreshTrigger}`}>{renderDocument('test')}</div>,
-    },
-    // lite 模式下隐藏提示词记录、历史记录、关联文档
-    ...(!liteMode ? [
-      {
-        key: 'prompts',
-        label: (
-          <span>
-            <MessageOutlined />
-            提示词记录
-            {prompts.length > 0 && <span style={{ color: '#1890ff', marginLeft: 4 }}>({prompts.length})</span>}
-          </span>
-        ),
-        children: renderPrompts(),
-      },
-      {
-        key: 'incremental',
-        label: (
-          <span>
-            <FileTextOutlined />
-            历史记录
-          </span>
-        ),
-        children: <div style={{height:'70vh'}}><TaskDocIncremental projectId={projectId} taskId={taskId} /></div>
-      },
-      {
-        key: 'documents',
-        label: (
-          <span>
-            <FolderOutlined />
-            关联文档
-          </span>
-        ),
-        children: (
-          <div style={{ height: '80vh', padding: '16px 0' }}>
-            <TaskLinkedDocuments
-              projectId={projectId}
-              taskId={taskId}
-            />
-          </div>
-        )
-      }
-    ] : [])
   ];
 
   if (!taskId) {

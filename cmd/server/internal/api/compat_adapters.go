@@ -51,10 +51,11 @@ func HandlePutProjectFeatureListCompat(reg *projects.ProjectRegistry, svc docslo
 		}
 
 		var req struct {
-			Content string `json:"content"`
+			Content         string `json:"content"`
+			ExpectedVersion *int   `json:"expected_version,omitempty"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil || (req.ExpectedVersion == nil || *req.ExpectedVersion < 0) {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
@@ -65,7 +66,7 @@ func HandlePutProjectFeatureListCompat(reg *projects.ProjectRegistry, svc docslo
 			user = "legacy_api"
 		}
 
-		_, err := svc.Append(docslot.ScopeProject, id, "feature_list", req.Content, user, nil, "replace", "legacy_api")
+		_, err := svc.Append(docslot.ScopeProject, id, "feature_list", req.Content, user, req.ExpectedVersion, "replace_full", "legacy_api")
 		if err != nil {
 			handleCompatError(c, err)
 			return
@@ -91,10 +92,11 @@ func HandlePutProjectArchitectureDesignCompat(reg *projects.ProjectRegistry, svc
 		}
 
 		var req struct {
-			Content string `json:"content"`
+			Content         string `json:"content"`
+			ExpectedVersion *int   `json:"expected_version,omitempty"`
 		}
 
-		if err := c.ShouldBindJSON(&req); err != nil {
+		if err := BindDocumentWrite(c, &req); err != nil || (req.ExpectedVersion == nil || *req.ExpectedVersion < 0) {
 			badRequestResponse(c, "invalid request body")
 			return
 		}
@@ -104,7 +106,7 @@ func HandlePutProjectArchitectureDesignCompat(reg *projects.ProjectRegistry, svc
 			user = "legacy_api"
 		}
 
-		_, err := svc.Append(docslot.ScopeProject, id, "architecture_design", req.Content, user, nil, "replace", "legacy_api")
+		_, err := svc.Append(docslot.ScopeProject, id, "architecture_design", req.Content, user, req.ExpectedVersion, "replace_full", "legacy_api")
 		if err != nil {
 			handleCompatError(c, err)
 			return

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,16 +66,18 @@ func SaveProjects(reg *ProjectRegistry) error {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 
-	list := []persistedProject{}
+	list := make([]persistedProject, 0, len(reg.m))
 	for _, p := range reg.m {
 		list = append(list, persistedProject{
-			ID:          p.ID,
-			Name:        p.Name,
-			ProductLine: p.ProductLine,
-			CreatedAt:   p.CreatedAt,
-			UpdatedAt:   p.UpdatedAt,
+			ID:            p.ID,
+			Name:          p.Name,
+			ProductLine:   p.ProductLine,
+			SchemaVersion: p.SchemaVersion,
+			CreatedAt:     p.CreatedAt,
+			UpdatedAt:     p.UpdatedAt,
 		})
 	}
+	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 
 	b, err := json.MarshalIndent(gin.H{"projects": list}, "", "  ")
 	if err != nil {
@@ -116,11 +119,12 @@ func LoadProjects(reg *ProjectRegistry) error {
 
 	for _, pp := range wrapper.Projects {
 		reg.m[pp.ID] = &Project{
-			ID:          pp.ID,
-			Name:        pp.Name,
-			ProductLine: pp.ProductLine,
-			CreatedAt:   pp.CreatedAt,
-			UpdatedAt:   pp.UpdatedAt,
+			ID:            pp.ID,
+			Name:          pp.Name,
+			ProductLine:   pp.ProductLine,
+			SchemaVersion: pp.SchemaVersion,
+			CreatedAt:     pp.CreatedAt,
+			UpdatedAt:     pp.UpdatedAt,
 		}
 	}
 

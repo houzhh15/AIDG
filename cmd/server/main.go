@@ -40,8 +40,10 @@ import (
 	idpsync "github.com/houzhh15/AIDG/cmd/server/internal/idp/sync"
 	"github.com/houzhh15/AIDG/cmd/server/internal/meetingv2"
 	"github.com/houzhh15/AIDG/cmd/server/internal/middleware"
+	"github.com/houzhh15/AIDG/cmd/server/internal/migration"
 	"github.com/houzhh15/AIDG/cmd/server/internal/orchestrator"
 	"github.com/houzhh15/AIDG/cmd/server/internal/prompt"
+	"github.com/houzhh15/AIDG/cmd/server/internal/publish"
 	"github.com/houzhh15/AIDG/cmd/server/internal/resource"
 	"github.com/houzhh15/AIDG/cmd/server/internal/services"
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
@@ -139,7 +141,7 @@ func main() {
 
 	// Initialize multi-level document handler
 	docHandler := documents.NewHandler(projectsRoot)
-	appLogger.Info("multi-level document handler ready", "baseDir", projectsRoot)
+	appLogger.Info("multi-level document handler ready")
 
 	// Initialize user manager
 	userStoreDir := cfg.Data.UsersDir
@@ -158,7 +160,7 @@ func main() {
 	// 触发文件路径：MCP Server 会监听此文件变化来重新加载 Prompts
 	promptsTriggerPath := filepath.Join(dataRoot, ".prompts_changed")
 	promptsHandler := api.NewPromptsHandler(promptStorage, promptPermChecker, userManager, promptsTriggerPath)
-	appLogger.Info("prompt system ready", "baseDir", dataRoot, "triggerPath", promptsTriggerPath)
+	appLogger.Info("prompt system ready")
 
 	// The bootstrap password is required only while the user store is empty.
 	adminPassword := cfg.Security.AdminDefaultPassword
@@ -178,13 +180,21 @@ func main() {
 		var lockErr error
 		meetingV2ServiceLock, lockErr = meetingv2.AcquireServiceLock(cfg.Data.MeetingsDir)
 		if lockErr != nil {
-			appLogger.Error("meeting v2 data root lock failed; stop every old/new instance sharing this volume before upgrade", "error", lockErr)
+			appLogger.Error("meeting v2 data root lock failed; stop every old/new instance sharing this volume before upgrade")
 			os.Exit(1)
 		}
 	}
 
 	// Load task and project registries
 	projects.InitPaths()
+	if err := publish.Recover(projects.ProjectsRoot); err != nil {
+		appLogger.Error("publish recovery failed")
+		os.Exit(1)
+	}
+	if err := migration.Recover(projects.ProjectsRoot); err != nil {
+		appLogger.Error("schema migration recovery failed", "error", err)
+		os.Exit(1)
+	}
 	meetings.InitPaths()
 	syncdomain.InitPaths()
 	meetingsReg := meetings.NewRegistry()
@@ -335,6 +345,7 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
+	r.Use(projectMutationAuditMiddleware(auditLogger))
 
 	// Public runtime metadata used before login.
 	startTime := time.Now()
@@ -348,10 +359,9 @@ func main() {
 		})
 	})
 
-	// Add Whisper service endpoints (no authentication required)
+	// Read-only Whisper service endpoints remain public for pre-login diagnostics.
 	r.GET("/api/v1/services/whisper/models", api.HandleGetWhisperModels())
 	r.GET("/api/v1/services/whisper/models-extended", api.HandleGetWhisperModelsExtended())
-	r.POST("/api/v1/services/whisper/models/download", api.HandleDownloadWhisperModel())
 
 	// Services Status API (no authentication required)
 	// 检查服务部署状态（whisper 和 deps-service）
@@ -365,14 +375,17 @@ func main() {
 		c.JSON(http.StatusOK, status)
 	})
 
-	// Debug endpoint (no authentication required for testing)
-	r.POST("/api/v1/debug/tasks/:id/enqueue/:chunk_id", api.HandleDebugEnqueueChunk(meetingsReg))
-
 	// Tag Handler for document version management
 	tagHandler := api.NewTagHandler(projectsRoot)
 
 	// Setup authentication and routes
 	setupAuthMiddleware(r, userManager, userRoleService, permissionInjector, baseDir, logInstance.With("component", "auth-middleware"))
+	setupPublishGateMiddleware(r)
+	// Side-effecting service operations are authenticated and scope-gated.
+	r.POST("/api/v1/services/whisper/models/download", api.HandleDownloadWhisperModel())
+	if gin.Mode() == gin.DebugMode {
+		r.POST("/api/v1/debug/tasks/:id/enqueue/:chunk_id", api.HandleDebugEnqueueChunk(meetingsReg))
+	}
 	if meetingV2Handler != nil {
 		meetingV2Handler.Register(r.Group("/api/v1/meeting-sessions"))
 	}
@@ -385,9 +398,9 @@ func main() {
 	}
 	indexPath := filepath.Join(frontendDistDir, "index.html")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		appLogger.Warn("frontend index.html not found - run 'npm run build' in frontend directory", "path", indexPath)
+		appLogger.Warn("frontend index.html not found - run 'npm run build' in frontend directory")
 	} else {
-		appLogger.Info("frontend dist directory ready", "path", frontendDistDir)
+		appLogger.Info("frontend dist directory ready")
 	}
 
 	// Create HTTP server with graceful shutdown
@@ -464,7 +477,7 @@ func main() {
 	}
 	if meetingV2ServiceLock != nil {
 		if err := meetingV2ServiceLock.Close(); err != nil {
-			appLogger.Error("meeting v2 data root unlock failed", "error", err)
+			appLogger.Error("meeting v2 data root unlock failed")
 			os.Exit(1)
 		}
 	}
@@ -495,12 +508,63 @@ func hasAnyProjectPermission(userRoleService services.UserRoleService, username,
 	return false
 }
 
-func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleService services.UserRoleService, injector services.PermissionInjector, projectsRoot string, authLogger *slog.Logger) {
-	// Route scope mapping
-	routeScopes := map[string][]string{
+func setupPublishGateMiddleware(r *gin.Engine) {
+	r.Use(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		if (!strings.HasPrefix(path, "/api/v1/projects") && !strings.HasPrefix(path, "/internal/api/v1/projects")) || (c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/publish")) {
+			c.Next()
+			return
+		}
+		unlock := publish.ReadLock(c.Param("id"))
+		defer unlock()
+		c.Next()
+	})
+}
+
+func isExplicitPublicRoute(method, path string) bool {
+	key := method + " " + path
+	switch key {
+	case "GET /api/v1/environment/status",
+		"POST /api/v1/login",
+		"GET /api/v1/auth/providers",
+		"GET /api/v1/app/config",
+		"GET /api/v1/app/runtime",
+		"GET /api/v1/services/whisper/models",
+		"GET /api/v1/services/whisper/models-extended",
+		"GET /api/v1/services/whisper/health",
+		"GET /api/v1/services/status",
+		"GET /api/v1/health",
+		"GET /api/v1/users/resources/:username/*filepath":
+		return true
+	default:
+		return strings.HasPrefix(path, "/api/v1/idp/callback/")
+	}
+}
+
+func configuredRouteScopes() map[string][]string {
+	return map[string][]string{
 		"GET /api/v1/me/token": {users.ScopeMeetingRead},
 		// GET /api/v1/users 不需要特殊权限，所有已认证用户都可以获取用户列表（用于任务分配等场景）
 		"POST /api/v1/users": {users.ScopeUserManage},
+		// Identity provider administration.
+		"GET /api/v1/identity-providers":                        {users.ScopeIdpRead},
+		"GET /api/v1/identity-providers/:id":                    {users.ScopeIdpRead},
+		"POST /api/v1/identity-providers":                       {users.ScopeIdpWrite},
+		"PUT /api/v1/identity-providers/:id":                    {users.ScopeIdpWrite},
+		"DELETE /api/v1/identity-providers/:id":                 {users.ScopeIdpWrite},
+		"POST /api/v1/identity-providers/:id/test":              {users.ScopeIdpWrite},
+		"POST /api/v1/identity-providers/:id/sync":              {users.ScopeIdpWrite},
+		"GET /api/v1/identity-providers/:id/sync/logs":          {users.ScopeIdpRead},
+		"GET /api/v1/identity-providers/:id/sync/status":        {users.ScopeIdpRead},
+		"POST /api/v1/identity-providers/test":                  {users.ScopeIdpWrite},
+		"GET /api/v1/users/:id":                                 {users.ScopeUserManage},
+		"GET /api/v1/users/:username/roles":                     {users.ScopeUserManage},
+		"GET /api/v1/users/:username/user-roles":                {users.ScopeUserManage},
+		"GET /api/v1/users/:username/resources":                 {users.ScopeUserManage},
+		"POST /api/v1/users/:username/resources":                {users.ScopeUserManage},
+		"PUT /api/v1/users/:username/resources/:resource_id":    {users.ScopeUserManage},
+		"DELETE /api/v1/users/:username/resources/:resource_id": {users.ScopeUserManage},
+		"POST /api/v1/users/resources/:username/retrieve":       {users.ScopeUserManage},
 		// Role Management - 需要用户管理权限 (query parameter style)
 		"POST /api/v1/roles": {users.ScopeUserManage}, "GET /api/v1/roles": {users.ScopeUserManage},
 		"GET /api/v1/roles/:role_id": {users.ScopeUserManage}, "PUT /api/v1/roles/:role_id": {users.ScopeUserManage}, "DELETE /api/v1/roles/:role_id": {users.ScopeUserManage},
@@ -535,9 +599,20 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/projects/:id/tasks":           {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/next-incomplete": {users.ScopeTaskRead},
 		"GET /api/v1/projects/:id/tasks/:task_id":        {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id": {users.ScopeTaskWrite},
-		"DELETE /api/v1/projects/:id/tasks/:task_id":           {users.ScopeTaskWrite},
-		"POST /api/v1/projects/:id/tasks/:task_id/transfer":    {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
+		"DELETE /api/v1/projects/:id/tasks/:task_id":                         {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/publish":                                  {users.ScopeProjectAdmin},
+		"POST /api/v1/services/whisper/models/download":                      {users.ScopeProjectAdmin},
+		"POST /api/v1/debug/tasks/:id/enqueue/:chunk_id":                     {users.ScopeProjectAdmin},
+		"POST /api/v1/projects/:id/migrations/schema/preview":                {users.ScopeProjectAdmin},
+		"POST /api/v1/projects/:id/migrations/schema/execute":                {users.ScopeProjectAdmin},
+		"POST /api/v1/projects/:id/tasks/:task_id/migrations/schema/preview": {users.ScopeProjectAdmin},
+		"POST /api/v1/projects/:id/tasks/:task_id/migrations/schema/execute": {users.ScopeProjectAdmin},
+		"GET /api/v1/projects/:id/tasks/:task_id/review":                     {users.ScopeTaskRead},
+		"POST /api/v1/projects/:id/tasks/:task_id/review":                    {users.ScopeTaskWrite},
+		"PUT /api/v1/projects/:id/tasks/:task_id/review":                     {users.ScopeTaskWrite},
+		"PUT /api/v1/projects/:id/tasks/:task_id/review/result":              {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/transfer":                  {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:id/tasks/:task_id/requirements":               {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/requirements": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/design": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskRead}, "PUT /api/v1/projects/:id/tasks/:task_id/test": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/docs/:docType/export": {users.ScopeTaskRead}, "POST /api/v1/projects/:id/tasks/:task_id/docs/:docType/append": {users.ScopeTaskWrite},
@@ -618,29 +693,34 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"GET /api/v1/tasks/:id/audio":    {users.ScopeMeetingRead},
 		"PATCH /api/v1/tasks/:id/rename": {users.ScopeMeetingWrite},
 		// Audio upload routes - 浏览器录音上传
-		"POST /api/v1/meetings/:meeting_id/audio/upload":                                          {users.ScopeMeetingWrite},
-		"POST /api/v1/meetings/:meeting_id/audio/upload-file":                                     {users.ScopeMeetingWrite},
-		"GET /api/v1/devices/avfoundation":                                                        {users.ScopeMeetingRead},
-		"GET /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan":                 {users.ScopeTaskRead},
-		"POST /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan":                {users.ScopeTaskWrite},
-		"PUT /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan":                 {users.ScopeTaskWrite},
-		"POST /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan/steps/:step_id": {users.ScopeTaskWrite},
-		"PUT /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan/steps/:step_id":  {users.ScopeTaskWrite},
-		"GET /internal/api/v1/projects/:project_id/tasks/:task_id/execution-plan/next-step":       {users.ScopeTaskWrite},
-		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan":                                  {users.ScopeTaskRead},
-		"PUT /api/v1/projects/:id/tasks/:task_id/execution-plan":                                  {users.ScopeTaskWrite},
-		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/submit":                          {users.ScopeTaskWrite},
-		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/approve":                         {users.ScopeTaskWrite},
-		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reject":                          {users.ScopeTaskWrite},
-		"GET /api/v1/sync/prepare":                                                                {users.ScopeUserManage}, "POST /api/v1/sync": {users.ScopeUserManage},
+		"POST /api/v1/meetings/:meeting_id/audio/upload":                                         {users.ScopeMeetingWrite},
+		"POST /api/v1/meetings/:meeting_id/audio/upload-file":                                    {users.ScopeMeetingWrite},
+		"GET /api/v1/devices/avfoundation":                                                       {users.ScopeMeetingRead},
+		"GET /internal/api/v1/projects/:id/tasks/:task_id/execution-plan":                        {users.ScopeTaskRead},
+		"POST /internal/api/v1/projects/:id/tasks/:task_id/execution-plan":                       {users.ScopeTaskWrite},
+		"PUT /internal/api/v1/projects/:id/tasks/:task_id/execution-plan":                        {users.ScopeTaskWrite},
+		"POST /internal/api/v1/projects/:id/tasks/:task_id/execution-plan/steps/:step_id/status": {users.ScopeTaskWrite},
+		"PUT /internal/api/v1/projects/:id/tasks/:task_id/execution-plan/steps/:step_id/status":  {users.ScopeTaskWrite},
+		"GET /internal/api/v1/projects/:id/tasks/:task_id/execution-plan/next-step":              {users.ScopeTaskRead},
+		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan":                                 {users.ScopeTaskRead},
+		"PUT /api/v1/projects/:id/tasks/:task_id/execution-plan":                                 {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/submit":                         {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/approve":                        {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reject":                         {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/restore-approval":               {users.ScopeTaskWrite},
+		"PUT /api/v1/projects/:id/tasks/:task_id/execution-plan/content":                         {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/reset":                          {users.ScopeTaskWrite},
+		"GET /api/v1/sync/prepare":                                                               {users.ScopeUserManage}, "POST /api/v1/sync": {users.ScopeUserManage},
 		"POST /api/v1/admin/reload": {users.ScopeUserManage},
 		// 远端管理API
-		"GET /api/v1/remotes":           {users.ScopeUserManage},
-		"POST /api/v1/remotes":          {users.ScopeUserManage},
-		"PUT /api/v1/remotes/:id":       {users.ScopeUserManage},
-		"DELETE /api/v1/remotes/:id":    {users.ScopeUserManage},
-		"POST /api/v1/remotes/:id/test": {users.ScopeUserManage},
-		"POST /api/v1/remotes/test-url": {users.ScopeUserManage},
+		"GET /api/v1/remotes":               {users.ScopeUserManage},
+		"POST /api/v1/remotes":              {users.ScopeUserManage},
+		"PUT /api/v1/remotes/:id":           {users.ScopeUserManage},
+		"DELETE /api/v1/remotes/:id":        {users.ScopeUserManage},
+		"POST /api/v1/remotes/:id/test":     {users.ScopeUserManage},
+		"POST /api/v1/remotes/:id/refresh":  {users.ScopeUserManage},
+		"GET /api/v1/remotes/:id/resources": {users.ScopeUserManage},
+		"POST /api/v1/remotes/test-url":     {users.ScopeUserManage},
 		// 资源拷贝API
 		"POST /api/v1/copy/push":     {users.ScopeUserManage},
 		"GET /api/v1/copy/resources": {users.ScopeUserManage},
@@ -686,28 +766,127 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		"POST /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName/switch": {users.ScopeTaskWrite},
 		"GET /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName":         {users.ScopeTaskRead},
 		"DELETE /api/v1/projects/:id/tasks/:task_id/execution-plan/tags/:tagName":      {users.ScopeTaskWrite},
-	}
 
-	matchRouteKey := func(method, path string) (scopes []string, ok bool) {
-		for k, sc := range routeScopes {
-			parts := strings.SplitN(k, " ", 2)
-			if len(parts) != 2 || parts[0] != method {
-				continue
-			}
-			pattern := parts[1]
-			if pattern == path {
-				return sc, true
-			}
-			rx := regexp.MustCompile(`:[^/]+`)
-			reg := rx.ReplaceAllString(pattern, `[^/]+`)
-			reg = strings.ReplaceAll(reg, `*`, `.*`)
-			reg = "^" + reg + "$"
-			if ok, _ := regexp.MatchString(reg, path); ok {
-				return sc, true
-			}
-		}
-		return nil, false
+		// Compatibility and auxiliary endpoints remain fail-closed with the nearest domain scope.
+		"GET /api/v1/projects/:id/feature-list/legacy":                                   {users.ScopeProjectDocRead},
+		"GET /api/v1/projects/:id/architecture-design/legacy":                            {users.ScopeProjectDocRead},
+		"GET /api/v1/projects/:id/tech-design/legacy":                                    {users.ScopeProjectDocRead},
+		"POST /api/v1/projects/:id/feature-list/squash":                                  {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/feature-list/toggle-legacy-dual-write":                {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/architecture-design/squash":                           {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/architecture-design/toggle-legacy-dual-write":         {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/tech-design/squash":                                   {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/tech-design/toggle-legacy-dual-write":                 {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/requirements/squash":                   {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/requirements/toggle-legacy-dual-write": {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/design/squash":                         {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/design/toggle-legacy-dual-write":       {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/test/squash":                           {users.ScopeTaskWrite},
+		"POST /api/v1/projects/:id/tasks/:task_id/test/toggle-legacy-dual-write":         {users.ScopeTaskWrite},
+		"GET /api/v1/projects/:projectId/versions":                                       {users.ScopeProjectDocRead},
+		"POST /api/v1/projects/:projectId/versions":                                      {users.ScopeProjectDocWrite},
+		"GET /api/v1/projects/:projectId/versions/:id":                                   {users.ScopeProjectDocRead},
+		"PUT /api/v1/projects/:projectId/versions/:id":                                   {users.ScopeProjectDocWrite},
+		"DELETE /api/v1/projects/:projectId/versions/:id":                                {users.ScopeProjectDocWrite},
+		"POST /api/v1/projects/:projectId/versions/:id/status":                           {users.ScopeProjectDocWrite},
+		"GET /api/v1/projects/:projectId/tasks/:taskId/tags":                             {users.ScopeTaskRead},
+		"GET /api/v1/projects/:projectId/tasks/:taskId/execution-plan/tags":              {users.ScopeTaskRead},
+		"POST /api/v1/projects/:projectId/tasks/:taskId/execution-plan/tags":             {users.ScopeTaskWrite},
+		"DELETE /api/v1/projects/:projectId/tasks/:taskId/execution-plan/tags/:tagName":  {users.ScopeTaskWrite},
+		"GET /api/v1/meetings/active":                                                    {users.ScopeMeetingRead},
+		"GET /api/v1/meetings/status-stats":                                              {users.ScopeMeetingRead},
+		"GET /api/v1/meetings/:id/export/:format":                                        {users.ScopeMeetingRead},
+		"POST /api/v1/meetings/:id/chunks/:chunk_id/redo":                                {users.ScopeMeetingWrite},
+		"GET /api/v1/internal/storage":                                                   {users.ScopeMeetingRead},
+		"GET /api/v1/internal/speaker-profiles":                                          {users.ScopeMeetingRead},
+		"POST /api/v1/internal/speaker-profiles":                                         {users.ScopeMeetingWrite},
+		"GET /api/v1/internal/speaker-profiles/:id":                                      {users.ScopeMeetingRead},
+		"PUT /api/v1/internal/speaker-profiles/:id":                                      {users.ScopeMeetingWrite},
+		"DELETE /api/v1/internal/speaker-profiles/:id":                                   {users.ScopeMeetingWrite},
+		"POST /api/v1/internal/speaker-profiles/:id/samples":                             {users.ScopeMeetingWrite},
+		"DELETE /api/v1/internal/speaker-profiles/:id/samples/:sample_id":                {users.ScopeMeetingWrite},
+		"POST /api/v1/copy":                  {users.ScopeProjectAdmin},
+		"GET /api/v1/copy/progress/:task_id": {users.ScopeProjectAdmin},
+		"GET /api/v1/copy/history":           {users.ScopeProjectAdmin},
+		"POST /api/v1/remotes/:id/resources/:resource_type/:resource_id/copy": {users.ScopeProjectAdmin},
+		"POST /api/v1/sync/receive":                                                 {users.ScopeProjectAdmin},
+		"POST /api/v1/copy/receive":                                                 {users.ScopeProjectAdmin},
+		"GET /api/v1/tasks/:id/execution-plan":                                      {users.ScopeTaskRead},
+		"POST /api/v1/tasks/:id/execution-plan/toggle-legacy-dual-write":            {users.ScopeTaskWrite},
+		"POST /api/v1/tasks/:id/legacy-documents/:slot/toggle-legacy-dual-write":    {users.ScopeTaskWrite},
+		"GET /api/v1/users/resources/:username/:type/:name":                         {users.ScopeUserManage},
+		"GET /api/v1/users/:username/resources/:resource_id":                        {users.ScopeUserManage},
+		"GET /api/v1/remotes/:id":                                                   {users.ScopeUserManage},
+		"POST /api/v1/sync/dispatch":                                                {users.ScopeProjectAdmin},
+		"GET /api/v1/projects/:id/legacy-documents/:doc_id":                         {users.ScopeProjectDocRead},
+		"PATCH /api/v1/projects/:id/tasks/:task_id/requirements/chunks/:seq/toggle": {users.ScopeTaskWrite},
+		"PATCH /api/v1/projects/:id/tasks/:task_id/design/chunks/:seq/toggle":       {users.ScopeTaskWrite},
+		"PATCH /api/v1/projects/:id/tasks/:task_id/test/chunks/:seq/toggle":         {users.ScopeTaskWrite},
+		"GET /api/v1/tasks/:id/architecture-design":                                 {users.ScopeMeetingRead},
+		"PUT /api/v1/tasks/:id/architecture-design":                                 {users.ScopeMeetingWrite},
+		"POST /api/v1/tasks/:id/copy-architecture-design":                           {users.ScopeMeetingWrite},
+		"POST /api/v1/tasks/:id/copy-feature-list":                                  {users.ScopeMeetingWrite},
+		"POST /api/v1/tasks/:id/copy-tech-design":                                   {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/architecture-design/history":                         {users.ScopeMeetingRead},
+		"DELETE /api/v1/tasks/:id/architecture-design/history/:version":             {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/feature-list/history":                                {users.ScopeMeetingRead},
+		"DELETE /api/v1/tasks/:id/feature-list/history/:version":                    {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/meeting-summary/history":                             {users.ScopeMeetingRead},
+		"DELETE /api/v1/tasks/:id/meeting-summary/history/:version":                 {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/polish/history":                                      {users.ScopeMeetingRead},
+		"DELETE /api/v1/tasks/:id/polish/history/:version":                          {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/tech-design/history":                                 {users.ScopeMeetingRead},
+		"DELETE /api/v1/tasks/:id/tech-design/history/:version":                     {users.ScopeMeetingWrite},
+		"GET /api/v1/tasks/:id/topic/history":                                       {users.ScopeMeetingRead},
+		"DELETE /api/v1/tasks/:id/topic/history/:version":                           {users.ScopeMeetingWrite},
+		"POST /internal/api/v1/asr/callback":                                        {users.ScopeMeetingWrite},
+		"POST /internal/api/v1/asr/segment":                                         {users.ScopeMeetingWrite},
+		"POST /internal/api/v1/enrichment/diarization":                              {users.ScopeMeetingWrite},
+		"POST /internal/api/v1/enrichment/topics":                                   {users.ScopeMeetingWrite},
+		"POST /internal/api/v1/enrichment/quality":                                  {users.ScopeMeetingWrite},
+		"POST /internal/api/v1/meetings/:id/retry-processing":                       {users.ScopeMeetingWrite},
 	}
+}
+
+func authenticatedOnlyRouteKeys() map[string]struct{} {
+	return map[string]struct{}{
+		"GET /api/v1/projects":                  {},
+		"GET /api/v1/users":                     {},
+		"GET /api/v1/departments":               {},
+		"GET /api/v1/identity-providers/active": {},
+		"GET /api/v1/user/current-task":         {},
+		"PUT /api/v1/user/current-task":         {},
+		"GET /api/v1/user/settings":             {},
+		"PUT /api/v1/user/settings":             {},
+		"GET /api/v1/user/embedding-settings":   {},
+		"GET /api/v1/mcp/prompts":               {},
+		"GET /api/v1/mcp/prompts/:name":         {},
+		"GET /api/v1/mcp/resources":             {},
+	}
+}
+
+func configuredScopesForRoute(routeScopes map[string][]string, method, path string) (scopes []string, ok bool) {
+	for key, configuredScopes := range routeScopes {
+		parts := strings.SplitN(key, " ", 2)
+		if len(parts) != 2 || parts[0] != method {
+			continue
+		}
+		pattern := parts[1]
+		if pattern == path {
+			return configuredScopes, true
+		}
+		reg := regexp.MustCompile(`:[^/]+`).ReplaceAllString(pattern, `[^/]+`)
+		reg = strings.ReplaceAll(reg, `*`, `.*`)
+		if matched, _ := regexp.MatchString("^"+reg+"$", path); matched {
+			return configuredScopes, true
+		}
+	}
+	return nil, false
+}
+
+func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleService services.UserRoleService, injector services.PermissionInjector, projectsRoot string, authLogger *slog.Logger) {
+	routeScopes := configuredRouteScopes()
+	authenticatedOnly := authenticatedOnlyRouteKeys()
 
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -725,14 +904,9 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 		}
 		auth := c.GetHeader("Authorization")
 		if len(auth) < 8 || !strings.HasPrefix(auth, "Bearer ") {
-			authPreview := auth
-			if len(authPreview) > 20 {
-				authPreview = authPreview[:20] + "..."
-			}
 			authLogger.Warn("missing bearer token",
 				"method", c.Request.Method,
 				"path", path,
-				"auth_preview", authPreview,
 			)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
 			return
@@ -929,7 +1103,7 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 			"path", path,
 			"full_path", full,
 		)
-		if scs, ok := matchRouteKey(c.Request.Method, full); ok && len(scs) > 0 {
+		if scs, ok := configuredScopesForRoute(routeScopes, c.Request.Method, full); ok && len(scs) > 0 {
 			authLogger.Info("route matched",
 				"required_scopes", scs,
 				"user_scopes", effectiveScopes,
@@ -952,11 +1126,63 @@ func setupAuthMiddleware(r *gin.Engine, userManager *users.Manager, userRoleServ
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 				return
 			}
-		} else {
-			authLogger.Debug("no route match or no scopes required")
+		} else if _, ok := authenticatedOnly[c.Request.Method+" "+full]; ok {
+			authLogger.Debug("authenticated-only route allowed", "method", c.Request.Method, "full_path", full)
+		} else if (strings.HasPrefix(full, "/api/v1/") || strings.HasPrefix(full, "/internal/api/v1/")) && !isExplicitPublicRoute(c.Request.Method, full) {
+			authLogger.Warn("permission denied by default",
+				"method", c.Request.Method,
+				"full_path", full,
+			)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden", "code": "route_scope_not_configured"})
+			return
 		}
 		c.Next()
 	})
+}
+
+func projectMutationAuditMiddleware(logger audit.AuditLogger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		if logger == nil || c.Request == nil {
+			return
+		}
+		method := c.Request.Method
+		if method != http.MethodPost && method != http.MethodPut && method != http.MethodPatch && method != http.MethodDelete {
+			return
+		}
+		route := c.FullPath()
+		projectRoute := strings.HasPrefix(route, "/api/v1/projects/:id")
+		serviceRoute := route == "/api/v1/services/whisper/models/download" || route == "/api/v1/debug/tasks/:id/enqueue/:chunk_id"
+		if !projectRoute && !serviceRoute {
+			return
+		}
+		action := audit.ActionProjectMutation
+		if serviceRoute {
+			action = audit.ActionServiceMutation
+		}
+		if c.Writer.Status() == http.StatusUnauthorized || c.Writer.Status() == http.StatusForbidden {
+			if serviceRoute {
+				action = audit.ActionServiceMutationDeny
+			} else {
+				action = audit.ActionProjectMutationDeny
+			}
+		}
+		operator := c.GetString("user")
+		if operator == "" {
+			operator = "anonymous"
+		}
+		resourceID := c.Param("id")
+		if taskID := c.Param("task_id"); taskID != "" {
+			resourceID += "/" + taskID
+		}
+		if resourceID == "" {
+			resourceID = route
+		}
+		details := fmt.Sprintf("method=%s route=%s status=%d", method, route, c.Writer.Status())
+		if err := logger.LogActionSimple(operator, action, resourceID, details); err != nil {
+			slog.Default().Warn("project mutation audit failed", "route", route, "error", err)
+		}
+	}
 }
 
 func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler, idpHandler *api.IdPHandler, meetingV2Store *meetingv2.Store) {
@@ -1265,6 +1491,15 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	r.GET("/api/v1/projects/:id/tasks/:task_id", api.HandleGetProjectTask(projectsReg))
 	r.PUT("/api/v1/projects/:id/tasks/:task_id", api.HandleUpdateProjectTask(projectsReg))
 	r.DELETE("/api/v1/projects/:id/tasks/:task_id", api.HandleDeleteProjectTask(projectsReg))
+	r.POST("/api/v1/projects/:id/publish", api.HandlePublish(projectsReg))
+	r.POST("/api/v1/projects/:id/migrations/schema/preview", api.HandlePreviewProjectMigration(projectsReg))
+	r.POST("/api/v1/projects/:id/migrations/schema/execute", api.HandleExecuteProjectMigration(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/migrations/schema/preview", api.HandlePreviewTaskMigration(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/migrations/schema/execute", api.HandleExecuteTaskMigration(projectsReg))
+	r.GET("/api/v1/projects/:id/tasks/:task_id/review", api.HandleGetTaskReview(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/review", api.HandleCreateTaskReview(projectsReg))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/review", api.HandlePutTaskReview(projectsReg))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/review/result", api.HandleUpdateTaskReviewResult(projectsReg))
 
 	// Task transfer
 	r.POST("/api/v1/projects/:id/tasks/:task_id/transfer", api.HandleTransferProjectTask(projectsReg))
@@ -1397,44 +1632,30 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 				c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
 				return
 			}
-			dir := filepath.Join(projectsRoot, projectID)
-			taskDir := filepath.Join(dir, "tasks", taskID)
+			if !taskdocs.TaskExistsInProject(projectID, taskID) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+				return
+			}
+			docBase, pathErr := taskdocs.DocDir(projectID, taskID, docType)
+			if pathErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project, task, or document identifier"})
+				return
+			}
+			taskDir := filepath.Dir(filepath.Dir(docBase))
 			legacyFile := filepath.Join(taskDir, fmt.Sprintf("%s.md", docType))
 
-			// Helper: ensure migration if needed
-			migrateIfNeeded := func() error {
-				meta, mErr := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
-				if mErr != nil {
-					return mErr
-				}
-				// Already initialized if Version>0
-				if meta.Version > 0 {
-					return nil
-				}
-				// Legacy file? -> import
-				data, readErr := os.ReadFile(legacyFile)
-				if readErr != nil {
-					return nil // No legacy content
-				}
-				content := strings.TrimSpace(string(data))
-				if content == "" {
-					return nil
-				}
-				// Append as replace_full (initial migration)
-				_, _, _, aErr := taskDocSvc.Append(projectID, taskID, docType, content, "migration", nil, "replace_full", "migration")
-				return aErr
-			}
-
 			if c.Request.Method == http.MethodGet {
-				_ = migrateIfNeeded()
-				compiledPath, _ := taskdocs.DocCompiledPath(projectID, taskID, docType)
-				b, _ := os.ReadFile(compiledPath)
-				if len(b) == 0 { // Fallback to legacy (maybe empty after failed migration)
-					if lb, err2 := os.ReadFile(legacyFile); err2 == nil {
-						b = lb
+				content, meta, readErr := taskdocs.ExportReadOnlyWithPath(docBase)
+				if readErr != nil {
+					c.JSON(http.StatusConflict, gin.H{"error": readErr.Error()})
+					return
+				}
+				if content == "" && meta.Version == 0 {
+					if legacy, legacyErr := os.ReadFile(legacyFile); legacyErr == nil {
+						content = string(legacy)
 					}
 				}
-				meta, _ := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
+				b := []byte(content)
 				exists := len(b) > 0
 
 				response := gin.H{
@@ -1466,8 +1687,12 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 					Content         string `json:"content"`
 					ExpectedVersion *int   `json:"expected_version"`
 				}
-				if err := c.ShouldBindJSON(&body); err != nil {
+				if err := api.BindDocumentWrite(c, &body); err != nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+					return
+				}
+				if body.ExpectedVersion == nil || *body.ExpectedVersion < 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid expected_version"})
 					return
 				}
 				// 允许空内容（用户可能想清空文档）
@@ -1649,10 +1874,26 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 	if usersDir == "" {
 		usersDir = "./data/users"
 	}
-	os.MkdirAll(filepath.Join(usersDir, liteDefaultUser), 0o755)
+	if err := os.MkdirAll(filepath.Join(usersDir, liteDefaultUser), 0o755); err != nil {
+		appLogger.Error("failed to initialize lite user directory", "error", err)
+		return
+	}
+	liteAuditLogger, err := audit.NewFileAuditLogger(filepath.Join(filepath.Dir(projectsRoot), "audit_logs"))
+	if err != nil {
+		appLogger.Error("failed to initialize lite audit logger", "error", err)
+		return
+	}
 
-	// Initialize domain registries
+	// Initialize domain registries only after interrupted transactions recover.
 	projects.InitPaths()
+	if err := publish.Recover(projects.ProjectsRoot); err != nil {
+		appLogger.Error("publish recovery failed", "error", err)
+		return
+	}
+	if err := migration.Recover(projects.ProjectsRoot); err != nil {
+		appLogger.Error("schema migration recovery failed", "error", err)
+		return
+	}
 	projectsReg := projects.NewProjectRegistry()
 	if err := projects.LoadProjects(projectsReg); err != nil {
 		appLogger.Warn("failed to load projects", "error", err)
@@ -1679,6 +1920,8 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestLogger())
+	r.Use(projectMutationAuditMiddleware(liteAuditLogger))
+	setupPublishGateMiddleware(r)
 
 	// Lite mode: inject default user, skip JWT auth
 	r.Use(func(c *gin.Context) {
@@ -1755,6 +1998,15 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 	r.GET("/api/v1/projects/:id/tasks/:task_id", api.HandleGetProjectTask(projectsReg))
 	r.PUT("/api/v1/projects/:id/tasks/:task_id", api.HandleUpdateProjectTask(projectsReg))
 	r.DELETE("/api/v1/projects/:id/tasks/:task_id", api.HandleDeleteProjectTask(projectsReg))
+	r.POST("/api/v1/projects/:id/publish", api.HandlePublish(projectsReg))
+	r.POST("/api/v1/projects/:id/migrations/schema/preview", api.HandlePreviewProjectMigration(projectsReg))
+	r.POST("/api/v1/projects/:id/migrations/schema/execute", api.HandleExecuteProjectMigration(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/migrations/schema/preview", api.HandlePreviewTaskMigration(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/migrations/schema/execute", api.HandleExecuteTaskMigration(projectsReg))
+	r.GET("/api/v1/projects/:id/tasks/:task_id/review", api.HandleGetTaskReview(projectsReg))
+	r.POST("/api/v1/projects/:id/tasks/:task_id/review", api.HandleCreateTaskReview(projectsReg))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/review", api.HandlePutTaskReview(projectsReg))
+	r.PUT("/api/v1/projects/:id/tasks/:task_id/review/result", api.HandleUpdateTaskReviewResult(projectsReg))
 
 	// ========== Task documents (GET/PUT compat) ==========
 	liteTaskDocHandler := func(docType string) gin.HandlerFunc {
@@ -1766,40 +2018,30 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "project not found"})
 				return
 			}
-			dir := filepath.Join(projectsRoot, projectID)
-			taskDir := filepath.Join(dir, "tasks", taskID)
+			if !taskdocs.TaskExistsInProject(projectID, taskID) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+				return
+			}
+			docBase, pathErr := taskdocs.DocDir(projectID, taskID, docType)
+			if pathErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid project, task, or document identifier"})
+				return
+			}
+			taskDir := filepath.Dir(filepath.Dir(docBase))
 			legacyFile := filepath.Join(taskDir, fmt.Sprintf("%s.md", docType))
 
-			migrateIfNeeded := func() error {
-				meta, mErr := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
-				if mErr != nil {
-					return mErr
-				}
-				if meta.Version > 0 {
-					return nil
-				}
-				data, readErr := os.ReadFile(legacyFile)
-				if readErr != nil {
-					return nil
-				}
-				content := strings.TrimSpace(string(data))
-				if content == "" {
-					return nil
-				}
-				_, _, _, aErr := taskDocSvc.Append(projectID, taskID, docType, content, "migration", nil, "replace_full", "migration")
-				return aErr
-			}
-
 			if c.Request.Method == http.MethodGet {
-				_ = migrateIfNeeded()
-				compiledPath, _ := taskdocs.DocCompiledPath(projectID, taskID, docType)
-				b, _ := os.ReadFile(compiledPath)
-				if len(b) == 0 {
-					if lb, err2 := os.ReadFile(legacyFile); err2 == nil {
-						b = lb
+				content, meta, readErr := taskdocs.ExportReadOnlyWithPath(docBase)
+				if readErr != nil {
+					c.JSON(http.StatusConflict, gin.H{"error": readErr.Error()})
+					return
+				}
+				if content == "" && meta.Version == 0 {
+					if legacy, legacyErr := os.ReadFile(legacyFile); legacyErr == nil {
+						content = string(legacy)
 					}
 				}
-				meta, _ := taskdocs.LoadOrInitMeta(projectID, taskID, docType)
+				b := []byte(content)
 				exists := len(b) > 0
 				c.JSON(http.StatusOK, gin.H{
 					"exists":  exists,
@@ -1815,8 +2057,12 @@ func runLiteMode(cfg *config.Config, appLogger *slog.Logger) {
 					Content         string `json:"content"`
 					ExpectedVersion *int   `json:"expected_version"`
 				}
-				if err := c.ShouldBindJSON(&body); err != nil {
+				if err := api.BindDocumentWrite(c, &body); err != nil {
 					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+					return
+				}
+				if body.ExpectedVersion == nil || *body.ExpectedVersion < 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid expected_version"})
 					return
 				}
 				_ = os.MkdirAll(taskDir, 0755)

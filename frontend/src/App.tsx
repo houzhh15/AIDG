@@ -8,16 +8,15 @@ import UserManagement from './components/UserManagement';
 import ProjectTaskSidebar from './components/ProjectTaskSidebar';
 import TaskDocuments from './components/TaskDocuments';
 import { RightPanel } from './components/RightPanel';
-import ProjectTaskSelector from './components/ProjectTaskSelector';
 import ContextManagerDropdown from './components/project/ContextManagerDropdown';
 import { AudioModeSelectModal, AudioMode } from './components/AudioModeSelectModal';
 import { UploadModal } from './components/UploadModal';
 import { useAudioService } from './services/audioService';
 import { listTasks, createTask, deleteTask, startTask, stopTask, listChunks, updateTaskDevice, getServicesStatus, ServicesStatus } from './api/client';
 import { authedApi } from './api/auth';
-import { smartLogin, loadAuth, clearAuth, onAuthChange, refreshToken } from './api/auth';
+import { smartLogin, loadAuth, clearAuth, onAuthChange } from './api/auth';
 import { TaskSummary, ChunkFlag } from './types';
-import { ClearOutlined, KeyOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ApiOutlined, CloudServerOutlined } from '@ant-design/icons';
+import { ClearOutlined, SafetyOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ApiOutlined, CloudServerOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { SyncPanel } from './components/SyncPanel';
 import { svnSync } from './api/svn';
@@ -192,7 +191,6 @@ const App: React.FC = () => {
   const isAdmin = !!auth?.scopes?.includes('user.manage');
   const [showSync, setShowSync] = useState(false);
   const [svnRunning, setSvnRunning] = useState(false);
-  const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [servicesStatus, setServicesStatus] = useState<ServicesStatus | null>(null);
 
   // Lite mode detection
@@ -462,17 +460,6 @@ const App: React.FC = () => {
     const audio = new Audio(url); audio.play();
   }
 
-  async function handleGetToken() {
-    try {
-      const authInfo = await refreshToken();
-      // 直接显示token在界面上
-      setCurrentToken(authInfo.token);
-      message.success('新Token已生成');
-    } catch (e: any) {
-      message.error(`获取Token失败: ${e.response?.data?.error || e.message}`);
-    }
-  }
-
   // Lite mode: auto-login
   useEffect(() => {
     if (liteMode && !auth && !loggingIn) {
@@ -581,7 +568,6 @@ const App: React.FC = () => {
           />
           {viewMode === 'project' && (
             <div style={{display:'flex',alignItems:'center',gap:12}}>
-              <ProjectTaskSelector />
               <ContextManagerDropdown
                 username={auth?.username || ''}
                 projectId={currentProject}
@@ -627,16 +613,6 @@ const App: React.FC = () => {
             size="small" 
             ghost 
             style={{color:'#fff',borderColor:'#fff'}} 
-            icon={<KeyOutlined />}
-            onClick={handleGetToken}
-            title="生成新Token并在界面上显示"
-          >
-            获取Token
-          </Button>
-          <Button 
-            size="small" 
-            ghost 
-            style={{color:'#fff',borderColor:'#fff'}} 
             icon={<UserOutlined />}
             onClick={() => changeViewMode('profile')}
             title="查看个人中心"
@@ -646,13 +622,6 @@ const App: React.FC = () => {
           <Button size="small" ghost style={{color:'#fff',borderColor:'#fff'}} onClick={()=>{ clearAuth(false); }}>登出</Button>
         </div>
       </Header>
-      )}
-      {!liteMode && currentToken && (
-        <div style={{ background:'#e6f7ff', padding:'8px 12px', borderBottom:'1px solid #91d5ff', display:'flex', alignItems:'center', gap:8 }}>
-          <span style={{ fontWeight:'bold', color:'#1890ff' }}>Token:</span>
-          <code style={{ background:'#f6f8fa', padding:'2px 4px', borderRadius:2, fontSize:'12px', wordBreak:'break-all' }}>{currentToken}</code>
-          <Button size="small" type="link" onClick={() => setCurrentToken(null)} style={{ padding:0, height:'auto' }}>关闭</Button>
-        </div>
       )}
       {isAdmin && showSync && (
         <div style={{ background:'#f6f8fa', padding:'8px 12px', borderBottom:'1px solid #ddd' }}>
@@ -722,7 +691,7 @@ const App: React.FC = () => {
                     <Deliverables mode="project" targetId={currentProject} liteMode={liteMode} />
                   </div>
                 ) : (
-                  <TaskDocuments projectId={currentProject} taskId={currentProjectTask} liteMode={liteMode} />
+                  <TaskDocuments key={`${currentProject}:${currentProjectTask}`} projectId={currentProject} taskId={currentProjectTask} liteMode={liteMode} />
                 )}
               </div>
             </Content>

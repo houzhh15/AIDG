@@ -13,13 +13,98 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/domain/projects"
 )
 
+// TaskExistsInProject checks whether taskID is registered in the project's
+// tasks.json. This prevents accidental doc writes to non-existent task IDs.
+func TaskExistsInProject(projectID, taskID string) bool {
+	if !safeResourceID(projectID) || !safeResourceID(taskID) {
+		return false
+	}
+	tasksFile := filepath.Join(projects.ProjectsRoot, projectID, "tasks.json")
+	data, err := os.ReadFile(tasksFile)
+	if err != nil {
+		return false
+	}
+	var tasks []map[string]any
+	if json.Unmarshal(data, &tasks) != nil {
+		return false
+	}
+	for _, t := range tasks {
+		if id, _ := t["id"].(string); id == taskID {
+			return true
+		}
+	}
+	return false
+}
+
 // docBaseDir returns the base directory for a document type (internal helper)
 func docBaseDir(projectID, taskID, docType string) (string, error) {
-	dir := filepath.Join(projects.ProjectsRoot, projectID)
+	return ResolveDocPath(projects.ProjectsRoot, projectID, taskID, docType)
+}
+
+// ResolveDocPath validates identifiers and resolves existing symlinks before
+// returning a task document path contained by basePath.
+func ResolveDocPath(basePath, projectID, taskID, docType string) (string, error) {
+	if !safeResourceID(projectID) || !safeResourceID(taskID) || !safeResourceID(docType) {
+		return "", fmt.Errorf("invalid resource identifier")
+	}
+	root, err := filepath.Abs(basePath)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, projectID)
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return "", fmt.Errorf("project dir missing")
 	}
-	return filepath.Join(dir, "tasks", taskID, "docs", docType), nil
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	resolvedProject, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedProject)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("project path escapes projects root")
+	}
+	target := filepath.Join(dir, "tasks", taskID, "docs", docType)
+	resolvedTarget, err := resolveExistingPath(target)
+	if err != nil {
+		return "", err
+	}
+	rel, err = filepath.Rel(resolvedRoot, resolvedTarget)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("task document path escapes projects root")
+	}
+	return target, nil
+}
+
+func resolveExistingPath(path string) (string, error) {
+	current := filepath.Clean(path)
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(path), nil
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
+}
+
+func safeResourceID(id string) bool {
+	id = strings.TrimSpace(id)
+	return id != "" && len(id) <= 200 && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, "/\\\x00")
 }
 
 // docMetaPath returns the path to meta.json
@@ -55,6 +140,31 @@ func docCompiledPath(projectID, taskID, docType string) (string, error) {
 }
 
 // initDocMeta creates initial metadata for a new document
+// DocDir returns the absolute filesystem path of the per-task doc slot
+// (e.g. .../tasks/<taskID>/docs/<docType>). The path is exposed for the
+// DELETE handler so it can fully remove the slot directory and all of its
+// meta / chunks / compiled artifacts.
+func DocDir(projectID, taskID, docType string) (string, error) {
+	return docBaseDir(projectID, taskID, docType)
+}
+
+// DeleteTaskDocSlot removes the entire per-task doc slot directory
+// (meta.json + chunks.ndjson + compiled.md + tag dirs). It is safe to call
+// when the directory does not exist — a missing slot is treated as success.
+func DeleteTaskDocSlot(projectID, taskID, docType string) error {
+	dir, err := docBaseDir(projectID, taskID, docType)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
 func initDocMeta(docType string) DocMeta {
 	now := time.Now()
 	return DocMeta{
@@ -112,8 +222,7 @@ func LoadOrInitMeta(projectID, taskID, docType string) (DocMeta, error) {
 
 	var meta DocMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		// Corrupted meta, return init
-		return initDocMeta(docType), nil
+		return DocMeta{}, fmt.Errorf("decode meta: %w", err)
 	}
 
 	return meta, nil
@@ -159,7 +268,10 @@ func listChunks(projectID, taskID, docType string) ([]DocChunk, DocMeta, error) 
 		return nil, DocMeta{}, err
 	}
 
-	meta, _ := loadOrInitMeta(projectID, taskID, docType)
+	meta, err := loadOrInitMeta(projectID, taskID, docType)
+	if err != nil {
+		return nil, DocMeta{}, err
+	}
 
 	data, err := os.ReadFile(cp)
 	if err != nil {
