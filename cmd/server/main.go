@@ -46,6 +46,7 @@ import (
 	"github.com/houzhh15/AIDG/cmd/server/internal/publish"
 	"github.com/houzhh15/AIDG/cmd/server/internal/resource"
 	"github.com/houzhh15/AIDG/cmd/server/internal/services"
+	"github.com/houzhh15/AIDG/cmd/server/internal/syncv1"
 	"github.com/houzhh15/AIDG/cmd/server/internal/users"
 	"github.com/houzhh15/AIDG/pkg/logger"
 	"github.com/houzhh15/AIDG/pkg/similarity"
@@ -133,6 +134,11 @@ func main() {
 	projectsRoot := cfg.Data.ProjectsDir
 	if projectsRoot == "" {
 		projectsRoot = "./projects"
+	}
+	syncServerID, err := syncv1.LoadOrCreateServerID(filepath.Join(filepath.Dir(projectsRoot), "sync"))
+	if err != nil {
+		appLogger.Error("sync server identity init failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Data root directory for prompts and other data storage
@@ -389,7 +395,7 @@ func main() {
 	if meetingV2Handler != nil {
 		meetingV2Handler.Register(r.Group("/api/v1/meeting-sessions"))
 	}
-	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, resourceManager, promptsHandler, tagHandler, idpHandler, meetingV2Store)
+	setupRoutes(r, meetingsReg, projectsReg, docHandler, taskDocSvc, userManager, roadmapService, projectOverviewService, statisticsService, progressService, taskSummaryService, roleManager, userRoleService, permissionInjector, envHandler, projectsRoot, syncServerID, resourceManager, promptsHandler, tagHandler, idpHandler, meetingV2Store)
 
 	// Check frontend dist directory
 	frontendDistDir := cfg.Frontend.DistDir
@@ -511,7 +517,9 @@ func hasAnyProjectPermission(userRoleService services.UserRoleService, username,
 func setupPublishGateMiddleware(r *gin.Engine) {
 	r.Use(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if (!strings.HasPrefix(path, "/api/v1/projects") && !strings.HasPrefix(path, "/internal/api/v1/projects")) || (c.Request.Method == http.MethodPost && strings.HasSuffix(path, "/publish")) {
+		isProjectRoute := strings.HasPrefix(path, "/api/v1/projects") || strings.HasPrefix(path, "/internal/api/v1/projects") || strings.HasPrefix(path, "/api/v1/sync/projects/")
+		isExclusiveWrite := c.Request.Method == http.MethodPost && (strings.HasSuffix(path, "/publish") || strings.HasSuffix(path, "/apply"))
+		if !isProjectRoute || isExclusiveWrite {
 			c.Next()
 			return
 		}
@@ -543,7 +551,12 @@ func isExplicitPublicRoute(method, path string) bool {
 
 func configuredRouteScopes() map[string][]string {
 	return map[string][]string{
-		"GET /api/v1/me/token": {users.ScopeMeetingRead},
+		"GET /api/v1/me/token":                                         {users.ScopeMeetingRead},
+		"GET /api/v1/sync/projects/:id/manifest":                       {users.ScopeProjectDocRead, users.ScopeTaskRead, users.ScopeProjectAdmin},
+		"GET /api/v1/sync/projects/:id/documents/:slot":                {users.ScopeProjectDocRead, users.ScopeProjectAdmin},
+		"GET /api/v1/sync/projects/:id/tasks/:task_id/documents/:slot": {users.ScopeTaskRead, users.ScopeProjectAdmin},
+		"POST /api/v1/sync/projects":                                   {users.ScopeProjectAdmin},
+		"POST /api/v1/sync/projects/:id/apply":                         {users.ScopeProjectDocWrite, users.ScopeTaskWrite, users.ScopeProjectAdmin},
 		// GET /api/v1/users 不需要特殊权限，所有已认证用户都可以获取用户列表（用于任务分配等场景）
 		"POST /api/v1/users": {users.ScopeUserManage},
 		// Identity provider administration.
@@ -851,6 +864,8 @@ func configuredRouteScopes() map[string][]string {
 func authenticatedOnlyRouteKeys() map[string]struct{} {
 	return map[string]struct{}{
 		"GET /api/v1/projects":                  {},
+		"GET /api/v1/sync/capabilities":         {},
+		"GET /api/v1/sync/projects":             {},
 		"GET /api/v1/users":                     {},
 		"GET /api/v1/departments":               {},
 		"GET /api/v1/identity-providers/active": {},
@@ -1185,7 +1200,7 @@ func projectMutationAuditMiddleware(logger audit.AuditLogger) gin.HandlerFunc {
 	}
 }
 
-func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler, idpHandler *api.IdPHandler, meetingV2Store *meetingv2.Store) {
+func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *projects.ProjectRegistry, docHandler *documents.Handler, taskDocSvc *taskdocs.DocService, userManager *users.Manager, roadmapService *services.RoadmapService, projectOverviewService services.ProjectOverviewService, statisticsService services.StatisticsService, progressService services.ProgressService, taskSummaryService services.TaskSummaryService, roleManager services.RoleManager, userRoleService services.UserRoleService, permissionInjector services.PermissionInjector, envHandler *handlers.EnvironmentHandler, projectsRoot, syncServerID string, resourceManager *resource.ResourceManager, promptsHandler *api.PromptsHandler, tagHandler *api.TagHandler, idpHandler *api.IdPHandler, meetingV2Store *meetingv2.Store) {
 	// ========== Environment Check ==========
 	r.GET("/api/v1/environment/status", func(c *gin.Context) {
 		envHandler.GetStatus(c.Writer, c.Request)
@@ -1759,6 +1774,16 @@ func setupRoutes(r *gin.Engine, meetingsReg *meetings.Registry, projectsReg *pro
 	unifiedDocSvc := docslot.NewUnifiedDocService(projectsRoot)
 	unifiedDocsGroup := r.Group("/api/v1")
 	api.RegisterUnifiedDocRoutes(unifiedDocsGroup, unifiedDocSvc)
+
+	// ========== Read-only Sync API v1 ==========
+	syncHandler := api.NewSyncV1Handler(syncServerID, projectsReg, unifiedDocSvc, userRoleService)
+	r.GET("/api/v1/sync/capabilities", syncHandler.Capabilities)
+	r.GET("/api/v1/sync/projects", syncHandler.Projects)
+	r.POST("/api/v1/sync/projects", syncHandler.CreateProject)
+	r.GET("/api/v1/sync/projects/:id/manifest", syncHandler.ProjectManifest)
+	r.GET("/api/v1/sync/projects/:id/documents/:slot", syncHandler.ProjectDocument)
+	r.GET("/api/v1/sync/projects/:id/tasks/:task_id/documents/:slot", syncHandler.TaskDocument)
+	r.POST("/api/v1/sync/projects/:id/apply", syncHandler.ApplyProject)
 
 	// ========== Documents API ==========
 	r.POST("/api/v1/projects/:id/documents/nodes", docHandler.CreateNode)

@@ -17,6 +17,7 @@ export const ScopeProjectAdmin = 'project.admin';
 export const ScopeTaskRead = 'task.read';
 export const ScopeTaskWrite = 'task.write';
 export const ScopeTaskPlanApprove = 'task.plan.approve';
+export const ScopeTaskLifecycleImport = 'task.lifecycle.import';
 
 /**
  * 特性权限
@@ -45,6 +46,7 @@ export const AllScopes = [
   ScopeTaskRead,
   ScopeTaskWrite,
   ScopeTaskPlanApprove,
+  ScopeTaskLifecycleImport,
   ScopeFeatureRead,
   ScopeFeatureWrite,
   ScopeMeetingRead,
@@ -97,6 +99,11 @@ export const PermissionGroups: PermissionGroup[] = [
         label: '审批执行计划',
         value: ScopeTaskPlanApprove,
         description: '审批或拒绝任务的执行计划',
+      },
+      {
+        label: '导入任务生命周期',
+        value: ScopeTaskLifecycleImport,
+        description: '从可信同步源受控导入任务状态与审核证据',
       },
     ],
   },

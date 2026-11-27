@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	ManifestVersion = "1"
-	maxResources    = 128
-	maxContentBytes = 4 << 20
-	maxManifestSize = 16 << 20
+	ManifestVersion      = "aidg.publish/v1"
+	SourceMoteManualSync = "mote-manual-sync"
+	maxResources         = 128
+	maxContentBytes      = 4 << 20
+	maxManifestSize      = 16 << 20
 )
 
 var allProjectsGate sync.RWMutex
@@ -43,7 +44,8 @@ func WriteLock(projectID string) func() {
 	return allProjectsGate.Unlock
 }
 
-// Manifest is deliberately single-project and update-only in protocol v1.
+// Manifest is deliberately single-project in protocol v1. It may create tasks,
+// but project creation remains a separate idempotent sync operation.
 type Manifest struct {
 	ManifestVersion string     `json:"manifest_version"`
 	ProjectID       string     `json:"project_id"`
@@ -55,6 +57,7 @@ type Manifest struct {
 type Resource struct {
 	Kind             string                             `json:"kind"`
 	TaskID           string                             `json:"task_id,omitempty"`
+	ClientRef        string                             `json:"client_ref,omitempty"`
 	ExpectedRevision *int                               `json:"expected_revision,omitempty"`
 	ExpectedVersion  *int                               `json:"expected_version,omitempty"`
 	ExpectedETag     string                             `json:"expected_etag,omitempty"`
@@ -63,6 +66,7 @@ type Resource struct {
 	Metadata         map[string]json.RawMessage         `json:"metadata,omitempty"`
 	ReviewRequest    *tasklifecycle.ReviewRequest       `json:"review_request,omitempty"`
 	ReviewResult     *tasklifecycle.ReviewResultRequest `json:"review_result,omitempty"`
+	Lifecycle        *tasklifecycle.LifecycleImport     `json:"lifecycle,omitempty"`
 }
 
 var auditMu sync.Mutex
@@ -78,15 +82,22 @@ type AuditEvent struct {
 	Duplicate      bool      `json:"duplicate"`
 }
 
+type CreatedTask struct {
+	ClientRef string `json:"client_ref"`
+	TaskID    string `json:"task_id"`
+	Revision  int    `json:"revision"`
+}
+
 type Receipt struct {
-	ProjectID      string    `json:"project_id"`
-	IdempotencyKey string    `json:"idempotency_key"`
-	ResourceCount  int       `json:"resource_count"`
-	ResourceKinds  []string  `json:"resource_kinds"`
-	Actor          string    `json:"actor"`
-	Source         string    `json:"source"`
-	CommittedAt    time.Time `json:"committed_at"`
-	ManifestHash   string    `json:"manifest_hash"`
+	ProjectID      string        `json:"project_id"`
+	IdempotencyKey string        `json:"idempotency_key"`
+	ResourceCount  int           `json:"resource_count"`
+	ResourceKinds  []string      `json:"resource_kinds"`
+	CreatedTasks   []CreatedTask `json:"created_tasks,omitempty"`
+	Actor          string        `json:"actor"`
+	Source         string        `json:"source"`
+	CommittedAt    time.Time     `json:"committed_at"`
+	ManifestHash   string        `json:"manifest_hash"`
 }
 
 type journal struct {
@@ -121,7 +132,7 @@ func manifestHash(manifest Manifest) (string, error) {
 
 func resourcePayload(resource Resource) ([]byte, error) {
 	switch resource.Kind {
-	case "project.metadata", "task.metadata":
+	case "project.metadata", "task.metadata", "task.create":
 		return json.Marshal(resource.Metadata)
 	case "task.review":
 		if (resource.ReviewRequest == nil) == (resource.ReviewResult == nil) {
@@ -141,8 +152,14 @@ func resourcePayload(resource Resource) ([]byte, error) {
 }
 
 func (s *Service) validate(manifest Manifest) error {
-	if manifest.ManifestVersion != ManifestVersion || strings.TrimSpace(manifest.ProjectID) == "" || strings.TrimSpace(manifest.IdempotencyKey) == "" || strings.TrimSpace(manifest.Source) == "" {
-		return errors.New("manifest_version, project_id, idempotency_key, and source are required")
+	if strings.TrimSpace(manifest.ProjectID) == "" || strings.TrimSpace(manifest.IdempotencyKey) == "" {
+		return errors.New("project_id and idempotency_key are required")
+	}
+	if manifest.ManifestVersion != ManifestVersion {
+		return fmt.Errorf("unsupported manifest_version %q", manifest.ManifestVersion)
+	}
+	if manifest.Source != SourceMoteManualSync {
+		return fmt.Errorf("unsupported manifest source %q", manifest.Source)
 	}
 	if s.Registry.Get(manifest.ProjectID) == nil {
 		return tasklifecycle.ErrNotFound
@@ -152,8 +169,9 @@ func (s *Service) validate(manifest Manifest) error {
 	}
 	seen := map[string]bool{}
 	lifecycle := tasklifecycle.NewService(s.Root, taskdocs.NewDocService())
+	createRefs := map[string]bool{}
 	for _, resource := range manifest.Resources {
-		key := resource.Kind + "\x00" + resource.TaskID
+		key := resource.Kind + "\x00" + resource.TaskID + "\x00" + resource.ClientRef
 		if seen[key] {
 			return fmt.Errorf("duplicate resource %s", resource.Kind)
 		}
@@ -170,20 +188,34 @@ func (s *Service) validate(manifest Manifest) error {
 			if len(resource.Metadata) != 1 || resource.Metadata["product_line"] == nil || resource.ExpectedETag == "" {
 				return errors.New("project.metadata only permits product_line and requires expected_etag")
 			}
+		case "task.create":
+			if resource.TaskID != "" || strings.TrimSpace(resource.ClientRef) == "" || resource.ExpectedRevision != nil || resource.ExpectedVersion != nil || resource.ExpectedETag != "" {
+				return errors.New("task.create requires only client_ref and task metadata")
+			}
+			if createRefs[resource.ClientRef] {
+				return errors.New("duplicate task.create client_ref")
+			}
+			createRefs[resource.ClientRef] = true
 		case "task.metadata":
-			if resource.TaskID == "" || resource.ExpectedRevision == nil {
+			if resource.TaskID == "" || resource.ClientRef != "" || resource.ExpectedRevision == nil {
 				return errors.New("task.metadata requires task_id and expected_revision")
 			}
 			if _, err = lifecycle.Get(manifest.ProjectID, resource.TaskID); err != nil {
 				return err
 			}
 		case "project.feature_list", "project.architecture_design":
-			if resource.ExpectedVersion == nil || resource.ExpectedETag == "" {
-				return errors.New("project document requires expected_version and expected_etag")
+			if resource.ExpectedVersion == nil || *resource.ExpectedVersion < 0 || (*resource.ExpectedVersion > 0 && resource.ExpectedETag == "") {
+				return errors.New("project document requires a non-negative expected_version and expected_etag after version zero")
 			}
 		case "task.requirements", "task.design", "task.test":
-			if resource.TaskID == "" || resource.ExpectedVersion == nil || resource.ExpectedETag == "" {
-				return errors.New("task document requires task_id, expected_version, and expected_etag")
+			if resource.ClientRef != "" {
+				if resource.TaskID != "" || !createRefs[resource.ClientRef] || resource.ExpectedVersion != nil || resource.ExpectedETag != "" {
+					return errors.New("new task document requires an earlier task.create client_ref and no remote precondition")
+				}
+				break
+			}
+			if resource.TaskID == "" || resource.ExpectedVersion == nil || *resource.ExpectedVersion < 0 || (*resource.ExpectedVersion > 0 && resource.ExpectedETag == "") {
+				return errors.New("task document requires task_id, a non-negative expected_version, and expected_etag after version zero")
 			}
 			if _, err = lifecycle.Get(manifest.ProjectID, resource.TaskID); err != nil {
 				return err
@@ -192,6 +224,17 @@ func (s *Service) validate(manifest Manifest) error {
 			if resource.TaskID == "" || resource.ExpectedRevision == nil {
 				return errors.New("task.review requires task_id and expected_revision")
 			}
+		case "task.lifecycle_import":
+			if resource.Lifecycle == nil || resource.ExpectedRevision == nil || resource.ReviewRequest != nil || resource.ReviewResult != nil {
+				return errors.New("task.lifecycle_import requires lifecycle and expected_revision")
+			}
+			if resource.ClientRef != "" {
+				if resource.TaskID != "" || !createRefs[resource.ClientRef] || *resource.ExpectedRevision != 1 {
+					return errors.New("new task lifecycle import requires an earlier task.create client_ref and expected_revision 1")
+				}
+			} else if resource.TaskID == "" {
+				return errors.New("task.lifecycle_import requires task_id or client_ref")
+			}
 		default:
 			return fmt.Errorf("unsupported resource kind %q", resource.Kind)
 		}
@@ -199,7 +242,17 @@ func (s *Service) validate(manifest Manifest) error {
 	return nil
 }
 
-func (s *Service) Publish(manifest Manifest, actor string) (receipt Receipt, duplicate bool, publishErr error) {
+var ErrPreconditionFailed = errors.New("publish precondition failed")
+
+func (s *Service) Publish(manifest Manifest, actor string) (Receipt, bool, error) {
+	return s.publish(manifest, actor, nil)
+}
+
+func (s *Service) PublishConditional(manifest Manifest, actor string, precondition func() error) (Receipt, bool, error) {
+	return s.publish(manifest, actor, precondition)
+}
+
+func (s *Service) publish(manifest Manifest, actor string, precondition func() error) (receipt Receipt, duplicate bool, publishErr error) {
 	defer func() {
 		if auditErr := s.audit(manifest, actor, receipt, duplicate, publishErr); auditErr != nil && publishErr == nil {
 			publishErr = fmt.Errorf("write publish audit: %w", auditErr)
@@ -222,6 +275,11 @@ func (s *Service) Publish(manifest Manifest, actor string) (receipt Receipt, dup
 			return Receipt{}, false, errors.New("idempotency key reused with different manifest")
 		}
 		return receipt, true, nil
+	}
+	if precondition != nil {
+		if err := precondition(); err != nil {
+			return Receipt{}, false, fmt.Errorf("%w: %v", ErrPreconditionFailed, err)
+		}
 	}
 	projectDir := filepath.Join(s.Root, manifest.ProjectID)
 	txRoot := filepath.Join(s.Root, ".publish-transactions")
@@ -263,9 +321,25 @@ func (s *Service) Publish(manifest Manifest, actor string) (receipt Receipt, dup
 		}
 		return Receipt{}, false, cause
 	}
+	createdByRef := map[string]CreatedTask{}
+	createdTasks := make([]CreatedTask, 0)
 	for index, resource := range manifest.Resources {
-		if err = s.apply(manifest.ProjectID, resource, actor, manifest.Source); err != nil {
-			return rollback(err)
+		if resource.ClientRef != "" && resource.Kind != "task.create" {
+			created, ok := createdByRef[resource.ClientRef]
+			if !ok {
+				return rollback(errors.New("task client_ref was not created"))
+			}
+			resource.TaskID = created.TaskID
+		}
+		if resource.Kind == "task.create" {
+			created, createErr := s.createTask(manifest.ProjectID, resource)
+			if createErr != nil {
+				return rollback(createErr)
+			}
+			createdByRef[created.ClientRef] = created
+			createdTasks = append(createdTasks, created)
+		} else if applyErr := s.apply(manifest.ProjectID, resource, actor, manifest.Source); applyErr != nil {
+			return rollback(applyErr)
 		}
 		if s.FaultAfter > 0 && index+1 == s.FaultAfter {
 			return rollback(errors.New("injected publish failure"))
@@ -275,7 +349,7 @@ func (s *Service) Publish(manifest Manifest, actor string) (receipt Receipt, dup
 	for _, resource := range manifest.Resources {
 		kinds = append(kinds, resource.Kind)
 	}
-	receipt = Receipt{ProjectID: manifest.ProjectID, IdempotencyKey: manifest.IdempotencyKey, ResourceCount: len(manifest.Resources), ResourceKinds: kinds, Actor: actor, Source: manifest.Source, CommittedAt: time.Now().UTC(), ManifestHash: manifestDigest}
+	receipt = Receipt{ProjectID: manifest.ProjectID, IdempotencyKey: manifest.IdempotencyKey, ResourceCount: len(manifest.Resources), ResourceKinds: kinds, CreatedTasks: createdTasks, Actor: actor, Source: manifest.Source, CommittedAt: time.Now().UTC(), ManifestHash: manifestDigest}
 	if err = s.storeReceipt(receipt); err != nil {
 		return rollback(err)
 	}
@@ -285,6 +359,20 @@ func (s *Service) Publish(manifest Manifest, actor string) (receipt Receipt, dup
 	}
 	_ = os.RemoveAll(txDir)
 	return receipt, false, nil
+}
+
+func (s *Service) createTask(projectID string, resource Resource) (CreatedTask, error) {
+	lifecycle := tasklifecycle.NewService(s.Root, taskdocs.NewDocService())
+	view, err := lifecycle.Create(projectID, resource.Metadata)
+	if err != nil {
+		return CreatedTask{}, err
+	}
+	taskID, _ := view["id"].(string)
+	revision, _ := view["revision"].(float64)
+	if taskID == "" {
+		return CreatedTask{}, errors.New("created task response is missing id")
+	}
+	return CreatedTask{ClientRef: resource.ClientRef, TaskID: taskID, Revision: int(revision)}, nil
 }
 
 func (s *Service) apply(projectID string, resource Resource, actor, source string) error {
@@ -318,6 +406,9 @@ func (s *Service) apply(projectID string, resource Resource, actor, source strin
 		result.ExpectedRevision = resource.ExpectedRevision
 		_, _, err := lifecycle.SetReviewResult(projectID, resource.TaskID, actor, result)
 		return err
+	case "task.lifecycle_import":
+		_, err := lifecycle.ImportLifecycle(projectID, resource.TaskID, actor, resource.ExpectedRevision, *resource.Lifecycle)
+		return err
 	}
 	scope, slot, taskID := docslot.ScopeProject, "", ""
 	switch resource.Kind {
@@ -339,7 +430,11 @@ func (s *Service) apply(projectID string, resource Resource, actor, source strin
 	if err != nil {
 		return err
 	}
-	if current.ETag != resource.ExpectedETag {
+	if resource.ClientRef != "" {
+		resource.ExpectedETag = current.ETag
+		version := current.Version
+		resource.ExpectedVersion = &version
+	} else if current.ETag != resource.ExpectedETag {
 		return tasklifecycle.ErrVersionConflict
 	}
 	if scope == docslot.ScopeProject {
@@ -350,16 +445,37 @@ func (s *Service) apply(projectID string, resource Resource, actor, source strin
 	return err
 }
 
+func auditResourceKind(kind string) string {
+	switch kind {
+	case "project.metadata", "project.feature_list", "project.architecture_design", "task.create", "task.metadata", "task.requirements", "task.design", "task.test", "task.review":
+		return kind
+	default:
+		return "<unsupported>"
+	}
+}
+
 func (s *Service) audit(manifest Manifest, actor string, receipt Receipt, duplicate bool, publishErr error) error {
 	kinds := make([]string, 0, len(manifest.Resources))
 	for _, resource := range manifest.Resources {
-		kinds = append(kinds, resource.Kind)
+		kinds = append(kinds, auditResourceKind(resource.Kind))
 	}
 	status := "committed"
 	if publishErr != nil {
 		status = "failed"
 	}
-	event := AuditEvent{At: time.Now().UTC(), ProjectID: manifest.ProjectID, Actor: actor, Source: manifest.Source, IdempotencyKey: manifest.IdempotencyKey, ResourceKinds: kinds, Status: status, Duplicate: duplicate}
+	projectID := "<unknown>"
+	if s.Registry.Get(manifest.ProjectID) != nil {
+		projectID = manifest.ProjectID
+	}
+	source := "<unsupported>"
+	if manifest.Source == SourceMoteManualSync {
+		source = manifest.Source
+	}
+	idempotencyHash := ""
+	if manifest.IdempotencyKey != "" {
+		idempotencyHash = HashContent(manifest.IdempotencyKey)
+	}
+	event := AuditEvent{At: time.Now().UTC(), ProjectID: projectID, Actor: actor, Source: source, IdempotencyKey: idempotencyHash, ResourceKinds: kinds, Status: status, Duplicate: duplicate}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err

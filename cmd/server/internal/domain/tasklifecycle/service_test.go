@@ -340,3 +340,72 @@ func TestReviewTransactionRecoversTaskThenReviewGap(t *testing.T) {
 		t.Fatalf("task mismatch after recovery: %#v %v", observed, err)
 	}
 }
+
+func TestImportLifecycleCompletesWithPassedReviewAndProvenance(t *testing.T) {
+	service, project := newTestService(t)
+	task := createTask(t, service, project)
+	taskID := task["id"].(string)
+	revision := 1
+	review := "# 审核文档\n\n## 审核请求\n\n### 目标\n- 类型: 代码\n- 路径: src\n\n### 标准\n通过测试\n\n## 执行结果\n\n### 变更摘要\n已完成实现\n\n### 验证\n全部测试通过\n\n### 遗留问题\n_无_\n\n## 审核结果\n\n### 问题列表\n_暂无_\n\n### 结果\n通过\n"
+	value := LifecycleImport{
+		Status: StatusCompleted,
+		Review: LifecycleReview{Content: review, Verdict: ReviewPassed, ChangeSummary: "已完成实现", Verification: "全部测试通过", Issues: "_暂无_"},
+		Source: LifecycleSource{System: "mote", ProjectID: "local-project", TaskID: "local-task", Actor: "mote"},
+	}
+	value.EvidenceHash, _ = LifecycleEvidenceHash(value)
+	updated, err := service.ImportLifecycle(project, taskID, "remote-admin", &revision, value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated["status"] != StatusCompleted || int(updated["revision"].(float64)) != 2 || updated["reviewed_by"] != "remote-admin" {
+		t.Fatalf("unexpected imported lifecycle: %#v", updated)
+	}
+	if updated["sync_lifecycle_evidence_hash"] != value.EvidenceHash {
+		t.Fatalf("evidence hash not persisted: %#v", updated)
+	}
+	exported, _, err := taskdocs.ExportWithPath(filepath.Join(service.root, project, "tasks", taskID, "docs", "review"))
+	if err != nil || exported != review {
+		t.Fatalf("review not imported atomically: exported=%+v err=%v", exported, err)
+	}
+}
+
+func TestImportLifecycleRejectsCompletionWithoutReviewAndTamperedEvidence(t *testing.T) {
+	service, project := newTestService(t)
+	task := createTask(t, service, project)
+	taskID := task["id"].(string)
+	revision := 1
+	value := LifecycleImport{Status: StatusCompleted, Source: LifecycleSource{System: "mote", ProjectID: "p", TaskID: "t", Actor: "mote"}}
+	value.EvidenceHash, _ = LifecycleEvidenceHash(value)
+	if _, err := service.ImportLifecycle(project, taskID, "remote-admin", &revision, value); !errors.Is(err, ErrReviewRequired) {
+		t.Fatalf("expected review gate, got %v", err)
+	}
+	value.Status = StatusInProgress
+	value.EvidenceHash = "sha256:tampered"
+	if _, err := service.ImportLifecycle(project, taskID, "remote-admin", &revision, value); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected evidence validation, got %v", err)
+	}
+	duplicate := LifecycleImport{
+		Status: StatusCompleted,
+		Review: LifecycleReview{Content: "# 审核文档\n\n### 变更摘要\n可信摘要\n\n### 验证\n可信验证\n\n### 结果\n通过\n\n### 变更摘要\n伪造摘要\n", Verdict: ReviewPassed, ChangeSummary: "可信摘要", Verification: "可信验证"},
+		Source: LifecycleSource{System: "mote", ProjectID: "p", TaskID: "t", Actor: "mote"},
+	}
+	duplicate.EvidenceHash, _ = LifecycleEvidenceHash(duplicate)
+	if _, err := service.ImportLifecycle(project, taskID, "remote-admin", &revision, duplicate); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected duplicate section rejection, got %v", err)
+	}
+	current, err := service.Get(project, taskID)
+	if err != nil || current["status"] != StatusTodo || int(current["revision"].(float64)) != 1 {
+		t.Fatalf("failed import changed task: %#v err=%v", current, err)
+	}
+}
+
+func TestStrictLifecycleSectionAllowsHistoricalH2BodyHeadings(t *testing.T) {
+	content := "### 变更摘要\n\n## T05 / DTO 扩展\n- 已完成\n\n### 验证\n测试通过\n"
+	summary, err := strictLifecycleSection(content, "变更摘要")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary != "## T05 / DTO 扩展\n- 已完成" {
+		t.Fatalf("historical H2 body was truncated: %q", summary)
+	}
+}

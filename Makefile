@@ -51,21 +51,26 @@ dev:
 			echo "Loading .env file..."; \
 			set -a; source .env; set +a; \
 		fi; \
+		mkdir -p ./data/projects ./data/users ./data/meetings ./data/audit; \
 		unset WHISPER_MODE WHISPER_PROGRAM_PATH WHISPER_API_URL DIARIZATION_SCRIPT_PATH EMBEDDING_SCRIPT_PATH PYTHON_PATH HF_HOME HUGGINGFACE_TOKEN DEPENDENCY_MODE; \
-		DEV_SERVER_PORT=$${AIDG_SERVER_PORT:-$${SERVER_PORT:-8000}}; \
+		DEV_SERVER_PORT=$${AIDG_SERVER_PORT:-$${SERVER_PORT:-8082}}; \
 		export AIDG_SERVER_PORT=$$DEV_SERVER_PORT; \
 		export AIDG_MEETING_ASR_BACKEND=external; \
 		export AIDG_MEETING_V2_ENABLED=true; \
 		export VITE_API_BASE_URL=$${VITE_API_BASE_URL:-http://localhost:$$DEV_SERVER_PORT}; \
 		echo "Starting server on :$$DEV_SERVER_PORT (external ASR backend)..."; \
 		ENV=development \
+		AIDG_DATA_PROJECTS_DIR=./data/projects \
+		AIDG_DATA_USERS_DIR=./data/users \
+		AIDG_DATA_MEETINGS_DIR=./data/meetings \
+		AIDG_DATA_AUDIT_LOGS_DIR=./data/audit \
 		JWT_SECRET=dev-secret-change-me-in-production-at-least-32-chars \
 		USER_JWT_SECRET=dev-user-jwt-secret-at-least-32-chars \
 		ADMIN_DEFAULT_PASSWORD=ChangeMe2024SecurePassword \
 		DEPENDENCY_SHARED_VOLUME=./data \
 		go run ./cmd/server & \
-		echo "Starting MCP server on :8081..."; \
-		ENV=development go run ./cmd/mcp-server & \
+		echo "Starting MCP server on :$${MCP_HTTP_PORT:-8081} (backend http://localhost:$$DEV_SERVER_PORT)..."; \
+		MCP_SERVER_URL=http://localhost:$$DEV_SERVER_PORT MCP_HTTP_PORT=$${MCP_HTTP_PORT:-8081} ENV=development go run ./cmd/mcp-server & \
 		echo "Starting frontend on :5173..."; \
 		cd frontend && npm run dev'
 

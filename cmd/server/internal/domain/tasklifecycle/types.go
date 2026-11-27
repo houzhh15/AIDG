@@ -57,6 +57,30 @@ type ReviewDocument struct {
 	Exists    bool      `json:"exists"`
 }
 
+// LifecycleImport is a privileged synchronization operation. ImportedBy is
+// intentionally absent: the authenticated AIDG actor is supplied by the server.
+type LifecycleImport struct {
+	Status       string          `json:"status"`
+	Review       LifecycleReview `json:"review"`
+	Source       LifecycleSource `json:"source"`
+	EvidenceHash string          `json:"evidence_hash"`
+}
+
+type LifecycleReview struct {
+	Content       string `json:"content"`
+	Verdict       string `json:"verdict"`
+	ChangeSummary string `json:"change_summary"`
+	Verification  string `json:"verification"`
+	Issues        string `json:"issues,omitempty"`
+}
+
+type LifecycleSource struct {
+	System    string `json:"system"`
+	ProjectID string `json:"project_id"`
+	TaskID    string `json:"task_id"`
+	Actor     string `json:"actor"`
+}
+
 func ValidStatus(status string) bool {
 	switch status {
 	case StatusTodo, StatusInProgress, StatusReview, StatusCompleted:

@@ -35,7 +35,7 @@ func TestRoleManager_CreateRole(t *testing.T) {
 	// 正常案例: 创建角色
 	projectID := "test-project"
 	roleName := "Developer"
-	scopes := []string{constants.ScopeTaskRead, constants.ScopeTaskWrite}
+	scopes := []string{constants.ScopeTaskRead, constants.ScopeTaskWrite, constants.ScopeTaskLifecycleImport}
 
 	role, err := roleManager.CreateRole(projectID, roleName, scopes)
 	if err != nil {
@@ -45,8 +45,8 @@ func TestRoleManager_CreateRole(t *testing.T) {
 	if role.Name != roleName {
 		t.Errorf("Expected role name %s, got %s", roleName, role.Name)
 	}
-	if len(role.Scopes) != 2 {
-		t.Errorf("Expected 2 scopes, got %d", len(role.Scopes))
+	if len(role.Scopes) != 3 {
+		t.Errorf("Expected 3 scopes, got %d", len(role.Scopes))
 	}
 
 	// 检查审计日志是否记录

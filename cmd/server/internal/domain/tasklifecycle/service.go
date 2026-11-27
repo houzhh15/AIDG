@@ -733,6 +733,164 @@ func (s *Service) SetReviewResult(projectID, taskID, actor string, req ReviewRes
 	return s.commitReviewLocked(projectID, taskID, actor, next, req.ExpectedRevision, true, req.Result, path)
 }
 
+// LifecycleEvidenceHash returns the canonical digest for imported lifecycle
+// facts. Provenance timestamps and the authenticated AIDG actor are excluded so
+// retries and round trips preserve the same business-fact hash.
+func LifecycleEvidenceHash(value LifecycleImport) (string, error) {
+	value.EvidenceHash = ""
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func isLifecycleContractHeading(line string) bool {
+	switch line {
+	case "## 审核请求", "## 执行结果", "## 审核结果",
+		"### 目标", "### 标准", "### 变更摘要", "### 验证", "### 遗留问题", "### 问题列表", "### 结果":
+		return true
+	default:
+		return false
+	}
+}
+
+func strictLifecycleSection(content, header string) (string, error) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	marker := "### " + header
+	start := -1
+	for index, line := range lines {
+		if strings.TrimSpace(line) != marker {
+			continue
+		}
+		if start >= 0 {
+			return "", ErrInvalidInput
+		}
+		start = index + 1
+	}
+	if start < 0 {
+		return "", ErrInvalidInput
+	}
+	end := len(lines)
+	for index := start; index < len(lines); index++ {
+		if isLifecycleContractHeading(strings.TrimSpace(lines[index])) {
+			end = index
+			break
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n")), nil
+}
+
+// ImportLifecycle atomically imports a non-session lifecycle fact. It is only
+// reachable from the privileged sync publish resource; normal Update continues
+// to reject completed and therefore cannot bypass the review gate.
+func (s *Service) ImportLifecycle(projectID, taskID, actor string, expectedRevision *int, value LifecycleImport) (map[string]any, error) {
+	if validateID(taskID) != nil || strings.TrimSpace(actor) == "" {
+		return nil, ErrUnauthorized
+	}
+	if !ValidStatus(value.Status) || value.Source.System != "mote" || strings.TrimSpace(value.Source.ProjectID) == "" || strings.TrimSpace(value.Source.TaskID) == "" || value.Source.Actor != "mote" {
+		return nil, ErrInvalidInput
+	}
+	if len(value.Review.Content) > maxReviewBytes || !utf8.ValidString(value.Review.Content) {
+		return nil, ErrInvalidInput
+	}
+	expectedHash, err := LifecycleEvidenceHash(value)
+	if err != nil || value.EvidenceHash != expectedHash {
+		return nil, ErrInvalidInput
+	}
+	if value.Status == StatusCompleted {
+		if strings.TrimSpace(value.Review.Content) == "" {
+			return nil, ErrReviewRequired
+		}
+		verdict, verdictErr := strictLifecycleSection(value.Review.Content, "结果")
+		summary, summaryErr := strictLifecycleSection(value.Review.Content, "变更摘要")
+		verification, verificationErr := strictLifecycleSection(value.Review.Content, "验证")
+		if verdictErr != nil || summaryErr != nil || verificationErr != nil {
+			return nil, ErrInvalidInput
+		}
+		if value.Review.Verdict != ReviewPassed || verdict != ReviewPassed {
+			return nil, ErrReviewRequired
+		}
+		if summary == "" || summary == "_未提供_" || verification == "" || verification == "_未提供_" || summary != strings.TrimSpace(value.Review.ChangeSummary) || verification != strings.TrimSpace(value.Review.Verification) {
+			return nil, ErrInvalidInput
+		}
+	} else if value.Status == StatusReview {
+		if strings.TrimSpace(value.Review.Content) == "" {
+			return nil, ErrReviewRequired
+		}
+		verdict, verdictErr := strictLifecycleSection(value.Review.Content, "结果")
+		if verdictErr != nil || verdict != "" || value.Review.Verdict != "" {
+			return nil, ErrInvalidInput
+		}
+	} else if value.Review.Content != "" && value.Review.Verdict != "" {
+		verdict, verdictErr := strictLifecycleSection(value.Review.Content, "结果")
+		if verdictErr != nil || verdict != value.Review.Verdict || verdict == ReviewPassed {
+			return nil, ErrInvalidInput
+		}
+	}
+
+	path, err := s.tasksPath(projectID)
+	if err != nil {
+		return nil, err
+	}
+	unlock := lockProject(path)
+	defer unlock()
+	if err = s.recoverReviewTransaction(projectID, path); err != nil {
+		return nil, err
+	}
+	tasks, _, err := readTasks(path)
+	if err != nil {
+		return nil, err
+	}
+	index, task := findTask(tasks, taskID)
+	if task == nil {
+		return nil, ErrNotFound
+	}
+	currentRevision := rawInt(task, "revision")
+	if currentRevision == 0 {
+		currentRevision = 1
+	}
+	if expectedRevision != nil && *expectedRevision != currentRevision {
+		return nil, ErrVersionConflict
+	}
+	now := time.Now().UTC()
+	_ = setRaw(task, "status", value.Status)
+	_ = setRaw(task, "reviewed_by", actor)
+	_ = setRaw(task, "reviewed_at", now.Format(time.RFC3339Nano))
+	_ = setRaw(task, "sync_lifecycle_source", value.Source)
+	_ = setRaw(task, "sync_lifecycle_evidence_hash", value.EvidenceHash)
+	_ = setRaw(task, "revision", currentRevision+1)
+	_ = setRaw(task, "updated_at", now.Format(time.RFC3339Nano))
+	tasks[index] = task
+	targetTasks, err := encodeTasks(tasks)
+	if err != nil {
+		return nil, err
+	}
+	if value.Review.Content == "" {
+		if err = atomicWrite(path, targetTasks); err != nil {
+			return nil, err
+		}
+	} else {
+		project, pathErr := s.projectPath(projectID)
+		if pathErr != nil {
+			return nil, pathErr
+		}
+		reviewPath := filepath.Join(project, "tasks", taskID, "docs", "review")
+		_, meta, exportErr := taskdocs.ExportWithPath(reviewPath)
+		if exportErr != nil {
+			return nil, exportErr
+		}
+		tx := reviewTransaction{Protocol: 1, TaskID: taskID, TargetTasks: targetTasks, ReviewContent: value.Review.Content, ExpectedReviewVersion: meta.Version, Actor: actor}
+		if err = s.persistReviewTransaction(path, tx); err != nil {
+			return nil, err
+		}
+		if err = s.recoverReviewTransaction(projectID, path); err != nil {
+			return nil, err
+		}
+	}
+	return taskView(task)
+}
 func (s *Service) commitReview(projectID, taskID, actor, content string, expectedRevision *int, result bool, verdict string) (map[string]any, *ReviewDocument, error) {
 	path, err := s.tasksPath(projectID)
 	if err != nil {

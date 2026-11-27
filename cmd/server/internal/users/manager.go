@@ -58,9 +58,10 @@ const (
 	ScopeProjectDelete   = "project.delete"    // 项目删除（允许删除项目和任务）
 
 	// 任务权限
-	ScopeTaskRead        = "task.read"
-	ScopeTaskWrite       = "task.write"
-	ScopeTaskPlanApprove = "task.plan.approve"
+	ScopeTaskRead            = "task.read"
+	ScopeTaskWrite           = "task.write"
+	ScopeTaskPlanApprove     = "task.plan.approve"
+	ScopeTaskLifecycleImport = "task.lifecycle.import"
 
 	// 会议权限
 	ScopeMeetingRead  = "meeting.read"
@@ -90,7 +91,7 @@ const (
 
 var allScopes = []string{
 	ScopeProjectDocRead, ScopeProjectDocWrite, ScopeProjectAdmin, ScopeProjectDelete,
-	ScopeTaskRead, ScopeTaskWrite, ScopeTaskPlanApprove,
+	ScopeTaskRead, ScopeTaskWrite, ScopeTaskPlanApprove, ScopeTaskLifecycleImport,
 	ScopeMeetingRead, ScopeMeetingWrite,
 	ScopeUserManage,
 	ScopeIdpRead, ScopeIdpWrite,

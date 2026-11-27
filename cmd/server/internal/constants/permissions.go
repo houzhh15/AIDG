@@ -15,7 +15,8 @@ const (
 	ScopeProjectDocWrite = "project.doc.write" // 项目文档编辑
 
 	// Task Planning - 任务计划 (新增)
-	ScopeTaskPlanApprove = "task.plan.approve" // 任务计划审批
+	ScopeTaskPlanApprove     = "task.plan.approve"     // 任务计划审批
+	ScopeTaskLifecycleImport = "task.lifecycle.import" // 受控导入任务状态与审核
 
 	// Meeting Management - 会议管理 (新增)
 	ScopeMeetingRead  = "meeting.read"  // 会议读取
@@ -32,6 +33,7 @@ var PermissionGroups = map[string][]string{
 		ScopeTaskRead,
 		ScopeTaskWrite,
 		ScopeTaskPlanApprove,
+		ScopeTaskLifecycleImport,
 	},
 	"会议管理": {
 		ScopeMeetingRead,
@@ -52,6 +54,7 @@ var ValidScopes = []string{
 	ScopeProjectDocRead,
 	ScopeProjectDocWrite,
 	ScopeTaskPlanApprove,
+	ScopeTaskLifecycleImport,
 	ScopeMeetingRead,
 	ScopeMeetingWrite,
 }
